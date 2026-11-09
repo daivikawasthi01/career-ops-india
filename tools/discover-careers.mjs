@@ -251,7 +251,7 @@ async function searchResults(context, query, opts = {}) {
   searchStats.empty++;
   gov.blocked();
   if (gov.blocksInRow === 1) await context.clearCookies().catch(() => {}); // step 1: a fresh session
-  else if (!solving && !has('--no-headed')) { // step 2: a person solves it
+  else if (!solving && !has('--no-headed') && !process.env.CAREER_OPS_NO_HEADED) { // step 2: a person solves it
     solving = solveByHand().finally(() => { solving = null; });
     if (await solving) { gov.reset(); console.error('[search] captcha solved by hand; carrying on gently'); }
   }

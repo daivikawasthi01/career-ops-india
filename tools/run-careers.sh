@@ -7,6 +7,8 @@
 #   tools/run-careers.sh 1,2,3,export    # everything, including a separate pass 3 over right-page-no-India companies
 #   tools/run-careers.sh 2 --limit 20    # extra arguments go to every phase that accepts them (for a short trial)
 #
+# Search blocked? A visible Chrome window opens so you can solve the captcha once. For an unattended run add --no-headed
+# (or export CAREER_OPS_NO_HEADED=1): a block then just slows the run down and never opens a window.
 # Each phase resumes where it stopped, so you can stop with Ctrl-C and run the same command again.
 # Logs (also timestamped, kept between runs): <data>/careers-run-pass1.log, -pass2.log, -pass3.log
 # Results: <data>/careers-discovery.tsv, careers-pass2.tsv, careers-pass3.tsv, careers-export.csv
