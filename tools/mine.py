@@ -50,16 +50,70 @@ def save_state(state, path=STATE):
     tmp.replace(path)
 
 
+LOW_COVERAGE = 0.8      # below this share of boards read, the step comes back sooner
+VERY_LOW_COVERAGE = 0.5
+
+
+def _entry(state, step_id):
+    """State entry as (timestamp, coverage). Old files stored a bare timestamp string."""
+    raw = state.get(step_id)
+    if isinstance(raw, dict):
+        return raw.get("at"), raw.get("coverage")
+    return raw, None
+
+
+def due_after_days(every_days, coverage):
+    """A run that read most boards waits the full interval; a thin run comes back sooner."""
+    if coverage is None or coverage >= LOW_COVERAGE:
+        return every_days
+    return min(every_days, 1 if coverage < VERY_LOW_COVERAGE else 3)
+
+
 def step_due(state, step_id, every_days, now=None):
-    """True when the step has never succeeded or last succeeded `every_days` or more ago."""
-    last = state.get(step_id)
+    """True when the step has never succeeded, or last succeeded long enough ago for its coverage."""
+    last, coverage = _entry(state, step_id)
     if not last:
         return True
     now = now or datetime.now()
     try:
-        return (now - datetime.fromisoformat(last)).total_seconds() >= every_days * 86400
+        return (now - datetime.fromisoformat(last)).total_seconds() >= due_after_days(every_days, coverage) * 86400
     except ValueError:
         return True
+
+
+def select_steps(steps, state, explicit, ats_every, now=None):
+    """Drop the ats step from a default run when it is not due. Returns (steps, notes)."""
+    if explicit or step_due(state, "ats", ats_every, now):
+        return steps, []
+    last, coverage = _entry(state, "ats")
+    why = f"last run {str(last)[:10]}" + (f", {coverage:.0%} of boards read" if coverage is not None else "")
+    kept = [s for s in steps if s["id"] != "ats"]
+    return kept, [f"mine: ats step not due ({why}); pass --steps to force it"]
+
+
+def record_run(state, status, dry_run, now=None):
+    """Remember a successful (ok or partial) real run and its coverage. Dry runs never move the schedule.
+    Returns True when the state changed and should be saved."""
+    if dry_run or status["status"] not in ("ok", "partial"):
+        return False
+    now = now or datetime.now()
+    state[status["id"]] = {"at": now.isoformat(timespec="seconds"), "coverage": status.get("coverage")}
+    return True
+
+
+def steps_given(argv):
+    """True when the user named --steps themselves, which always runs exactly those steps."""
+    return any(a == "--steps" or a.startswith("--steps=") for a in argv)
+
+
+def receipt_coverage(receipt):
+    """Share of boards that answered, from scan-ats-full's summary: 1 - unreachable / scanned."""
+    try:
+        scanned = float(receipt["companiesScanned"])
+        unreachable = float(receipt["unreachableBoards"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return None if scanned <= 0 else max(0.0, min(1.0, 1 - unreachable / scanned))
 
 
 def build_steps(args):
@@ -257,7 +311,10 @@ def run_step(step, log, failures, position):
     else:
         status, note = "ok", f"{retries} retries" if retries else ""
     log.write(f"===== {step['id']} done: {status}, {len(offers)} offers, {secs}s\n")
-    return offers, {"id": step["id"], "status": status, "secs": secs, "count": len(offers), "note": note}
+    coverage = receipt_coverage(receipt) if step.get("bare_json") and step["id"] == "ats" else None
+    if coverage is not None:
+        note = (note + "; " if note else "") + f"{coverage:.0%} of boards read"
+    return offers, {"id": step["id"], "status": status, "secs": secs, "count": len(offers), "note": note, "coverage": coverage}
 
 
 def main():
@@ -282,10 +339,9 @@ def main():
     per_step, runs, failures = {}, [], []
     steps = build_steps(args)
     state = load_state()
-    explicit_steps = any(a == "--steps" or a.startswith("--steps=") for a in sys.argv[1:])
-    if not explicit_steps and not step_due(state, "ats", args.ats_every):
-        steps = [s for s in steps if s["id"] != "ats"]
-        print(f"mine: ats step not due (last run {state['ats'][:10]}, every {args.ats_every} days); pass --steps to force it")
+    steps, notes = select_steps(steps, state, steps_given(sys.argv[1:]), args.ats_every)
+    for note in notes:
+        print(note)
     print(f"mine: {len(steps)} step(s), log {log_path.relative_to(ROOT)}, excel {xlsx_path.relative_to(ROOT)}")
     write_excel(xlsx_path, per_step, runs, failures, started)
     with log_path.open("w") as log:
@@ -294,8 +350,7 @@ def main():
             offers, status = run_step(step, log, failures, i)
             per_step[step["id"]] = offers
             runs.append(status)
-            if status["status"] in ("ok", "partial") and not args.dry_run:
-                state[step["id"]] = datetime.now().isoformat(timespec="seconds")
+            if record_run(state, status, args.dry_run):
                 save_state(state)
             write_excel(xlsx_path, per_step, runs, failures, started)
     total = len(merge(per_step))

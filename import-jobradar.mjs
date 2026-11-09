@@ -6,7 +6,12 @@
  *
  *   node import-jobradar.mjs                 # preview: counts only, writes nothing
  *   node import-jobradar.mjs --list          # preview plus every entry that would be added
- *   node import-jobradar.mjs --write         # back up portals.yml, then add the new entries
+ *   node import-jobradar.mjs --write         # back up portals.yml, then add the new entries (disabled)
+ *
+ * Boards are added DISABLED by default (`--enabled` adds them enabled). Most jobradar boards
+ * belong to non-India companies the India location filter would drop anyway, so run
+ * `node board-india-check.mjs --source jobradar --apply` afterwards: it enables the ones that
+ * have an India posting with an entry-level title.
  *
  * Input is jobradar/config/companies.csv (name, ats, slug, tier). A board is skipped
  * when portals.yml already has it, matched by name, by URL, or by the same ATS and slug
@@ -15,12 +20,11 @@
  * discover-ats.mjs run is active, since that run also rewrites the file.
  */
 
-import { existsSync, readFileSync, writeFileSync, copyFileSync } from 'fs';
-import { execFileSync } from 'child_process';
+import { existsSync, readFileSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { loadYaml } from './lib/yaml-document.mjs';
-import { renameSyncWithRetry } from './tracker-utils.mjs';
+import { discoverIsRunning, backupFile, atomicWrite } from './lib/portals-edit.mjs';
 import {
   renderPortalEntry, dedupeAgainstPortals, insertIntoTrackedCompanies, splicedCorrectly,
 } from './discover-ats.mjs';
@@ -111,18 +115,9 @@ export function plan(matches, existingEntries) {
   return { fresh, duplicates: [...keyDuplicates, ...duplicates] };
 }
 
-/** Rendered entry with the source tag placed right after `enabled: true`. */
-export function renderTagged(match) {
-  return renderPortalEntry(match).replace('    enabled: true\n', '    enabled: true\n    source: jobradar\n');
-}
-
-function discoverIsRunning() {
-  try {
-    const out = execFileSync('pgrep', ['-fl', 'discover-ats.mjs'], { encoding: 'utf8' });
-    return out.split('\n').filter((l) => l && !l.includes('pgrep')).length > 0;
-  } catch {
-    return false; // pgrep exits 1 when nothing matches
-  }
+/** Rendered entry tagged `source: jobradar`, disabled unless `enabled` is true. */
+export function renderTagged(match, { enabled = false } = {}) {
+  return renderPortalEntry(match).replace('    enabled: true\n', `    enabled: ${enabled}\n    source: jobradar\n`);
 }
 
 function main() {
@@ -130,6 +125,7 @@ function main() {
   const write = args.includes('--write');
   const list = args.includes('--list');
   const force = args.includes('--force');
+  const enabled = args.includes('--enabled');
   const csvFlag = args.indexOf('--csv');
   const csvPath = csvFlag >= 0 ? resolve(args[csvFlag + 1]) : DEFAULT_CSV;
 
@@ -157,18 +153,16 @@ function main() {
     process.exit(2);
   }
 
-  const backup = `${PORTALS_PATH}.bak-${new Date().toISOString().replace(/[:.]/g, '-')}`;
-  copyFileSync(PORTALS_PATH, backup);
+  const backup = backupFile(PORTALS_PATH);
 
-  const next = insertIntoTrackedCompanies(portalsText, fresh.map(renderTagged));
+  const next = insertIntoTrackedCompanies(portalsText, fresh.map((m) => renderTagged(m, { enabled })));
   if (!splicedCorrectly(next, existing.length + fresh.length)) {
     console.error(`\nSplice check failed; portals.yml left unchanged. Backup is at ${backup}.`);
     process.exit(3);
   }
-  const tmp = `${PORTALS_PATH}.tmp-${process.pid}`;
-  writeFileSync(tmp, next, 'utf-8');
-  renameSyncWithRetry(tmp, PORTALS_PATH);
-  console.log(`\nAdded ${fresh.length} boards. Backup: ${backup}`);
+  atomicWrite(PORTALS_PATH, next);
+  console.log(`\nAdded ${fresh.length} boards (${enabled ? 'enabled' : 'disabled'}). Backup: ${backup}`);
+  if (!enabled) console.log('Next: node board-india-check.mjs --source jobradar --apply   (enables the ones with India entry-level postings)');
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

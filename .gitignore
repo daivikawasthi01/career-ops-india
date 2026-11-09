@@ -310,3 +310,7 @@ data/interview-prep/
 .next/
 web/.next/
 web/out/
+
+# JobApply pipeline
+tools/.venv-jobspy/
+tools/__pycache__/

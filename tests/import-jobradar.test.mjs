@@ -53,11 +53,13 @@ test('plan skips boards already in portals.yml by name, by url, and by ats+slug,
   assert.equal(duplicates.length, 3); // Stripe, Stripe Again, Zed
 });
 
-test('renderTagged adds source: jobradar and the output still parses as yaml', () => {
-  const text = renderTagged({ name: 'Acme Labs', careers_url: 'https://jobs.ashbyhq.com/acmelabs' });
-  const [entry] = yaml.load(`tracked_companies:${text}`).tracked_companies;
-  assert.equal(entry.source, 'jobradar');
-  assert.equal(entry.enabled, true);
+test('renderTagged adds source: jobradar, disabled by default, and the output still parses as yaml', () => {
+  const m = { name: 'Acme Labs', careers_url: 'https://jobs.ashbyhq.com/acmelabs' };
+  const [off] = yaml.load(`tracked_companies:${renderTagged(m)}`).tracked_companies;
+  assert.equal(off.source, 'jobradar');
+  assert.equal(off.enabled, false);
+  const [on] = yaml.load(`tracked_companies:${renderTagged(m, { enabled: true })}`).tracked_companies;
+  assert.equal(on.enabled, true);
 });
 
 test('--write adds new boards, keeps the file valid, and leaves a backup; preview writes nothing', () => {
@@ -77,7 +79,7 @@ test('--write adds new boards, keeps the file valid, and leaves a backup; previe
     run('--write', '--force');
     const after = yaml.load(readFileSync(portals, 'utf8'));
     assert.equal(after.tracked_companies.length, 1 + 4); // Existing + Stripe, Acme, Zed, Pay Co
-    assert.ok(after.tracked_companies.filter((e) => e.source === 'jobradar').length === 4);
+    assert.ok(after.tracked_companies.filter((e) => e.source === 'jobradar' && e.enabled === false).length === 4, 'imported boards are disabled');
     assert.ok(readFileSync(portals, 'utf8').startsWith('# my file\n'), 'comments kept');
     assert.ok(readdirSync(dir).some((f) => f.startsWith('portals.yml.bak-')), 'backup sits beside the portals file');
 

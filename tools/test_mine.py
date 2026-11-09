@@ -7,30 +7,99 @@ from tempfile import TemporaryDirectory
 sys.path.insert(0, str(Path(__file__).parent))
 import mine  # noqa: E402
 
+NOW = datetime(2026, 11, 9, 12, 0, 0)
+STEPS = [{"id": "freehire"}, {"id": "jobspy"}, {"id": "ats"}]
+
+
+def ago(days):
+    return (NOW - timedelta(days=days)).isoformat()
+
 
 class StepDue(unittest.TestCase):
-    now = datetime(2026, 11, 9, 12, 0, 0)
-
     def test_never_run_is_due(self):
-        self.assertTrue(mine.step_due({}, "ats", 7, self.now))
+        self.assertTrue(mine.step_due({}, "ats", 7, NOW))
 
     def test_recent_run_is_not_due(self):
-        state = {"ats": (self.now - timedelta(days=3)).isoformat()}
-        self.assertFalse(mine.step_due(state, "ats", 7, self.now))
+        self.assertFalse(mine.step_due({"ats": {"at": ago(3), "coverage": 0.95}}, "ats", 7, NOW))
 
     def test_old_run_is_due(self):
-        state = {"ats": (self.now - timedelta(days=7)).isoformat()}
-        self.assertTrue(mine.step_due(state, "ats", 7, self.now))
+        self.assertTrue(mine.step_due({"ats": {"at": ago(7), "coverage": 0.95}}, "ats", 7, NOW))
+
+    def test_old_state_format_still_works(self):
+        self.assertFalse(mine.step_due({"ats": ago(3)}, "ats", 7, NOW))
+        self.assertTrue(mine.step_due({"ats": ago(8)}, "ats", 7, NOW))
 
     def test_garbage_timestamp_is_due(self):
-        self.assertTrue(mine.step_due({"ats": "not a date"}, "ats", 7, self.now))
+        self.assertTrue(mine.step_due({"ats": {"at": "not a date"}}, "ats", 7, NOW))
 
-    def test_state_round_trip_and_missing_file(self):
+    def test_thin_coverage_comes_back_sooner(self):
+        self.assertEqual(mine.due_after_days(7, 0.95), 7)
+        self.assertEqual(mine.due_after_days(7, 0.6), 3)
+        self.assertEqual(mine.due_after_days(7, 0.3), 1)
+        self.assertEqual(mine.due_after_days(2, 0.3), 1)
+        self.assertEqual(mine.due_after_days(7, None), 7)
+        self.assertFalse(mine.step_due({"ats": {"at": ago(2), "coverage": 0.6}}, "ats", 7, NOW))
+        self.assertTrue(mine.step_due({"ats": {"at": ago(3), "coverage": 0.6}}, "ats", 7, NOW))
+        self.assertTrue(mine.step_due({"ats": {"at": ago(1), "coverage": 0.3}}, "ats", 7, NOW))
+
+
+class SelectSteps(unittest.TestCase):
+    def test_default_run_drops_ats_when_not_due(self):
+        steps, notes = mine.select_steps(STEPS, {"ats": {"at": ago(2), "coverage": 0.9}}, False, 7, NOW)
+        self.assertEqual([s["id"] for s in steps], ["freehire", "jobspy"])
+        self.assertIn("not due", notes[0])
+        self.assertIn("90%", notes[0])
+
+    def test_default_run_keeps_ats_when_due(self):
+        steps, notes = mine.select_steps(STEPS, {"ats": {"at": ago(9), "coverage": 0.9}}, False, 7, NOW)
+        self.assertEqual(len(steps), 3)
+        self.assertEqual(notes, [])
+
+    def test_explicit_steps_always_run(self):
+        steps, notes = mine.select_steps(STEPS, {"ats": {"at": ago(1), "coverage": 0.9}}, True, 7, NOW)
+        self.assertEqual(len(steps), 3)
+        self.assertEqual(notes, [])
+
+    def test_steps_given_reads_both_spellings(self):
+        self.assertTrue(mine.steps_given(["--days", "3", "--steps", "ats"]))
+        self.assertTrue(mine.steps_given(["--steps=ats"]))
+        self.assertFalse(mine.steps_given(["--days", "3", "--dry-run"]))
+
+
+class RecordRun(unittest.TestCase):
+    def test_real_run_records_time_and_coverage(self):
+        state = {}
+        self.assertTrue(mine.record_run(state, {"id": "ats", "status": "partial", "coverage": 0.6}, False, NOW))
+        self.assertEqual(state["ats"], {"at": "2026-11-09T12:00:00", "coverage": 0.6})
+
+    def test_dry_run_never_moves_the_schedule(self):
+        state = {}
+        self.assertFalse(mine.record_run(state, {"id": "ats", "status": "ok", "coverage": 0.9}, True, NOW))
+        self.assertEqual(state, {})
+
+    def test_failed_step_is_not_recorded(self):
+        state = {}
+        self.assertFalse(mine.record_run(state, {"id": "ats", "status": "failed"}, False, NOW))
+        self.assertEqual(state, {})
+
+
+class Coverage(unittest.TestCase):
+    def test_share_of_boards_read(self):
+        self.assertAlmostEqual(mine.receipt_coverage({"companiesScanned": 1000, "unreachableBoards": 400}), 0.6)
+
+    def test_missing_or_zero_scanned_is_unknown(self):
+        self.assertIsNone(mine.receipt_coverage(None))
+        self.assertIsNone(mine.receipt_coverage({"companiesScanned": 0, "unreachableBoards": 0}))
+        self.assertIsNone(mine.receipt_coverage({}))
+
+
+class StateFile(unittest.TestCase):
+    def test_round_trip_and_missing_file(self):
         with TemporaryDirectory() as d:
             path = Path(d) / "sub" / "state.json"
             self.assertEqual(mine.load_state(path), {})
-            mine.save_state({"ats": "2026-11-09T12:00:00"}, path)
-            self.assertEqual(mine.load_state(path), {"ats": "2026-11-09T12:00:00"})
+            mine.save_state({"ats": {"at": "2026-11-09T12:00:00", "coverage": 0.9}}, path)
+            self.assertEqual(mine.load_state(path)["ats"]["coverage"], 0.9)
 
 
 if __name__ == "__main__":

@@ -65,7 +65,7 @@ import { loadProviders, resolveProvider } from './providers/_registry.mjs';
 import { openProviderIdCache, PROVIDER_ID_CACHE_DIR } from './provider-id-cache.mjs';
 import { mergeProviderPlugins } from './plugins/_engine.mjs';
 import { classifyFetchError } from './verify-portals.mjs';
-import { boardsToSkip } from './lib/board-backoff.mjs';
+import { boardsToSkip, hostsToThrottle } from './lib/board-backoff.mjs';
 import { portalTopLevelTypos } from './validate-portals.mjs';
 import { fingerprintText, findCrossListings } from './fingerprint-core.mjs';
 import { computeListingFingerprint } from './listing-fingerprint.mjs';
@@ -4170,7 +4170,9 @@ export function emptyTargetStatus(observation) {
 
 // ── Parallel fetch with concurrency limit ───────────────────────────
 
-export async function parallelFetch(tasks, limit, onDone = () => {}, { hostOf = null, hostLimit = limit } = {}) {
+// hostLimitOf(host) and hostDelayOf(host) are optional per-host overrides: a throttled host gets
+// one request at a time and a pause (ms) before its slot is reused.
+export async function parallelFetch(tasks, limit, onDone = () => {}, { hostOf = null, hostLimit = limit, hostLimitOf = null, hostDelayOf = null } = {}) {
   // Verify and any other caller that does not name a host keeps the plain
   // worker pool. Completion order of the returned array stays what it was.
   if (typeof hostOf !== 'function') {
@@ -4213,7 +4215,7 @@ export async function parallelFetch(tasks, limit, onDone = () => {}, { hostOf = 
       const index = pending[k];
       const host = hosts[index];
       // An empty host is not a bucket. Unknown URLs must not share one cap.
-      if (host && (hostActive.get(host) || 0) >= perHost) continue;
+      if (host && (hostActive.get(host) || 0) >= (hostLimitOf ? Math.max(1, hostLimitOf(host) ?? perHost) : perHost)) continue;
       pending.splice(k, 1);
       return index;
     }
@@ -4246,12 +4248,17 @@ export async function parallelFetch(tasks, limit, onDone = () => {}, { hostOf = 
           .finally(() => {
             active -= 1;
             finished += 1;
-            if (host) {
-              const left = (hostActive.get(host) || 1) - 1;
-              if (left <= 0) hostActive.delete(host);
-              else hostActive.set(host, left);
-            }
-            launch();
+            const release = () => {
+              if (host) {
+                const left = (hostActive.get(host) || 1) - 1;
+                if (left <= 0) hostActive.delete(host);
+                else hostActive.set(host, left);
+              }
+              launch();
+            };
+            const pause = host && hostDelayOf ? Number(hostDelayOf(host)) || 0 : 0;
+            if (pause > 0) setTimeout(release, pause);
+            else release();
             if (finished === n) {
               if (firstError !== null) reject(firstError);
               else resolve();
@@ -4681,7 +4688,8 @@ async function main() {
   const enabledWarnings = [];
   // Boards the health log says to leave alone: a 404 is cached as dead for a month, a 429
   // backs off for a day or more. Timeouts and network errors are never held (lib/board-backoff.mjs).
-  const backoffHolds = args.includes('--retry-dead') ? new Map() : boardsToSkip(loadPortalHealth());
+  const pastHealthForBackoff = loadPortalHealth();
+  const backoffHolds = (args.includes('--retry-dead') || filterCompanyRaw != null) ? new Map() : boardsToSkip(pastHealthForBackoff);
   const backoffSkipped = [];
 
   /**
@@ -4850,8 +4858,7 @@ async function main() {
   parts.push(`${skippedCount} skipped — no provider matched`);
   console.log(`Scanning ${parts.join('; ')} via providers`);
   if (backoffSkipped.length > 0) {
-    const dead = backoffSkipped.filter((b) => b.reason === 'dead').length;
-    console.log(`Holding ${backoffSkipped.length} boards (${dead} cached dead, ${backoffSkipped.length - dead} rate-limited); --retry-dead tries them anyway`);
+    console.log(`Holding ${backoffSkipped.length} boards cached as dead (two 404s in a row, retried after 30 days); --retry-dead or --company tries them anyway`);
   }
   if (dryRun) console.log('(dry run — no files will be written)\n');
   for (const warning of enabledWarnings) console.error(`Warning: ${warning}`);
@@ -5295,9 +5302,17 @@ async function main() {
     }
   });
 
+  // A host that answered 429 on the last run is fetched one request at a time with a pause.
+  const hostByCompany = new Map(targets.map((t) => [t.name, companyFetchHost(t)]));
+  const throttledHosts = hostsToThrottle(pastHealthForBackoff, (company) => hostByCompany.get(company));
+  if (throttledHosts.size > 0) {
+    console.log(`Throttling ${throttledHosts.size} host(s) that rate-limited the last run: ${[...throttledHosts].join(', ')}`);
+  }
   const companyFetches = () => parallelFetch(tasks, SCAN_CONCURRENCY, progressTicker(tasks.length), {
     hostLimit: HOST_CONCURRENCY,
     hostOf: (_task, index) => companyFetchHost(targets[index]),
+    hostLimitOf: (host) => (throttledHosts.has(host) ? 1 : HOST_CONCURRENCY),
+    hostDelayOf: (host) => (throttledHosts.has(host) ? 1500 : 0),
   });
   if (process.env.CAREER_OPS_HTTP_CACHE === '0') {
     await companyFetches();
