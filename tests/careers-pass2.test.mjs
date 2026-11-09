@@ -65,8 +65,9 @@ test('vision states map to actions', () => {
   assert.equal(visionAction(null), 'none');
 });
 
-test('every search query asks for India', () => {
-  for (const pass of [0, 1]) for (const q of queryPair('Zepto', {}, pass)) assert.match(q, /india/i);
+test('the first pair of queries asks for India; the retry pair adds the plain form that matched best', () => {
+  for (const q of queryPair('Zepto', {}, 0)) assert.match(q, /india/i);
+  assert.ok(queryPair('Zepto', {}, 1).includes('Zepto careers'));
 });
 
 import { indiaVariants, sameOwner, pass3Decision } from '../lib/careers-pass2.mjs';

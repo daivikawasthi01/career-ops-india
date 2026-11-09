@@ -27,6 +27,7 @@ import { classifyPage, followLinks, best, PASSING, CAREERS_PATH, rankCandidates,
 import { parseTsv } from './careers-review.mjs';
 import { visit, searchResults, hostOf, Halt, gov, sleep, setSessionContext } from './discover-careers.mjs';
 import { queryPair } from '../lib/careers-pipeline.mjs';
+const nameInHost = (url, name) => { const h = hostOf(url).replace(/[^a-z0-9]/g, ''); return String(name).toLowerCase().split(/[^a-z0-9]+/).filter((x) => x.length >= 3).some((x) => h.includes(x)); };
 
 const ROOT = getCareerOpsRoot();
 const arg = (n) => { const i = process.argv.indexOf(n); return i >= 0 ? process.argv[i + 1] : undefined; };
@@ -86,7 +87,8 @@ export async function testUrl(context, url, name, st, depth = 0) {
     }
   }
   const indiaMentions = (v.text.match(/\b(india|bengaluru|bangalore|hyderabad|pune|mumbai|delhi|gurgaon|gurugram|noida|chennai|kolkata|ahmedabad)\b/gi) || []).length;
-  if (cls.verdict === 'landing' && CAREERS_PATH.test(new URL(v.finalUrl).pathname + ' ' + v.title)) return done({ verdict: 'listings-unread', note: 'careers-looking page, listings not readable', snippet: v.text.slice(0, 600), indiaMentions: (v.text.match(/\b(india|bengaluru|bangalore|hyderabad|pune|mumbai|delhi|gurgaon|gurugram|noida|chennai)\b/gi) || []).length });
+  const ownHostLooksRight = ats || nameInHost(v.finalUrl, name); // a third-party site named in a search result is not enough
+  if ((cls.verdict === 'landing' || cls.verdict === 'not-careers') && ownHostLooksRight && CAREERS_PATH.test(new URL(v.finalUrl).pathname + ' ' + v.title)) return done({ verdict: 'listings-unread', note: 'careers-looking page, listings not readable', snippet: v.text.slice(0, 600), indiaMentions: (v.text.match(/\b(india|bengaluru|bangalore|hyderabad|pune|mumbai|delhi|gurgaon|gurugram|noida|chennai)\b/gi) || []).length });
   return done({ verdict: cls.verdict, total: cls.count, sample: cls.sample || [], snippet: v.text.slice(0, 600), indiaMentions });
 }
 
