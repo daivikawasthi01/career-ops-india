@@ -16,6 +16,7 @@
  */
 import { existsSync, readFileSync, appendFileSync, writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { createProgress } from '../lib/progress.mjs';
 import { isMainModule } from '../lib/is-main-module.mjs';
 import { getCareerOpsRoot } from '../path-resolver.mjs';
 import { loadYaml } from '../lib/yaml-document.mjs';
@@ -235,6 +236,7 @@ async function main() {
 
   const vision = Boolean(llm) && !has('--no-vision');
   let next = 0; let stop = null; let n = 0; const counts = {};
+  const pg = createProgress({ total: todo.length, label: 'pass 2', logFile: join(ROOT, 'data', 'careers-run-pass2.log') }); pg.start();
   const worker = async () => {
     while (!stop && next < todo.length) {
       const row = todo[next++];
@@ -248,11 +250,13 @@ async function main() {
       }
       appendFileSync(OUT, rowLine(r) + '\n');
       counts[r.final_status] = (counts[r.final_status] || 0) + 1; n++;
-      console.log(`[${n}/${todo.length}] ${row.company} ${r.final_status} ${r.ats || '-'} jobs=${r.jobs_total === '' ? '-' : r.jobs_total} ${r.careers_url || ''}`.slice(0, 200));
+      pg.log(`[${n}/${todo.length}] ${row.company} ${r.final_status} ${r.ats || '-'} jobs=${r.jobs_total === '' ? '-' : r.jobs_total} ${r.careers_url || ''}`.slice(0, 200));
+      pg.tick(r.outcome || r.final_status);
     }
   };
   await Promise.all(Array.from({ length: Math.max(1, Number(arg('--workers')) || 3) }, worker));
   await context.close().catch(() => {});
+  pg.done();
   console.log('Summary:', JSON.stringify(counts), llm ? JSON.stringify(llm.usage) : '');
   if (stop) { console.error(`HALTED: ${stop.message}. Rerun to resume.`); return stop.code; }
   return 0;

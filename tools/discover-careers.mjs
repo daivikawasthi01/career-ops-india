@@ -17,6 +17,7 @@
  * Run it detached: tools/run-discover.sh --llm.
  */
 
+import { createProgress } from '../lib/progress.mjs';
 import { isMainModule } from '../lib/is-main-module.mjs';
 import { existsSync, readFileSync, appendFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync } from 'fs';
 import { dirname, join } from 'path';
@@ -519,6 +520,7 @@ async function main() {
   writeStatus(status);
   let failures = 0; let code = 0;
   const rows = [];
+  const pg = createProgress({ total: batch.length, label: 'pass 1', logFile: join(dirname(out), 'careers-run-pass1.log') }); pg.start();
   try {
     let next = 0; let stop = null;
     const WORKERS = Math.max(1, Number(arg('--workers')) || 3);
@@ -542,7 +544,8 @@ async function main() {
         status[r.status === 'accepted' ? 'accepted' : 'queued']++;
         const secs = (Date.now() - t0) / 1000;
         status.done++; status.seconds_per_company.push(Math.round(secs * 10) / 10);
-        console.log(`[${status.done}/${total}] ${item.name} ${r.status} ${r.domain || '-'} ${r.ats || '-'} ${secs.toFixed(0)}s${r.status === 'queued' ? '  (' + String(r.reason).slice(0, 90) + ')' : ''}`);
+        pg.log(`[${status.done}/${total}] ${item.name} ${r.status} ${r.domain || '-'} ${r.ats || '-'} ${secs.toFixed(0)}s${r.status === 'queued' ? '  (' + String(r.reason).slice(0, 90) + ')' : ''}`);
+        pg.tick(r.status);
         if (status.seconds_per_company.length === 10 && !status.first10) {
           status.first10 = timingReport(status.seconds_per_company, (total - done.size) / WORKERS);
           console.log(`First 10: ${status.first10.avg_seconds}s per company each, ${WORKERS} at a time; about ${status.first10.estimated_total_minutes} min for all ${total - done.size}.`);
@@ -560,6 +563,7 @@ async function main() {
     status.state = 'halted'; status.halt_reason = err.message; code = err.code;
     console.error(redact(`HALTED: ${err.message}. ${status.done} of ${total} done; rerun to resume.`));
   } finally {
+    pg.done();
     status.current = null;
     if (llm) { status.llm_usage = llm.usage; console.log(`LLM usage: ${llm.usage.calls} calls, ${llm.usage.input} input tokens, ${llm.usage.output} output tokens, ${llm.usage.errors} errors`); }
     writeStatus(status);

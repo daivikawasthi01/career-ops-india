@@ -11,6 +11,7 @@
  */
 import { existsSync, readFileSync, appendFileSync, writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { createProgress } from '../lib/progress.mjs';
 import { isMainModule } from '../lib/is-main-module.mjs';
 import { getCareerOpsRoot } from '../path-resolver.mjs';
 import { browserLaunchOptions } from '../lib/browser-launch.mjs';
@@ -83,6 +84,7 @@ async function main() {
   setSessionContext(context);
   await context.route('**/*', (route) => (['image', 'font', 'media'].includes(route.request().resourceType()) ? route.abort() : route.continue()));
   let next = 0; let stop = null; let n = 0; const counts = {};
+  const pg = createProgress({ total: todo.length, label: 'pass 3', logFile: join(ROOT, 'data', 'careers-run-pass3.log') }); pg.start();
   const worker = async () => {
     while (!stop && next < todo.length) {
       const row = todo[next++]; let r;
@@ -91,11 +93,13 @@ async function main() {
         r = { company: row.company, decision: 'error', old_url: row.careers_url, notes: String(err?.message || err).slice(0, 100) };
       }
       appendFileSync(OUT, line(r) + '\n'); counts[r.decision] = (counts[r.decision] || 0) + 1; n++;
-      console.log(`[${n}/${todo.length}] ${row.company} ${r.decision} ${r.new_url || ''}`.slice(0, 180));
+      pg.log(`[${n}/${todo.length}] ${row.company} ${r.decision} ${r.new_url || ''}`.slice(0, 180));
+      pg.tick(r.decision);
     }
   };
   await Promise.all(Array.from({ length: Math.max(1, Number(arg('--workers')) || 2) }, worker));
   await context.close().catch(() => {});
+  pg.done();
   console.log('Summary:', JSON.stringify(counts));
   if (stop) { console.error(`HALTED: ${stop.message}`); return stop.code; }
   return 0;
