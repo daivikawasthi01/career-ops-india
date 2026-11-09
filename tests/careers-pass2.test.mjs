@@ -152,6 +152,16 @@ test('India locations are recognised in odd spellings', () => {
   for (const l of ['Berlin', 'Remote', 'Indianapolis', 'In person', 'Austin, TX']) assert.ok(!isIndiaLoc(l), l);
 });
 
+test('a site menu or product list in page JSON is not a job list, and a soft 404 is not a careers page', () => {
+  const menu = { nav: [{ name: 'romance', id: 1, url: '/romance' }, { name: 'party wear', id: 2, url: '/pw' }, { name: 'festive', id: 3, url: '/f' }, { name: 'weekend', id: 4, url: '/w' }] };
+  assert.equal(jobsFromJson(menu), null);
+  const jobs = { items: [{ title: 'Backend Engineer', id: 1, location: 'Pune' }, { title: 'Data Analyst', id: 2, location: 'Remote' }, { title: 'Product Designer', id: 3, location: 'Delhi' }] };
+  assert.equal(jobsFromJson(jobs).count, 3);
+  const links = Array.from({ length: 6 }, (_, i) => ({ href: `https://x.com/jobs/${i}`, text: `Software Engineer ${i}` }));
+  assert.equal(classifyPage({ status: 200, text: 'Whoopsie Daisy | We could not find what you are looking for. | CONTINUE SHOPPING', links }).verdict, 'not-careers');
+  assert.equal(classifyPage({ status: 200, text: 'Careers | open positions', links }).verdict, 'listings-on-page');
+});
+
 import { OPEN_ROLES_RE } from '../tools/discover-careers.mjs';
 test('open-roles button text is recognised, apply-style buttons are not', () => {
   for (const t of ['Show open roles', 'View all jobs', 'See open positions', 'Explore openings', 'Open Roles', 'View current openings →']) assert.ok(OPEN_ROLES_RE.test(t), t);
