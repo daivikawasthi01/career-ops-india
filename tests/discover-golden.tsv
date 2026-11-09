@@ -1,0 +1,19 @@
+company	allowed_domains	expect	ats
+TIDE	tide.co	any	
+Zepto	zeptonow.com|zepto.com	any	
+TCS	tcs.com	any	
+Wipro	wipro.com	any	
+Slice	sliceit.com	any	
+Apna	apna.co	any	
+Cred	cred.club	any	
+Sagent	sagent.com	accept	rippling
+Groww	groww.in	accept	greenhouse
+Paytm	paytm.com	accept	lever
+Glance	glance.com|glance.in|glance.inmobi.com	any	greenhouse
+Unacademy	unacademy.com	queue	
+Swiggy	swiggy.com	any	
+Jar	jar.app	any	
+Porter	porter.in	any	
+Navi	navi.com	any	
+Freshworks	freshworks.com	any	
+Razorpay	razorpay.com	any	

@@ -132,44 +132,116 @@ test('a company site that blocks us is noted and the verdict stays needs-review'
   assert.ok(v.notes.some((n) => /blocked automated access: tide.com/.test(n)));
 });
 
-import { applyDecision, buildPrompt, modelName, loadGroqKey, decisionSchema } from '../lib/careers-llm.mjs';
+import { modelName, loadGroqKey, loadModels, domainSchema, verifySchema, domainPrompt, verifyPrompt } from '../lib/careers-llm.mjs';
+import {
+  registrable, sameSite, isAggregator, classifyFetch, isParked, botWall, checkDomain, quoteInEvidence, checkL1, compareAts,
+  boardFingerprint, fingerprintFit, gate, queryVariants,
+} from '../lib/careers-pipeline.mjs';
+import { checkGolden, readGolden } from '../tools/discover-careers.mjs';
 
-test('llm: the model picks an index from the vetted list, never a URL, and can raise a row to medium at most', () => {
-  const cands = ['https://a.com/careers', 'https://boards.greenhouse.io/a', 'https://a.com/campus'];
-  const ok = applyDecision({ candidate: 1, is_careers_page: true, ats: 'custom', campus: 2, confidence: 'high', reason: 'jobs board' }, cands);
-  assert.equal(ok.confidence, 'medium');
-  assert.equal(ok.careers_url, cands[1]);
-  assert.equal(ok.ats, 'greenhouse', 'the ATS comes from the URL, not from the model');
-  assert.equal(ok.campus_url, cands[2]);
-  for (const bad of [null, { candidate: 9, is_careers_page: true, ats: '', campus: null, confidence: 'high', reason: 'x' },
-    { candidate: 0, is_careers_page: false, ats: '', campus: null, confidence: 'high', reason: 'x' },
-    { candidate: 0, is_careers_page: true, ats: '', campus: null, confidence: 'low', reason: 'x' }]) {
-    assert.equal(applyDecision(bad, cands).confidence, 'needs-review');
-  }
+test('pipeline: registrable domains and aggregators', () => {
+  assert.equal(registrable('www.careers.cred.co.in'), 'cred.co.in');
+  assert.equal(registrable('jobs.example.com'), 'example.com');
+  assert.ok(sameSite('www.tide.co', 'tide.co') && !sameSite('tide.com', 'tide.co'));
+  assert.ok(isAggregator('www.linkedin.com', 'Cred') && !isAggregator('shine.com', 'Shine'));
 });
 
-test('llm: the prompt carries only company, domain, title, 30 link texts and numbered candidates', () => {
-  const p = buildPrompt({ company: 'A', domain: 'a.com', title: 'Home', linkTexts: Array.from({ length: 50 }, (_, i) => `t${i}`), candidates: ['https://a.com/c'], html: 'SECRET' });
-  assert.ok(p.includes('0: https://a.com/c') && p.includes('t29') && !p.includes('t30') && !p.includes('SECRET'));
+test('pipeline L2: failures are classified and retried with backoff', async () => {
+  assert.deepEqual(['404', '403', '429', '503', '200'].map((s) => classifyFetch({ status: Number(s) })), ['404', '403', '429', '5xx', 'ok']);
+  assert.equal(classifyFetch({ error: Object.assign(new Error('getaddrinfo ENOTFOUND x'), { code: 'ENOTFOUND' }) }), 'dns');
+  assert.equal(classifyFetch({ error: new Error('The operation was aborted due to timeout') }), 'timeout');
+  assert.ok(isParked('This domain is for sale. Buy this domain today') && !isParked('x'.repeat(200)));
+  assert.ok(botWall(403, '') && botWall(200, 'Just a moment...') && !botWall(200, 'hello'));
+  let calls = 0; const waits = [];
+  const res = (status, url = 'https://a.com/') => ({ status, url, text: async () => 'x'.repeat(300) });
+  const flaky = async () => (++calls < 3 ? res(503) : res(200));
+  const r = await checkDomain('a.com', { fetchImpl: flaky, lookup: async () => ({}), sleep: async (ms) => waits.push(ms) });
+  assert.equal(r.class, 'ok'); assert.equal(r.attempts, 3); assert.deepEqual(waits, [1000, 2000]);
+  const dead = await checkDomain('nx.invalid', { fetchImpl: async () => { throw new Error('x'); }, lookup: async () => { throw Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' }); } });
+  assert.equal(dead.class, 'dns');
+  const away = await checkDomain('cred.co.in', { fetchImpl: async () => res(200, 'https://other-site.com/'), lookup: async () => ({}), sleep: async () => {} });
+  assert.ok(away.redirectedAway);
+  const gone = await checkDomain('a.com', { fetchImpl: async () => res(404), lookup: async () => ({}), sleep: async () => {} });
+  assert.equal(gone.class, '404'); assert.equal(gone.attempts, 1, '404 is not retried');
 });
 
-test('llm: model ids need the groq: prefix, and a schema-invalid answer is rejected', () => {
+test('pipeline L1: the model may only name an L0 candidate and must quote the text it was shown', () => {
+  const cands = [{ domain: 'tide.co' }, { domain: 'tide.com' }];
+  const texts = ['Tide: business bank account for small businesses in the UK and India'];
+  const ok = { domain: 'tide.co', evidence_quote: 'business bank account for small businesses', confidence: 'high' };
+  assert.equal(checkL1(ok, cands, texts).ok, true);
+  assert.equal(checkL1({ ...ok, domain: 'tide-bank.com' }, cands, texts).ok, false, 'not an L0 candidate');
+  assert.equal(checkL1({ ...ok, evidence_quote: 'invented sentence about nothing' }, cands, texts).ok, false);
+  assert.equal(checkL1({ ...ok, confidence: 'low' }, cands, texts).ok, false);
+  assert.equal(checkL1({ domain: null, evidence_quote: '', confidence: 'high' }, cands, texts).none, true);
+  assert.equal(checkL1(null, cands, texts).ok, false);
+  assert.ok(quoteInEvidence('Business  Bank account', texts) && !quoteInEvidence('short', ['short text']), 'quotes under 8 characters do not count');
+});
+
+test('pipeline L5: ATS against the portals board, fingerprint against the profile', () => {
+  const found = { ats: 'lever', tenant: 'paytm' };
+  assert.equal(compareAts(found, 'https://jobs.lever.co/paytm').state, 'same');
+  assert.equal(compareAts(found, 'https://careers.smartrecruiters.com/paytm').state, 'different');
+  assert.equal(compareAts(null, 'https://jobs.lever.co/paytm').state, 'no-ats-found');
+  assert.equal(compareAts(found, '').state, 'no-board');
+  const jobs = Array.from({ length: 12 }, (_, i) => ({ title: `Engineer ${i}`, location: 'Berlin' }));
+  const fp = boardFingerprint(jobs, () => false);
+  assert.equal(fp.sample.length, 10);
+  assert.equal(fingerprintFit(fp, { expectIndia: true }).state, 'mismatch');
+  assert.equal(fingerprintFit(fp, { expectIndia: false }).state, 'fits');
+  assert.equal(fingerprintFit(boardFingerprint(jobs.slice(0, 3), () => false), { expectIndia: true }).state, 'fits', 'a tiny board is no evidence');
+});
+
+test('pipeline L6: accepted only when every gate agrees; a missing verifier queues the row', () => {
+  const good = { l1: { ok: true }, l2: { class: 'ok' }, l3: { careersUrl: 'https://x' }, l4: { ok: true }, l5ats: { state: 'same' }, l5fp: { state: 'fits' } };
+  assert.equal(gate(good).accepted, true);
+  assert.equal(gate({ ...good, l5ats: { state: 'different', detail: 'a vs b' } }).accepted, false);
+  assert.equal(gate({ ...good, l4: { ok: false, why: 'not a careers page' } }).accepted, false);
+  assert.equal(gate({ ...good, l2: { class: 'ok', parked: true } }).accepted, false);
+  assert.equal(gate({ ...good, l2: { class: 'ok', redirectedAway: true, finalHost: 'x.com' } }).accepted, false);
+  assert.equal(gate({ ...good, l5fp: { state: 'mismatch', detail: 'none in India' } }).accepted, false);
+  assert.equal(gate({ ...good, l4: null }).accepted, false, 'LLM mode needs the verifier');
+  assert.equal(gate({ ...good, l4: null }, { needLlm: false }).accepted, true);
+  assert.equal(gate({ ...good, l5ats: { state: 'no-board' } }).accepted, true, 'no portals board to compare is not a failure');
+  assert.equal(queryVariants('Cred', { expectIndia: true }).length, 3);
+});
+
+test('llm: schemas are fixed, prompts carry only the allowed fields, the provider prefix is checked', () => {
+  assert.equal(domainSchema.safeParse({ domain: 'a.com', evidence_quote: 'q', confidence: 'high' }).success, true);
+  assert.equal(domainSchema.safeParse({ domain: 'a.com' }).success, false);
+  assert.equal(verifySchema.safeParse({ is_company_careers_page: true, same_company: 'maybe', ats: 'x', evidence_quote: 'q', confidence: 'high' }).success, false);
   assert.equal(modelName('groq:openai/gpt-oss-120b'), 'openai/gpt-oss-120b');
-  assert.throws(() => modelName('openai/gpt-oss-120b'));
-  assert.equal(decisionSchema.safeParse({ candidate: 'one' }).success, false);
+  assert.equal(modelName('openai/gpt-oss-20b'), 'openai/gpt-oss-20b');
+  assert.throws(() => modelName('openai:gpt-4o'));
+  const v = verifyPrompt({ profile: { name: 'A', hq: 'India', titles: ['t1'] }, url: 'https://a.com/c', title: 'T', text: 'body', domainChoice: 'SECRET' });
+  assert.ok(!v.includes('SECRET') && v.includes('t1'));
+  assert.ok(domainPrompt({ company: 'A', candidates: [{ domain: 'a.com', source: 'search', homeText: 'hi', results: [] }] }).includes('a.com [search]'));
 });
 
-test('llm: GROQ_API_KEY comes from the environment first, then .env; no key gives an empty string', () => {
+test('llm: key and model ids come from the environment, then .env', () => {
   const dir = mkdtempSync(join(tmpdir(), 'llm-key-'));
-  const saved = process.env.GROQ_API_KEY;
+  const saved = { k: process.env.GROQ_API_KEY, m: process.env.GROQ_MODEL };
   try {
-    delete process.env.GROQ_API_KEY;
+    delete process.env.GROQ_API_KEY; delete process.env.GROQ_MODEL;
     assert.equal(loadGroqKey([dir]), '');
-    writeFileSync(join(dir, '.env'), 'OTHER=1\nGROQ_API_KEY="gsk_test"\n');
+    writeFileSync(join(dir, '.env'), 'OTHER=1\nGROQ_API_KEY="gsk_test"\nGROQ_MODEL=groq:custom-model\n');
     assert.equal(loadGroqKey([dir]), 'gsk_test');
+    assert.equal(loadModels([dir]).model, 'groq:custom-model');
+    assert.equal(loadModels([dir]).fallback, 'groq:openai/gpt-oss-20b');
     process.env.GROQ_API_KEY = 'from-env';
     assert.equal(loadGroqKey([dir]), 'from-env');
-  } finally { if (saved === undefined) delete process.env.GROQ_API_KEY; else process.env.GROQ_API_KEY = saved; rmSync(dir, { recursive: true, force: true }); }
+  } finally { for (const [k, n] of [['k', 'GROQ_API_KEY'], ['m', 'GROQ_MODEL']]) { if (saved[k] === undefined) delete process.env[n]; else process.env[n] = saved[k]; } rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('golden: a wrong accepted domain fails, an unexpected accept fails, a queued row passes when allowed', () => {
+  const cases = readGolden(new URL('./discover-golden.tsv', import.meta.url).pathname);
+  assert.ok(cases.length >= 12 && ['TIDE', 'Zepto', 'TCS', 'Wipro', 'Slice', 'Apna', 'Cred', 'Sagent', 'Groww', 'Paytm', 'Glance', 'Unacademy'].every((n) => cases.some((c) => c.company === n)));
+  const rows = cases.map((c) => ({ company: c.company, status: 'queued', domain: '', ats: '', reason: 'x' }));
+  const withAccept = (name, over) => rows.map((r) => (r.company === name ? { ...r, status: 'accepted', ...over } : r));
+  assert.ok(checkGolden(cases, rows).every((f) => /expected accepted/.test(f)), 'only the must-accept cases fail when everything is queued');
+  assert.ok(checkGolden(cases, withAccept('Zepto', { domain: 'planet1.co' })).some((f) => /WRONG domain/.test(f)));
+  assert.ok(checkGolden(cases, withAccept('Unacademy', { domain: 'unacademy.com' })).some((f) => /expected queued/.test(f)));
+  assert.ok(checkGolden(cases, withAccept('Cred', { domain: 'cred.club' })).every((f) => !/Cred/.test(f)));
 });
 
 test('classify: a custom careers page on a domain we only guessed goes to review', () => {
