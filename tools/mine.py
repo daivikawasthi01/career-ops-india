@@ -27,6 +27,9 @@ from openpyxl import Workbook
 from openpyxl.styles import Font
 from tqdm import tqdm
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import dedup  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "output"
 STATE = ROOT / "data" / "cache" / "mine-state.json"  # last successful run per step
@@ -151,26 +154,44 @@ def site_of(offer):
 
 
 def merge(per_step):
-    by_url = {}
-    for step, offers in per_step.items():
-        for o in offers:
-            hit = by_url.get(norm_url(o.get("url")))
-            if hit:
-                hit["steps"].add(step)
-            else:
-                by_url[norm_url(o.get("url"))] = {**o, "site": site_of(o), "steps": {step}}
-    return list(by_url.values())
+    """One row per job across all steps: canonical URL or company+title+city, best URL kept (tools/dedup.py)."""
+    rows = dedup.merge_offers(per_step)
+    for r in rows:
+        r["site"] = site_of(r)
+    return rows
+
+
+def dedup_report(per_step, path, sample=30):
+    """Duplicates collapsed per platform pair, plus a sample of merged and of similar-but-unmerged rows to eyeball."""
+    import random
+    rows = merge(per_step)
+    stats = dedup.collapse_stats(rows)
+    rng = random.Random(0)
+    merged = [r for r in rows if len(r["found_by"]) > 1]
+    similar = dedup.similar_unmerged(rows)
+    lines = ["# Dedup report", "", f"{sum(len(o) for o in per_step.values())} offers in, {len(rows)} jobs out, "
+             f"{len(merged)} jobs found by more than one source.", "", "## Collapsed per source pair", ""]
+    lines += [f"- {a} + {b}: {n}" for (a, b), n in sorted(stats.items(), key=lambda kv: -kv[1])] or ["- none"]
+    lines += ["", f"## {min(sample, len(merged))} merged rows (check these really are one job)", ""]
+    for r in rng.sample(merged, min(sample, len(merged))):
+        lines.append(f"- {r.get('company')} | {r.get('title')} | {r.get('location')} | found by {', '.join(r['found_by'])}")
+        lines += [f"    - {u}" for u in r["urls"]]
+    lines += ["", f"## {min(sample, len(similar))} similar rows that did NOT merge (check these really are different)", ""]
+    for a, b in rng.sample(similar, min(sample, len(similar))):
+        lines.append(f"- {a.get('company')}: \"{a.get('title')}\" ({a.get('location')}) vs \"{b.get('title')}\" ({b.get('location')})")
+    path.write_text("\n".join(lines) + "\n")
+    return stats, len(merged)
 
 
 def write_excel(path, per_step, runs, failures, started):
     wb = Workbook()
     ws = wb.active
     ws.title = "Offers"
-    ws.append(["Company", "Title", "Location", "Site", "Source", "Found by", "Link"])
+    ws.append(["Company", "Title", "Location", "Site", "Source", "Found by", "Link", "Confidence"])
     for o in sorted(merge(per_step), key=lambda x: (x["site"], str(x.get("company") or ""))):
         ws.append([o.get("company") or "", o.get("title") or "", o.get("location") or "",
-                   o["site"], o.get("source") or "", ", ".join(sorted(o["steps"])), o.get("url") or ""])
-        cell = ws.cell(row=ws.max_row, column=7)
+                   o["site"], o.get("source") or "", ", ".join(o["found_by"]), o.get("url") or "", o.get("confidence") or ""])
+        cell = ws.cell(row=ws.max_row, column=7)  # Link
         if cell.value:
             cell.hyperlink = cell.value
             cell.font = Font(color="0563C1", underline="single")
@@ -198,32 +219,20 @@ def write_excel(path, per_step, runs, failures, started):
     tmp.replace(path)
 
 
-PLUS = re.compile(r"^\s+\+ (.+?) \| (.+?) \| (.*?)(?: \[(?:Trust|BLACKLISTED).*)?$")
 TICK = re.compile(r"scan: (\d+)/(\d+)")
 ATS_TICK = re.compile(r"(\d+)\s*/\s*(\d+)")
 
 
-def parse_bare_line(step_id, line, scraped, bar):
-    """Pull offers and progress out of scan.mjs / scan-ats-full.mjs output. Returns the stdout receipt if this line is one."""
+def parse_bare_line(step_id, line, bar):
+    """Progress ticks and the stdout receipt of scan.mjs / scan-ats-full.mjs. Offers come from the --json file, not from here."""
     text = line.lstrip()
     if text.startswith("{"):
-        start = text.find("{")
         try:
-            ev = json.loads(text[start:])
+            ev = json.loads(text)
         except json.JSONDecodeError:
             return None
-        if ev.get("kind") == "offer" and ev.get("url"):
-            scraped.append({"company": ev.get("company"), "title": ev.get("title"), "location": ev.get("location"),
-                            "url": ev["url"], "source": ev.get("source") or "ats"})
-            bar.set_postfix_str(f"{len(scraped)} offers", refresh=True)
-            return None
-        if "added_urls" in ev or "postingsKept" in ev:
-            return ev
-        return None
+        return ev if ("added_urls" in ev or "postingsKept" in ev) else None
     if step_id == "portals":
-        m = PLUS.match(line)
-        if m:
-            scraped.append({"company": m.group(1), "title": m.group(2), "location": m.group(3), "source": "portals"})
         t = TICK.search(line)
         if t:
             bar.total, bar.n = max(int(t.group(2)), 1), min(int(t.group(1)), int(t.group(2)))
@@ -232,24 +241,14 @@ def parse_bare_line(step_id, line, scraped, bar):
         t = ATS_TICK.search(line)
         if t and int(t.group(2)) > 0:
             bar.total, bar.n = int(t.group(2)), min(int(t.group(1)), int(t.group(2)))
-            bar.set_postfix_str(f"{len(scraped)} offers", refresh=True)
+            bar.refresh()
     return None
-
-
-def finish_bare(step_id, scraped, receipt):
-    if step_id == "portals":
-        urls = (receipt or {}).get("added_urls") or []
-        # offers are printed in the same order as added_urls; only trust the pairing when counts agree
-        if len(urls) == len(scraped):
-            return [{**o, "url": u} for o, u in zip(scraped, urls)]
-        return [{**o, "url": u} for o, u in zip(scraped, urls)] + [o for o in scraped[len(urls):]]
-    return scraped
 
 
 def run_step(step, log, failures, position):
     """Run one scanner, drive its bar, return (offers, status dict)."""
     json_path = Path(tempfile.mkdtemp(prefix="mine-")) / f"{step['id']}.json"
-    cmd = ["node", str(ROOT / step["file"]), *step["args"], *(["--json"] if step.get("bare_json") else ["--json", str(json_path)])]
+    cmd = ["node", str(ROOT / step["file"]), *step["args"], "--json", str(json_path)]
     env = {**os.environ, "MINE_PROGRESS": "1"}
     log.write(f"\n===== {step['id']}: {' '.join(cmd)}\n")
     started = time.time()
@@ -259,7 +258,7 @@ def run_step(step, log, failures, position):
                bar_format="{desc:<12} {percentage:3.0f}%|{bar:24}| {n_fmt}/{total_fmt} [{elapsed}] {postfix}")
     fails = retries = 0
     tail = []
-    scraped, receipt = [], None
+    receipt = None
     for raw in proc.stdout:
         line = raw.rstrip("\n")
         log.write(line + "\n")
@@ -268,7 +267,7 @@ def run_step(step, log, failures, position):
         if not m:
             tail = (tail + [line])[-6:]
             if step.get("bare_json"):
-                receipt = parse_bare_line(step["id"], line, scraped, bar) or receipt
+                receipt = parse_bare_line(step["id"], line, bar) or receipt
             continue
         kind, rest = m.groups()
         if kind == "PROGRESS":
@@ -289,13 +288,14 @@ def run_step(step, log, failures, position):
     bar.close()
     secs = round(time.time() - started)
     offers = []
-    if step.get("bare_json"):
-        offers = finish_bare(step["id"], scraped, receipt)
-    elif json_path.exists():
+    offers_ok = True
+    if json_path.exists():
         try:
             offers = json.loads(json_path.read_text())
         except json.JSONDecodeError:
-            pass
+            offers_ok = False
+    else:
+        offers_ok = False
     shutil.rmtree(json_path.parent, ignore_errors=True)
     board_errors = (receipt or {}).get("errors") or []
     for e in board_errors:
@@ -304,6 +304,9 @@ def run_step(step, log, failures, position):
     # scan.mjs exits 2 when some boards errored but the run completed and wrote a receipt
     if code == 2 and receipt is not None:
         code = 0
+    if code == 0 and not offers_ok and step.get("bare_json"):
+        code = 3
+        tail = tail + ["no readable --json offers file"]
     if code != 0:
         status, note = "failed", f"exit {code}: " + " / ".join(tail[-3:])
     elif fails:
@@ -354,10 +357,14 @@ def main():
                 save_state(state)
             write_excel(xlsx_path, per_step, runs, failures, started)
     total = len(merge(per_step))
+    dedup_path = OUT / "logs" / f"dedup-{started:%Y%m%d-%H%M%S}.md"
+    stats, multi = dedup_report(per_step, dedup_path)
     print(f"\n{total} unique offers from {len(steps)} step(s); {len(failures)} failure/retry events")
     for r in runs:
         print(f"  {r['id']:<12} {r['status']:<8} {r['count']:>4} offers  {r['secs']}s  {r['note']}")
-    print(f"Excel: {xlsx_path}\nLog:   {log_path}")
+    print(f"{multi} jobs were found by more than one source; collapsed per pair: "
+          + (", ".join(f"{a}+{b} {n}" for (a, b), n in sorted(stats.items(), key=lambda kv: -kv[1])) or "none"))
+    print(f"Excel: {xlsx_path}\nLog:   {log_path}\nDedup: {dedup_path}")
     return 0 if all(r["status"] != "failed" for r in runs) else 1
 
 

@@ -102,5 +102,23 @@ class StateFile(unittest.TestCase):
             self.assertEqual(mine.load_state(path)["ats"]["coverage"], 0.9)
 
 
+
+class BareLines(unittest.TestCase):
+    class Bar:
+        total = n = 0
+        def refresh(self): pass
+
+    def test_receipt_is_returned_and_offer_lines_are_ignored(self):
+        bar = self.Bar()
+        self.assertIsNone(mine.parse_bare_line("ats", '{"kind":"offer","url":"https://x","company":"A","title":"B"}', bar))
+        self.assertEqual(mine.parse_bare_line("portals", '{"added_urls":["u"],"errors":[]}', bar)["added_urls"], ["u"])
+        self.assertEqual(mine.parse_bare_line("ats", '{"postingsKept":3}', bar)["postingsKept"], 3)
+
+    def test_progress_tick(self):
+        bar = self.Bar()
+        mine.parse_bare_line("portals", "scan: 5/20", bar)
+        self.assertEqual((bar.n, bar.total), (5, 20))
+
+
 if __name__ == "__main__":
     unittest.main()

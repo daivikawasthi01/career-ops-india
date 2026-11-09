@@ -72,6 +72,7 @@ import join, { parseCompanySitemap } from './providers/join.mjs';
 import { openProviderIdCache, PROVIDER_ID_CACHE_DIR } from './provider-id-cache.mjs';
 import { decodeEntities } from './providers/_html-entities.mjs';
 import { applyPipelineConfig } from './lib/pipeline-config.mjs';
+import { jsonPathArg, plainOffer, writeJsonFile } from './lib/json-out.mjs';
 import { buildTitleFilter, buildTitleFilterOverrides, buildTitleFilterWithOverrides, buildLocationFilter, buildContentFilterOrExit, matchedTitleKeywords, loadSeenUrls, seenJobKey, appendToPipeline, appendToScanHistory, findBlacklistEntry, loadBlacklist, parseSinceDays, BROWSER_PROCESS_ENV, DATA_ROOT as SCAN_DATA_ROOT, PORTALS_PATH, PIPELINE_PATH, SCAN_HISTORY_PATH } from './scan.mjs';
 import { localToday } from './lib/local-today.mjs';
 import { printScanSummaryHeader } from './lib/scan-summary-marker.mjs';
@@ -447,7 +448,7 @@ const KNOWN_FLAGS = [
 
 // Flags that consume the next argv token as a value (space-separated form —
 // the `--flag=value` form is self-contained and never needs this).
-const VALUE_FLAGS = ['--since', '--limit', '--ats', '--seeds', '--md-out'];
+const VALUE_FLAGS = ['--since', '--limit', '--ats', '--seeds', '--md-out', '--json'];
 
 const USAGE = `Usage:
   node scan-ats-full.mjs                      # scan all ATS directories, last 3 days
@@ -563,7 +564,8 @@ export function parseArgs(argv) {
     liveness: args.includes('--liveness'),
     verbose: args.includes('--verbose'),
     mdOut: valueOf('--md-out'),
-    json: args.includes('--json'),
+    json: args.includes('--json') || args.some((a) => a.startsWith('--json=')),
+    jsonPath: jsonPathArg(args),
     includeUndated: args.includes('--include-undated'),
     includeBlacklisted: args.includes('--include-blacklisted'),
     shuffle: args.includes('--shuffle'),
@@ -915,7 +917,7 @@ export function keepAndMaybeEmit(job, source, sink, blacklist, opts) {
   const kept = { ...job, ...(opts.workplacePolicy ? { geographyEvidence: captureWorkplaceEvidence(job) } : {}), source, dateStatus: job.postedAt ? 'dated' : 'unknown' };
   sink.push(kept);
   const live = filterBlacklistedOffers([kept], blacklist, { includeBlacklisted: opts.includeBlacklisted });
-  if (live.offers.length) emitLiveOffer(live.offers[0], source, { json: opts.json });
+  if (live.offers.length) emitLiveOffer(live.offers[0], source, { json: opts.json && !opts.jsonPath });
 }
 
 // ── VC portfolio seed scan ──────────────────────────────────────────
@@ -1968,6 +1970,7 @@ async function main() {
   // The authoritative machine-readable result: lets a caller (e.g. the web)
   // tell a *degraded* scan (capped / stale dataset / undated dropped) apart
   // from a genuinely *empty* one. In --json mode stdout carries ONLY this.
+  if (opts.jsonPath) writeJsonFile(opts.jsonPath, offers.map((o) => plainOffer(o, o.source)));
   if (opts.json) {
     process.stdout.write(JSON.stringify({
       date,

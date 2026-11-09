@@ -115,6 +115,7 @@ test('--json emits exactly one clean successful receipt', () => {
       date: receipt.date,
       scanned: 0,
       skipped: 0,
+      backoff_skipped: [],
       found: 0,
       filtered: 0,
       duplicates: 0,

@@ -75,6 +75,7 @@ import { normalizeCompany, appendLedgerRows, companiesMatchIgnoringCorporateForm
 import { normalizeCompanyName } from './invite-match.mjs';
 import { withPipelineLock } from './pipeline-lock.mjs';
 import { applyPipelineConfig } from './lib/pipeline-config.mjs';
+import { jsonPathArg, plainOffer, writeJsonFile } from './lib/json-out.mjs';
 import { compileKeyword, compilePositiveKeyword, compileContentKeyword, buildTitleFilter, foldTitle, foldContentText, compileContentTraits } from './title-keywords.mjs';
 import { flagValue, hasFlag, validateFlags } from './lib/cli-flags.mjs';
 import { withPortalHealthLock } from './portal-health-lock.mjs';
@@ -4485,7 +4486,7 @@ const KNOWN_FLAGS = [
 // form is self-contained and never needs this). --throttle is deliberately
 // excluded: only its bare and `--throttle=<ms>` forms are read below, so a
 // following token is never its value.
-const VALUE_FLAGS = ['--company', '--posted-after', '--posted-before', '--since'];
+const VALUE_FLAGS = ['--company', '--posted-after', '--posted-before', '--since', '--json'];
 
 const USAGE = `Usage:
   node scan.mjs                              # scan all enabled companies
@@ -5805,6 +5806,8 @@ async function main() {
   console.log(`\n${pipelineRunHint()}`);
   console.log('→ Share results and get help: https://discord.gg/8pRpHETxa4');
 
+  const jsonPath = jsonPathArg(args);
+  if (jsonPath) writeJsonFile(jsonPath, verifiedOffers.map((o) => plainOffer(o, 'portals')));
   if (jsonMode) {
     const filtered = totalFilteredTitle + totalFilteredDeclaredField + totalFilteredTier + totalFilteredLocation
       + totalFilteredPostingAge + totalFilteredPostedDate + totalFilteredSalary
