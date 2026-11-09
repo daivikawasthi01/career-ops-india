@@ -21,7 +21,9 @@
  *
  * Criterion (--apply): disable only when india_any = 0 (nothing located in India at any level). india_any > 0 with
  * india_entry = 0 stays enabled and gets `watch: true`. Boards listed in config/protected-boards.txt are never
- * disabled and are always enabled with `watch: true`. Every auto-disable adds `# auto-disabled <date> by
+ * disabled and are always enabled (with `watch: true` while they have no entry-level posting). A board with 3 or
+ * fewer postings in total is never auto-disabled: it is listed in data/check-by-hand.txt. A board that gains an
+ * India entry-level posting loses `watch`. Every auto-disable adds `# auto-disabled <date> by
  * board-india-check (india_any=0)`.
  *   options: --limit N  --concurrency N (default 6)  --force (apply while discover-ats runs)
  *
@@ -39,12 +41,16 @@ import { loadProviders, resolveProvider } from './providers/_registry.mjs';
 import { makeHttpCtx } from './providers/_http.mjs';
 import { buildTitleFilter, buildLocationFilter } from './scan.mjs';
 import { applyPipelineConfig } from './lib/pipeline-config.mjs';
-import { discoverIsRunning, backupFile, atomicWrite, setEnabledInText, setFieldInText, autoDisabledNames } from './lib/portals-edit.mjs';
+import { discoverIsRunning, backupFile, atomicWrite, setEnabledInText, setFieldInText, removeFieldInText, autoDisabledNames } from './lib/portals-edit.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PORTALS_PATH = process.env.CAREER_OPS_PORTALS || join(HERE, 'portals.yml');
 const REPORT_PATH = join(HERE, 'data', 'cache', 'board-india-check.tsv');
 // One name per line, # comments: boards that stay enabled and watched whatever the counts say.
+const CHECK_BY_HAND_PATH = process.env.CAREER_OPS_CHECK_BY_HAND || join(HERE, 'data', 'check-by-hand.txt');
+/** A board that returns this few postings or fewer is probably not being read in full: zero proves nothing. */
+export const SMALL_BOARD_MAX = 3;
+const REMOTE_RE = /\b(remote|anywhere|worldwide|global|apac|asia|work from home|wfh)\b/i;
 const PROTECTED_PATH = process.env.CAREER_OPS_PROTECTED || join(HERE, 'config', 'protected-boards.txt');
 
 export function loadProtected(path = PROTECTED_PATH) {
@@ -57,37 +63,45 @@ export function scoreJobs(jobs, titleFilter, locationFilter) {
   let india = 0;
   let entry = 0;
   let both = 0;
+  let remoteOpen = 0;
   for (const job of Array.isArray(jobs) ? jobs : []) {
     const inIndia = Boolean(locationFilter(job.location, job.url, job.title, job));
     const entryLevel = Boolean(titleFilter(job.title));
+    // Not counted as India, but the location or title says remote / anywhere / APAC: possibly open to an Indian candidate.
+    if (!inIndia && (REMOTE_RE.test(job.location || '') || REMOTE_RE.test(job.title || ''))) remoteOpen++;
     if (inIndia) india++;
     if (entryLevel) entry++;
     if (inIndia && entryLevel) both++;
   }
   // india_any: passes the location filter at any level. india_entry: passes both filters.
-  return { total: Array.isArray(jobs) ? jobs.length : 0, india, entry, both, india_any: india, india_entry: both };
+  return { total: Array.isArray(jobs) ? jobs.length : 0, india, entry, both, india_any: india, india_entry: both, remote_open: remoteOpen };
 }
 
 /**
  * What --apply should do for one checked entry, or null for no change. Pure.
  *
- *   disable       enabled, india_any = 0 (nothing in India at any level)
- *   watch         enabled, india_any > 0 but india_entry = 0: stays on, flagged `watch: true`
- *   enable        disabled `source: jobradar` board that now has an India entry-level posting
- *   enable-watch  a protected board that is off: protected boards are always on and watched
- * Protected boards are never disabled. Errors are never read as zero.
+ *   disable        enabled, india_any = 0, and the board returned more than SMALL_BOARD_MAX postings
+ *   check-by-hand  the same, but a board that small is probably not read in full: listed, never disabled
+ *   watch          enabled, india_any > 0, india_entry = 0
+ *   unwatch        carries `watch: true` but has india_entry > 0: ordinary scans already find its roles
+ *   enable         disabled `source: jobradar` board that now has an India entry-level posting
+ *   enable-watch   a protected board that is off and has no entry-level posting yet
+ * Protected boards are never disabled and are always enabled. Errors are never read as zero.
  */
-export function decideChange(entry, result, { protectedSet = new Set() } = {}) {
+export function decideChange(entry, result, { protectedSet = new Set(), smallMax = SMALL_BOARD_MAX } = {}) {
   if (result.status !== 'ok') return null;
   const enabled = entry.enabled !== false;
   const any = result.india_any ?? result.india ?? 0;
   const ent = result.india_entry ?? result.both ?? 0;
+  const watched = entry.watch === true;
   if (protectedSet.has(String(entry.name).toLowerCase())) {
-    if (!enabled) return 'enable-watch';
-    return entry.watch === true ? null : 'watch';
+    if (!enabled) return ent > 0 ? 'enable' : 'enable-watch';
+    if (ent > 0) return watched ? 'unwatch' : null;
+    return watched ? null : 'watch';
   }
-  if (enabled && any === 0) return 'disable';
-  if (enabled && any > 0 && ent === 0 && entry.watch !== true) return 'watch';
+  if (enabled && any === 0) return (result.total ?? 0) <= smallMax ? 'check-by-hand' : 'disable';
+  if (enabled && ent > 0 && watched) return 'unwatch';
+  if (enabled && any > 0 && ent === 0 && !watched) return 'watch';
   if (!enabled && ent > 0 && entry.source === 'jobradar') return 'enable';
   return null;
 }
@@ -184,8 +198,8 @@ async function main() {
   const decide = (e, r) => (opts.recheck ? decideRecheck(e, r) : decideChange(e, r, { protectedSet }));
   const rows = selected.map((e, i) => [today, e.name, e.source || '', e.enabled === false ? 'disabled' : 'enabled',
     results[i].status, results[i].total, results[i].india, results[i].entry, results[i].both,
-    results[i].india_any ?? '', results[i].india_entry ?? '', decide(e, results[i]) || '', results[i].note || ''].join('\t'));
-  writeFileSync(REPORT_PATH, ['date\tcompany\tsource\tstate\tstatus\ttotal\tindia\tentry\tboth\tindia_any\tindia_entry\taction\tnote', ...rows].join('\n') + '\n');
+    results[i].india_any ?? '', results[i].india_entry ?? '', results[i].remote_open ?? '', decide(e, results[i]) || '', results[i].note || ''].join('\t'));
+  writeFileSync(REPORT_PATH, ['date\tcompany\tsource\tstate\tstatus\ttotal\tindia\tentry\tboth\tindia_any\tindia_entry\tremote_open\taction\tnote', ...rows].join('\n') + '\n');
 
   const ok = results.filter((r) => r.status === 'ok');
   const withBoth = ok.filter((r) => r.both > 0);
@@ -195,16 +209,27 @@ async function main() {
 
   const changes = selected.map((e, i) => ({ e, r: results[i], action: decide(e, results[i]) })).filter((c) => c.action);
   const by = (a) => changes.filter((c) => c.action === a);
-  console.log(`--apply would: disable ${by('disable').length} (india_any=0), watch ${by('watch').length} (india_any>0, india_entry=0), `
+  console.log(`--apply would: disable ${by('disable').length} (india_any=0, more than ${SMALL_BOARD_MAX} postings), `
+    + `list ${by('check-by-hand').length} small boards for a manual check, watch ${by('watch').length}, unwatch ${by('unwatch').length}, `
     + `enable ${by('enable').length}, enable+watch ${by('enable-watch').length}, re-enable ${by('reenable').length}`);
+  // Small boards are never disabled on a zero count; they go to a file for a person to look at.
+  if (by('check-by-hand').length) {
+    const lines = ['# Boards with no India posting but 3 or fewer postings in total: probably not read in full. Check by hand.',
+      '# name\tpostings\tcareers_url', ...by('check-by-hand').map((c) => `${c.e.name}\t${c.r.total}\t${c.e.careers_url || c.e.api || ''}`)];
+    mkdirSync(dirname(CHECK_BY_HAND_PATH), { recursive: true });
+    writeFileSync(CHECK_BY_HAND_PATH, lines.join('\n') + '\n');
+    console.log(`check-by-hand list (${by('check-by-hand').length}): ${CHECK_BY_HAND_PATH}`);
+  }
   if (!opts.apply) {
-    for (const a of ['disable', 'watch', 'enable', 'enable-watch', 'reenable']) {
-      if (by(a).length) console.log(`\n${a} (${by(a).length}):\n  ${by(a).map((c) => `${c.e.name} [any ${c.r.india_any}, entry ${c.r.india_entry}, of ${c.r.total}]`).join('\n  ')}`);
+    for (const a of ['disable', 'check-by-hand', 'watch', 'unwatch', 'enable', 'enable-watch', 'reenable']) {
+      if (by(a).length) console.log(`\n${a} (${by(a).length}):\n  ${by(a).map((c) => `${c.e.name} [any ${c.r.india_any}, entry ${c.r.india_entry}, of ${c.r.total}${c.r.remote_open ? `, remote-ish ${c.r.remote_open}` : ''}]`).join('\n  ')}`);
     }
+    const remoteOpen = by('disable').filter((c) => c.r.remote_open > 0);
+    if (remoteOpen.length) console.log(`\nwould disable but have remote/APAC-looking postings that are not counted as India (${remoteOpen.length}): ${remoteOpen.map((c) => `${c.e.name} (${c.r.remote_open})`).join(', ')}`);
     console.log('\nPreview only. Add --apply to change portals.yml.');
     return;
   }
-  if (!changes.length) { console.log('Nothing to change.'); return; }
+  if (!changes.some((c) => c.action !== 'check-by-hand')) { console.log('Nothing to change.'); return; }
   if (!opts.force && discoverIsRunning()) {
     console.error('Refusing to write: a discover-ats.mjs run is active and also rewrites portals.yml. Wait, or pass --force.');
     process.exit(2);
@@ -216,6 +241,7 @@ async function main() {
     else if (action === 'reenable') text = setEnabledInText(text, e.name, true, `re-enabled ${today} by board-india-check --recheck-disabled (india_any=${r.india_any})`).text;
     else if (action === 'enable' || action === 'enable-watch') text = setEnabledInText(text, e.name, true, '').text;
     if (action === 'watch' || action === 'enable-watch') text = setFieldInText(text, e.name, 'watch', 'true').text;
+    if (action === 'unwatch') text = removeFieldInText(text, e.name, 'watch').text;
   }
   atomicWrite(PORTALS_PATH, text);
   console.log(`portals.yml updated. Backup: ${backup}`);

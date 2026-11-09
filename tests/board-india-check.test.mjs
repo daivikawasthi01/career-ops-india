@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { scoreJobs, decideChange, decideRecheck } from '../board-india-check.mjs';
-import { setEnabledInText, setFieldInText, autoDisabledNames } from '../lib/portals-edit.mjs';
+import { setEnabledInText, setFieldInText, removeFieldInText, autoDisabledNames } from '../lib/portals-edit.mjs';
 
 const inIndia = (loc) => /india|bengaluru|pune/i.test(loc || '');
 const entryTitle = (t) => /engineer|sde|trainee/i.test(t) && !/senior/i.test(t);
@@ -13,11 +13,11 @@ test('scoreJobs counts india, entry-level, and both separately', () => {
     { title: 'Account Executive', location: 'Pune' },               // india only
     { title: 'Senior Engineer', location: 'Pune' },                 // india only (senior blocked)
   ];
-  assert.deepEqual(scoreJobs(jobs, entryTitle, inIndia), { total: 4, india: 3, entry: 2, both: 1, india_any: 3, india_entry: 1 });
-  assert.deepEqual(scoreJobs(undefined, entryTitle, inIndia), { total: 0, india: 0, entry: 0, both: 0, india_any: 0, india_entry: 0 });
+  assert.deepEqual(scoreJobs(jobs, entryTitle, inIndia), { total: 4, india: 3, entry: 2, both: 1, india_any: 3, india_entry: 1, remote_open: 0 });
+  assert.deepEqual(scoreJobs(undefined, entryTitle, inIndia), { total: 0, india: 0, entry: 0, both: 0, india_any: 0, india_entry: 0, remote_open: 0 });
 });
 
-const ok = (india_any, india_entry) => ({ status: 'ok', india_any, india_entry });
+const ok = (india_any, india_entry, total = 50) => ({ status: 'ok', india_any, india_entry, total });
 
 test('decideChange: disable only when nothing is located in India at any level', () => {
   assert.equal(decideChange({ name: 'A' }, ok(0, 0)), 'disable');
@@ -31,12 +31,41 @@ test('decideChange: India postings but none entry-level stay enabled and get wat
   assert.equal(decideChange({ name: 'Wabtec' }, ok(105, 32)), null, 'has entry-level postings: nothing to do');
 });
 
-test('decideChange: protected boards are never disabled and are always on and watched', () => {
+test('decideChange: a board with 3 or fewer postings is never auto-disabled, it is listed for a manual check', () => {
+  assert.equal(decideChange({ name: 'Google' }, ok(0, 0, 1)), 'check-by-hand');
+  assert.equal(decideChange({ name: 'Empty' }, ok(0, 0, 0)), 'check-by-hand');
+  assert.equal(decideChange({ name: 'Edge' }, ok(0, 0, 3)), 'check-by-hand');
+  assert.equal(decideChange({ name: 'Edge' }, ok(0, 0, 4)), 'disable');
+  assert.equal(decideChange({ name: 'Small' }, ok(1, 0, 2)), 'watch', 'a small board with an India posting is unaffected');
+});
+
+test('decideChange: protected boards are never disabled and are watched only while they lack an entry-level posting', () => {
   const protectedSet = new Set(['tide', 'sagent']);
   assert.equal(decideChange({ name: 'TIDE' }, ok(0, 0), { protectedSet }), 'watch');
+  assert.equal(decideChange({ name: 'TIDE' }, ok(0, 0, 0), { protectedSet }), 'watch', 'even an empty board');
   assert.equal(decideChange({ name: 'TIDE', watch: true }, ok(0, 0), { protectedSet }), null);
+  assert.equal(decideChange({ name: 'TIDE' }, ok(34, 4), { protectedSet }), null, 'entry-level postings: no watch needed');
+  assert.equal(decideChange({ name: 'TIDE', watch: true }, ok(34, 4), { protectedSet }), 'unwatch');
   assert.equal(decideChange({ name: 'Sagent', enabled: false }, ok(5, 0), { protectedSet }), 'enable-watch');
+  assert.equal(decideChange({ name: 'Sagent', enabled: false }, ok(5, 2), { protectedSet }), 'enable');
   assert.equal(decideChange({ name: 'Other' }, ok(0, 0), { protectedSet }), 'disable');
+});
+
+test('decideChange: a board with an India entry-level posting must not carry a weekly watch', () => {
+  assert.equal(decideChange({ name: 'Wabtec', watch: true }, ok(105, 32)), 'unwatch');
+  assert.equal(decideChange({ name: 'Wabtec' }, ok(105, 32)), null);
+  assert.equal(decideChange({ name: 'Swiggy', watch: true }, ok(189, 0)), null, 'still no entry-level: keep watching');
+});
+
+test('scoreJobs counts remote-looking postings that are not counted as India', () => {
+  const jobs = [
+    { title: 'Software Engineer', location: 'Remote' },
+    { title: 'Software Engineer', location: 'APAC' },
+    { title: 'Software Engineer', location: 'Berlin' },
+    { title: 'Engineer (Remote)', location: '' },
+    { title: 'Software Engineer', location: 'Pune' },
+  ];
+  assert.equal(scoreJobs(jobs, entryTitle, inIndia).remote_open, 3);
 });
 
 test('decideChange: a jobradar board comes back on only with an entry-level posting; errors are never zero', () => {
@@ -105,4 +134,13 @@ test('autoDisabledNames lists only entries carrying the auto-disabled note', () 
   let t = setEnabledInText(YAML, 'Alpha', false, 'auto-disabled 2026-11-09 by board-india-check (india_any=0)').text;
   t = setEnabledInText(t, 'Gamma', false, 'disabled by hand').text;
   assert.deepEqual(autoDisabledNames(t), ['Alpha']);
+});
+
+test('removeFieldInText drops only the named field and keeps the note and the rest', () => {
+  const t = setFieldInText(setEnabledInText(YAML, 'Alpha', true).text, 'Alpha', 'watch', 'true').text;
+  const r = removeFieldInText(t, 'Alpha', 'watch');
+  assert.ok(r.changed);
+  assert.equal(r.text, setEnabledInText(YAML, 'Alpha', true).text);
+  assert.equal(removeFieldInText(YAML, 'Alpha', 'watch').changed, false);
+  assert.equal(removeFieldInText(YAML, 'Nope', 'watch').found, false);
 });
