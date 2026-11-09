@@ -39,6 +39,7 @@ import { renameSyncWithRetry } from './tracker-utils.mjs';
 import { withPipelineLock } from './pipeline-lock.mjs';
 
 import { makeHttpCtx, isRefusedRedirectError } from './providers/_http.mjs';
+import { withConnectionScope } from './providers/_connection-scope.mjs';
 import greenhouse from './providers/greenhouse.mjs';
 import ashby from './providers/ashby.mjs';
 import lever from './providers/lever.mjs';
@@ -877,11 +878,47 @@ async function parallelEach(items, limit, fn) {
  * Probe every company (bounded concurrency) and split into resolved/unresolved.
  * @returns {Promise<{resolved:any[], unresolved:any[]}>}
  */
-export async function runDiscovery(companies, { vendors = VENDOR_ORDER, ctx, concurrency = DEFAULT_CONCURRENCY, includeWorkday = true } = {}) {
+// Hard limits so one huge or stalled board (Stripe, SpaceX) can never hang the run.
+// REQUEST_TIMEOUT_MS is the per-request abort (covers connect AND the body read: the
+// shared HTTP layer keeps its timer armed while the body is consumed). COMPANY_DEADLINE_MS
+// is a wall-clock backstop around everything one company needs (several vendor probes);
+// it also aborts the company's signal so its in-flight requests stop.
+export const REQUEST_TIMEOUT_MS = 30_000;
+export const COMPANY_DEADLINE_MS = 90_000;
+
+export async function runDiscovery(companies, { vendors = VENDOR_ORDER, ctx, concurrency = DEFAULT_CONCURRENCY, includeWorkday = true, onProgress, companyDeadlineMs = COMPANY_DEADLINE_MS } = {}) {
   const results = new Array(companies.length);
   const httpCtx = ctx || makeHttpCtx();
+  let finished = 0;
   await parallelEach(companies, concurrency, async (company, idx) => {
-    results[idx] = await resolveCompany(company, { vendors, ctx: httpCtx, includeWorkday });
+    const abort = new AbortController();
+    let timer;
+    const deadline = new Promise((resolveDeadline) => {
+      timer = setTimeout(() => { abort.abort(); resolveDeadline({ timedOut: true }); }, companyDeadlineMs);
+    });
+    const work = withConnectionScope(
+      () => resolveCompany(company, { vendors, ctx: httpCtx, includeWorkday }),
+      { signal: abort.signal },
+    );
+    work.catch(() => {}); // a late rejection after the deadline must not become an unhandled rejection
+    let r;
+    let mark;
+    try {
+      r = await Promise.race([work, deadline]);
+    } catch (err) {
+      r = { unresolved: { name: company.name, reason: `error: ${err?.message || err}` } };
+    } finally {
+      clearTimeout(timer);
+    }
+    if (r?.timedOut) {
+      r = { unresolved: { name: company.name, reason: `timed out after ${Math.round(companyDeadlineMs / 1000)}s, skipped` } };
+      mark = '⏱ timeout';
+    } else {
+      mark = r?.resolved ? '✓' : '✗';
+    }
+    results[idx] = r;
+    finished += 1;
+    onProgress?.({ done: finished, total: companies.length, name: company.name, slug: company.slug, mark });
   });
   const resolved = [];
   const unresolved = [];
@@ -1214,7 +1251,13 @@ async function main() {
 
   const blacklist = loadBlacklist(BLACKLIST_PATH);
   const pre = partitionBlacklisted(companies, blacklist);
-  const discovered = await runDiscovery(pre.allowed, { vendors: opts.vendors, includeWorkday: opts.includeWorkday });
+  // Progress goes to stderr so --json output on stdout stays clean.
+  if (!process.env.CAREER_OPS_HTTP_TIMEOUT_MS) process.env.CAREER_OPS_HTTP_TIMEOUT_MS = String(REQUEST_TIMEOUT_MS);
+  const discovered = await runDiscovery(pre.allowed, {
+    vendors: opts.vendors,
+    includeWorkday: opts.includeWorkday,
+    onProgress: ({ done, total, name, slug, mark }) => console.error(`[${done}/${total}] ${slug || name} ${mark}`),
+  });
   const unresolved = discovered.unresolved;
   // A resolved board's host can hit a domain-scope entry the name did not
   // (e.g. a company listed under a different name on a blacklisted host).

@@ -1,0 +1,316 @@
+#!/usr/bin/env node
+
+/**
+ * scan-freehire.mjs: India entry-level scanner backed by the public freehire.me API.
+ *
+ * freehire aggregates ATS boards, Telegram hiring channels, Naukri, Wellfound,
+ * Instahyre and more behind one keyless search endpoint. This scanner asks it
+ * for postings first seen in the last N days that fit a fresher profile:
+ *
+ *   1. internships        employment_type=internship
+ *   2. intern seniority   seniority=intern
+ *   3. entry-level FTE    seniority=junior with 0 years required (or unstated)
+ *   4. batch-year text    q="2027 batch" style free text (tech categories)
+ *
+ * Every query is limited to countries=IN and to software-leaning categories.
+ * A client-side pass then drops postings that name a graduation batch other
+ * than 2027, and applies the title allow/block lists below. What survives goes
+ * through the same admission gate as scan-hn (seen set, blacklist) and is
+ * appended to data/pipeline.md.
+ *
+ * Config: an optional `freehire:` block in portals.yml may override
+ * `target_year`, `days`, `max_pages`, `categories`, `positive` and `negative`.
+ * Zero LLM tokens.
+ */
+
+import { readFileSync, existsSync, writeFileSync } from 'fs';
+import { loadYaml } from './lib/yaml-document.mjs';
+import { appendToPipeline, appendToScanHistory, PORTALS_PATH } from './scan.mjs';
+import { buildTitleFilter } from './title-keywords.mjs';
+import { createAdmissionGate, formatSkipCounts } from './lib/admission-gate.mjs';
+import { localToday } from './lib/local-today.mjs';
+import { isMainModule } from './lib/is-main-module.mjs';
+import { printScanSummaryHeader } from './lib/scan-summary-marker.mjs';
+import { validateFlags, flagValue, hasFlag } from './lib/cli-flags.mjs';
+import { progress, fail } from './lib/progress.mjs';
+
+const API = 'https://freehire.me/api/v1/jobs/search';
+const PAGE = 100;
+
+const KNOWN_FLAGS = ['--help', '-h', '--days', '--dry-run', '--max-pages', '--year', '--json'];
+const USAGE = `Usage:
+  node scan-freehire.mjs                 # last 2 days, India, entry level
+  node scan-freehire.mjs --days 7        # first scan or catching up
+  node scan-freehire.mjs --dry-run       # print matches, write nothing
+  node scan-freehire.mjs --year 2027     # graduation batch to keep (default 2027)
+  node scan-freehire.mjs --max-pages 3   # pages of 100 per query (default 3)
+
+Queries the public freehire.me search API (no key) for India internships and
+entry-level roles first seen in the last N days, keeps software-leaning titles
+whose text names no batch year other than the target year, and appends the new
+ones to data/pipeline.md. Optional overrides live under "freehire:" in portals.yml.
+
+Flags:
+  --days N, --year YYYY, --max-pages N, --dry-run, --json PATH (also write offers as JSON), --help, -h`;
+
+// Software-leaning freehire categories. Anything outside is ignored server side.
+const DEFAULT_CATEGORIES = [
+  'software_engineering', 'backend', 'frontend', 'fullstack', 'mobile', 'devops', 'sre',
+  'data_engineering', 'data_science', 'ml_ai', 'ai_engineering', 'security', 'embedded', 'qa',
+];
+
+export const DEFAULT_POSITIVE = [
+  'software', 'sde', 'developer', 'engineer', 'backend', 'back end', 'back-end', 'frontend',
+  'front end', 'front-end', 'full stack', 'full-stack', 'fullstack', 'devops', 'sre', 'cloud',
+  'platform', 'ai', 'ml', 'machine learning', 'data engineer', 'data scientist', 'mobile',
+  'android', 'ios', 'react', 'node', 'java', 'python', 'golang', 'trainee', 'associate',
+  'programmer', 'member of technical staff', 'mts',
+].map((k) => (k.length <= 3 ? `word:${k}` : k));
+
+export const DEFAULT_NEGATIVE = [
+  'sales', 'marketing', 'business development', 'hr ', 'human resource', 'recruit',
+  'content writer', 'graphic', 'seo', 'telecaller', 'customer', 'accountant', 'finance',
+  'teacher', 'civil', 'mechanical', 'electrical engineer', 'senior', 'sr.', 'lead ',
+  'manager', 'head', 'director', 'principal', 'staff engineer',
+  'html/css', 'wordpress', 'data entry', 'support executive', 'bpo',
+  'vp', 'specialist', 'architect', 'consultant', 'volunteer', 'freelance', 'part time', 'part-time',
+  'walk-in', 'teaching', 'tender', 'backend executive', 'back end executive', 'non-voice',
+  'sap ', 'abap', 'servicenow', 'staff ', 'engineer ii', 'engineer iii', 'engineer 2', 'engineer 3',
+  'sde 2', 'sde-2', 'sde 3', 'sde-3',
+].map((k) => (['vp'].includes(k) ? `word:${k}` : k));
+
+// ── Config ──────────────────────────────────────────────────────────────
+
+function loadOverrides() {
+  if (!existsSync(PORTALS_PATH)) return {};
+  try {
+    return (loadYaml(readFileSync(PORTALS_PATH, 'utf-8')) || {}).freehire || {};
+  } catch {
+    return {};
+  }
+}
+
+const list = (v, fallback) => (Array.isArray(v) && v.length ? v.map(String) : fallback);
+
+// ── Queries ─────────────────────────────────────────────────────────────
+
+/**
+ * The four query shapes as URLSearchParams entries. `category` repeats, which
+ * the API reads as OR. Kept pure so the tests can assert the URLs.
+ */
+export function buildQueries({ days, categories, year }) {
+  const base = () => {
+    const p = new URLSearchParams();
+    p.set('countries', 'IN');
+    p.set('open_within_days', String(days));
+    p.set('sort', 'posted_at');
+    p.set('limit', String(PAGE));
+    for (const c of categories) p.append('category', c);
+    return p;
+  };
+  const q = [];
+
+  let p = base();
+  p.set('employment_type', 'internship');
+  q.push({ name: 'internship', params: p });
+
+  p = base();
+  p.set('seniority', 'intern');
+  q.push({ name: 'intern-level', params: p });
+
+  // Entry-level full time: junior, requiring 0 years or stating nothing.
+  p = base();
+  p.set('seniority', 'junior');
+  p.set('employment_type', 'full_time');
+  p.set('experience_years_max', '0');
+  p.set('experience_include_unspecified', 'true');
+  q.push({ name: 'junior-0yoe', params: p });
+
+  // A batch-year phrase is rare and specific, so postings that state no
+  // experience at all are kept. Generic fresher phrases match too widely
+  // ("new grad" pulled in Staff and VP roles), so they must state 0 years.
+  for (const phrase of [`${year} batch`, `${year} graduates`, `${year} passout`]) {
+    p = base();
+    p.set('q', phrase);
+    p.set('experience_years_max', '1');
+    p.set('experience_include_unspecified', 'true');
+    q.push({ name: `text:${phrase}`, params: p });
+  }
+  for (const phrase of ['fresher', 'graduate engineer trainee', 'associate software engineer', 'software engineer I']) {
+    p = base();
+    p.set('q', phrase);
+    p.set('experience_years_max', '0');
+    q.push({ name: `text:${phrase}`, params: p });
+  }
+  return q;
+}
+
+// ── Batch-year check ────────────────────────────────────────────────────
+
+const YEAR = '(20(?:2[3-9]|3[0-2]))';
+const CONTEXT = '(?:batch|pass(?:ed)?[\\s-]?outs?|passing\\s+out|graduat\\w*|class\\s+of|grads?|joining|b\\.?\\s?tech|be\\b|mca|bca)';
+const NEAR = new RegExp(`${CONTEXT}\\W+(?:\\w+\\W+){0,4}?${YEAR}|${YEAR}\\W+(?:\\w+\\W+){0,3}?${CONTEXT}`, 'gi');
+
+/**
+ * Batch years a posting asks for, found only next to batch-like words so a
+ * founding year or a copyright line is not read as a requirement.
+ */
+export function batchYears(text) {
+  const years = new Set();
+  for (const m of String(text || '').matchAll(NEAR)) {
+    years.add(m[1] || m[2]);
+  }
+  return [...years];
+}
+
+/**
+ * Keep when no batch year is named, or the target year is among them.
+ * "2025 or 2026 or 2027 batch" is kept; "2025 batch only" is dropped.
+ */
+export function yearOk(text, target) {
+  const years = batchYears(text);
+  return years.length === 0 || years.includes(String(target));
+}
+
+// ── Fetch ───────────────────────────────────────────────────────────────
+
+async function fetchJson(url, attempt = 0) {
+  const res = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'career-ops-scan-freehire' } });
+  if (res.status === 429 || res.status >= 500) {
+    if (attempt >= 3) throw new Error(`freehire ${res.status} after retries`);
+    await new Promise((r) => setTimeout(r, 1500 * 2 ** attempt));
+    return fetchJson(url, attempt + 1);
+  }
+  if (!res.ok) throw new Error(`freehire ${res.status} for ${url}`);
+  return res.json();
+}
+
+async function runQuery({ name, params }, maxPages) {
+  const rows = [];
+  let ignored = [];
+  for (let page = 0; page < maxPages; page++) {
+    params.set('offset', String(page * PAGE));
+    const body = await fetchJson(`${API}?${params}`);
+    ignored = body.meta?.ignored_params || [];
+    const data = body.data || [];
+    rows.push(...data);
+    if (data.length < PAGE || (page + 1) * PAGE >= (body.meta?.total ?? 0)) break;
+  }
+  return { name, rows, ignored: ignored.map((i) => i.param) };
+}
+
+// ── Mapping ─────────────────────────────────────────────────────────────
+
+/** Remove tracking params so the same posting dedups against other scanners. */
+export function cleanUrl(raw) {
+  try {
+    const u = new URL(raw);
+    for (const k of [...u.searchParams.keys()]) if (k.startsWith('utm_')) u.searchParams.delete(k);
+    return u.toString();
+  } catch {
+    return raw;
+  }
+}
+
+export function toOffer(job) {
+  const companyName = typeof job.company === 'object' ? job.company?.name : job.company;
+  const cities = Array.isArray(job.cities) && job.cities.length ? job.cities.slice(0, 3).join(', ') : '';
+  return {
+    url: cleanUrl(job.url),
+    title: String(job.title || '').trim(),
+    company: String(companyName || '').trim(),
+    location: cities || 'India',
+    postedAt: job.posted_at ? String(job.posted_at).slice(0, 10) : undefined,
+    source: `freehire:${job.source || 'unknown'}`,
+  };
+}
+
+// ── Main ────────────────────────────────────────────────────────────────
+
+async function main(args) {
+  const o = loadOverrides();
+  const days = Number(flagValue(args, '--days') ?? o.days ?? 2);
+  const year = String(flagValue(args, '--year') ?? o.target_year ?? 2027);
+  const maxPages = Number(flagValue(args, '--max-pages') ?? o.max_pages ?? 3);
+  const dryRun = hasFlag(args, '--dry-run');
+  if (![days, maxPages].every((n) => Number.isInteger(n) && n > 0)) {
+    console.error('Error: --days and --max-pages must be positive integers.');
+    process.exit(1);
+  }
+
+  const categories = list(o.categories, DEFAULT_CATEGORIES);
+  const gate = createAdmissionGate({
+    titleFilter: buildTitleFilter({
+      positive: list(o.positive, DEFAULT_POSITIVE),
+      negative: list(o.negative, DEFAULT_NEGATIVE),
+    }),
+    // The API already limited the country; city names alone would fail the
+    // portals.yml location list for remote or multi-city rows.
+    locationFilter: () => true,
+  });
+
+  console.log(`Fetching freehire: India, first seen in last ${days}d, batch ${year} or unstated...`);
+  const results = [];
+  const queries = buildQueries({ days, categories, year });
+  for (const [i, q] of queries.entries()) {
+    progress(i, queries.length, q.name);
+    try {
+      results.push(await runQuery(q, maxPages));
+    } catch (err) {
+      fail(q.name, err.message);
+      console.warn(`  query "${q.name}" failed: ${err.message}`);
+      process.exitCode = 1;
+    }
+  }
+
+  // One freehire job often matches several queries; collapse by public_slug.
+  const bySlug = new Map();
+  const perQuery = [];
+  const ignoredParams = new Set();
+  for (const r of results) {
+    perQuery.push(`${r.name}=${r.rows.length}`);
+    r.ignored.forEach((p) => ignoredParams.add(p));
+    for (const j of r.rows) if (!bySlug.has(j.public_slug || j.url)) bySlug.set(j.public_slug || j.url, j);
+  }
+
+  let yearDropped = 0;
+  const offers = [];
+  for (const job of bySlug.values()) {
+    const offer = toOffer(job);
+    if (!offer.url || !offer.title) continue;
+    const text = `${job.title}\n${String(job.description || '').slice(0, 4000)}`;
+    if (!yearOk(text, year)) { yearDropped++; continue; }
+    if (gate.check(offer)) continue;
+    offers.push(offer);
+  }
+
+  printScanSummaryHeader('Freehire Scan', localToday());
+  console.log(`Queries:            ${perQuery.join(', ') || 'none ran'}`);
+  console.log(`Unique postings:    ${bySlug.size}`);
+  if (yearDropped) console.log(`Wrong batch year:   ${yearDropped}`);
+  const skipped = formatSkipCounts(gate.counts);
+  if (skipped) console.log(`Skipped:            ${skipped}`);
+  console.log(`New offers:         ${offers.length}`);
+  if (ignoredParams.size) {
+    console.warn(`\nWarning: freehire ignored params [${[...ignoredParams].join(', ')}]. Results may be broader than intended.`);
+  }
+
+  for (const o2 of offers) console.log(`  + ${o2.company || '?'} | ${o2.title} | ${o2.location} | ${o2.source}`);
+  const jsonOut = flagValue(args, '--json');
+  if (jsonOut) writeFileSync(jsonOut, JSON.stringify(offers));
+  if (dryRun) { console.log('\n--dry-run: nothing written.'); return; }
+  if (offers.length > 0) {
+    await appendToPipeline(offers);
+    await appendToScanHistory(offers, localToday(), 'added');
+    console.log(`\n${offers.length} offers added to the pipeline.`);
+  }
+}
+
+if (isMainModule(import.meta.url)) {
+  const args = process.argv.slice(2);
+  validateFlags(args, KNOWN_FLAGS, USAGE, {
+    valueFlags: ['--days', '--max-pages', '--year', '--json'],
+    requireOperand: true,
+  });
+  main(args).catch((err) => { console.error('Fatal:', err.message); process.exit(1); });
+}
