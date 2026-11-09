@@ -65,6 +65,7 @@ import { loadProviders, resolveProvider } from './providers/_registry.mjs';
 import { openProviderIdCache, PROVIDER_ID_CACHE_DIR } from './provider-id-cache.mjs';
 import { mergeProviderPlugins } from './plugins/_engine.mjs';
 import { classifyFetchError } from './verify-portals.mjs';
+import { boardsToSkip } from './lib/board-backoff.mjs';
 import { portalTopLevelTypos } from './validate-portals.mjs';
 import { fingerprintText, findCrossListings } from './fingerprint-core.mjs';
 import { computeListingFingerprint } from './listing-fingerprint.mjs';
@@ -4469,7 +4470,7 @@ function guardStatusFor(code) {
 const KNOWN_FLAGS = [
   '--dry-run', '--verify', '--headed-fallback', '--throttle', '--rediscover-404',
   '--include-blacklisted', '--company', '--posted-after', '--posted-before',
-  '--since', '--quiet', '--json', '--help', '-h',
+  '--since', '--quiet', '--json', '--retry-dead', '--help', '-h',
 ];
 
 // Flags whose space-separated value is the NEXT argv token (the `--flag=value`
@@ -4491,6 +4492,7 @@ const USAGE = `Usage:
   node scan.mjs --since 7                    # postings from the last 7 days
   node scan.mjs --posted-after 2026-07-01    # absolute lower bound on posting date
   node scan.mjs --posted-before 2026-08-01   # absolute upper bound on posting date
+  node scan.mjs --retry-dead                 # also try boards cached as dead (404) or backing off (429)
   node scan.mjs --json                       # emit one machine-readable receipt on stdout
   node scan.mjs --quiet                      # suppress the manifesto footer
   node scan.mjs --help                       # print this usage block and exit
@@ -4677,6 +4679,10 @@ async function main() {
   const agentHandoff = [];
   const unclaimed = [];
   const enabledWarnings = [];
+  // Boards the health log says to leave alone: a 404 is cached as dead for a month, a 429
+  // backs off for a day or more. Timeouts and network errors are never held (lib/board-backoff.mjs).
+  const backoffHolds = args.includes('--retry-dead') ? new Map() : boardsToSkip(loadPortalHealth());
+  const backoffSkipped = [];
 
   /**
    * Processes a list of configuration entries, resolves their appropriate data providers,
@@ -4714,6 +4720,12 @@ async function main() {
         enabledWarnings.push(
           `${entry.name}: enabled is ${JSON.stringify(entry.enabled)}, not a boolean. Only boolean false turns a company off, so this one stays in the run and is scanned if a provider matches it.`,
         );
+      }
+
+      const hold = backoffHolds.get(entry.name);
+      if (hold) {
+        backoffSkipped.push({ company: entry.name, ...hold });
+        continue;
       }
 
       const resolved = resolveProvider(entry, providers);
@@ -4837,6 +4849,10 @@ async function main() {
   parts.push(`${localParserCount} local parser`);
   parts.push(`${skippedCount} skipped — no provider matched`);
   console.log(`Scanning ${parts.join('; ')} via providers`);
+  if (backoffSkipped.length > 0) {
+    const dead = backoffSkipped.filter((b) => b.reason === 'dead').length;
+    console.log(`Holding ${backoffSkipped.length} boards (${dead} cached dead, ${backoffSkipped.length - dead} rate-limited); --retry-dead tries them anyway`);
+  }
   if (dryRun) console.log('(dry run — no files will be written)\n');
   for (const warning of enabledWarnings) console.error(`Warning: ${warning}`);
   if (unclaimed.length > 0) {
@@ -5783,6 +5799,7 @@ async function main() {
       date,
       scanned: targets.length,
       skipped: skippedCount,
+      backoff_skipped: backoffSkipped.map(({ company, reason, retryAfter }) => ({ company, reason, retry_after: retryAfter })),
       found: totalFound,
       filtered,
       duplicates: totalDupes,

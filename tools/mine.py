@@ -29,9 +29,37 @@ from tqdm import tqdm
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "output"
+STATE = ROOT / "data" / "cache" / "mine-state.json"  # last successful run per step
 
 LINE = re.compile(r"^@@(PROGRESS|FAIL|RETRY|SKIP) (.*)$")
 PROG = re.compile(r"^(\d+)/(\d+)\s*(.*)$")
+
+
+def load_state(path=STATE):
+    try:
+        return json.loads(Path(path).read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_state(state, path=STATE):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, indent=2))
+    tmp.replace(path)
+
+
+def step_due(state, step_id, every_days, now=None):
+    """True when the step has never succeeded or last succeeded `every_days` or more ago."""
+    last = state.get(step_id)
+    if not last:
+        return True
+    now = now or datetime.now()
+    try:
+        return (now - datetime.fromisoformat(last)).total_seconds() >= every_days * 86400
+    except ValueError:
+        return True
 
 
 def build_steps(args):
@@ -43,7 +71,7 @@ def build_steps(args):
         # scan.mjs and scan-ats-full.mjs take a bare --json (receipt on stdout, no file path)
         {"id": "portals", "file": "scan.mjs", "bare_json": True, "args": ["--since", str(args.days), *flags]},
         {"id": "ats", "file": "scan-ats-full.mjs", "bare_json": True,
-         "args": ["--since", str(args.days), "--ats", args.ats_sources, *(["--limit", str(args.ats_limit)] if args.ats_limit else []), *flags]},
+         "args": ["--since", str(args.ats_days), "--ats", args.ats_sources, *(["--limit", str(args.ats_limit)] if args.ats_limit else []), *flags]},
     ]
     wanted = [s.strip() for s in args.steps.split(",")]
     return [s for s in steps if s["id"] in wanted]
@@ -239,6 +267,8 @@ def main():
     ap.add_argument("--steps", default="freehire,internshala,jobspy,portals,ats", help="comma list of steps to run")
     ap.add_argument("--ats-sources", default="greenhouse,lever,ashby", help="ATS directories for the reverse sweep")
     ap.add_argument("--ats-limit", type=int, default=0, help="max companies per ATS (0 = all)")
+    ap.add_argument("--ats-days", type=int, default=14, help="posting window for the ats step (it runs weekly, so it needs a wider window than --days)")
+    ap.add_argument("--ats-every", type=int, default=7, help="days between ats runs in a default run; --steps ats always runs it. The sweep is slow and low yield (a 30 day sample of 300 Greenhouse boards found 2 India roles)")
     ap.add_argument("--freehire-pages", type=int, default=6, help="pages of 100 per freehire query")
     ap.add_argument("--internshala-pages", type=int, default=5, help="result pages per Internshala category")
     ap.add_argument("--dry-run", action="store_true", help="scanners print matches and write nothing to the pipeline")
@@ -251,6 +281,11 @@ def main():
 
     per_step, runs, failures = {}, [], []
     steps = build_steps(args)
+    state = load_state()
+    explicit_steps = any(a == "--steps" or a.startswith("--steps=") for a in sys.argv[1:])
+    if not explicit_steps and not step_due(state, "ats", args.ats_every):
+        steps = [s for s in steps if s["id"] != "ats"]
+        print(f"mine: ats step not due (last run {state['ats'][:10]}, every {args.ats_every} days); pass --steps to force it")
     print(f"mine: {len(steps)} step(s), log {log_path.relative_to(ROOT)}, excel {xlsx_path.relative_to(ROOT)}")
     write_excel(xlsx_path, per_step, runs, failures, started)
     with log_path.open("w") as log:
@@ -259,6 +294,9 @@ def main():
             offers, status = run_step(step, log, failures, i)
             per_step[step["id"]] = offers
             runs.append(status)
+            if status["status"] in ("ok", "partial") and not args.dry_run:
+                state[step["id"]] = datetime.now().isoformat(timespec="seconds")
+                save_state(state)
             write_excel(xlsx_path, per_step, runs, failures, started)
     total = len(merge(per_step))
     print(f"\n{total} unique offers from {len(steps)} step(s); {len(failures)} failure/retry events")
