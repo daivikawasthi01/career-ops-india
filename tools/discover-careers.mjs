@@ -32,7 +32,7 @@ import {
   registrable, sameSite, isAggregator, checkDomain, checkL1, quoteInEvidence, compareAts, boardFingerprint, fingerprintFit, gate, queryPair, redact, unwrapBingUrl,
 } from '../lib/careers-pipeline.mjs';
 
-const USAGE = `usage: discover-careers.mjs [--llm] [--limit N] [--only NAME,NAME] [--first FILE] [--list] [--slice1] [--workers N] [--all] [--companies FILE] [--golden FILE] [--out PATH]
+const USAGE = `usage: discover-careers.mjs [--llm] [--limit N] [--only NAME,NAME] [--first FILE] [--list] [--slice1] [--workers N] [--search-lanes N] [--all] [--companies FILE] [--golden FILE] [--out PATH]
   Layered pipeline (see the header of this file). Output: data/careers-discovery.tsv (append-only; rerun to resume).
   Inputs: config/protected-boards.txt, portals.yml entries with watch: true, data/check-by-hand.txt.
   --llm          run the Groq layers (L1 domain, L4 verifier); GROQ_API_KEY in .env, models GROQ_MODEL / GROQ_FALLBACK_MODEL
@@ -125,10 +125,14 @@ const ENGINES = [
     read: () => [...document.querySelectorAll('.result')].slice(0, 12).map((r) => ({ title: r.querySelector('.result__a')?.innerText || '', href: r.querySelector('.result__a')?.href || '', snippet: r.querySelector('.result__snippet')?.innerText || '' })) },
 ];
 const searchStats = { empty: 0, calls: 0 };
-let searchChain = Promise.resolve();
+// Search lanes: each lane spaces its own searches 2 to 3.5 s apart; several lanes run side by side.
+const LANES = Math.max(1, Number(arg('--search-lanes')) || 3);
+const lanes = Array.from({ length: LANES }, () => ({ chain: Promise.resolve(), last: 0 }));
+let laneTurn = 0;
 const searchTurn = () => {
-  const p = searchChain.then(async () => { const wait = 2000 + Math.random() * 1500 - (Date.now() - lastSearchAt); if (wait > 0) await sleep(wait); lastSearchAt = Date.now(); });
-  searchChain = p.catch(() => {});
+  const lane = lanes[laneTurn++ % LANES];
+  const p = lane.chain.then(async () => { const wait = 2000 + Math.random() * 1500 - (Date.now() - lane.last); if (wait > 0) await sleep(wait); lane.last = Date.now(); });
+  lane.chain = p.catch(() => {});
   return p;
 };
 /** Top results from the first engine that returns any. Zero results from every engine is reported as an empty search, never as "no candidates". */
