@@ -236,11 +236,34 @@ async function freshSearchSession() {
 }
 /** Result rows that carry links but almost no title text: a throttled page, not results. */
 export const isHollowResults = (rs) => rs.length > 0 && rs.filter((r) => String(r.title || '').trim().length > 3).length < Math.min(3, rs.length);
+/** Bing's RSS output (format=rss): plain XML with direct result links, no page to render. Returns [{ title, url, snippet }]. */
+export function parseBingRss(xml) {
+  const un = (s) => String(s || '').replace(/<!\[CDATA\[|\]\]>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&amp;/g, '&').replace(/<[^>]+>/g, '').trim();
+  const out = [];
+  for (const m of String(xml).matchAll(/<item>([\s\S]*?)<\/item>/g)) {
+    const pick = (tag) => un(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(m[1])?.[1]);
+    const url = pick('link');
+    let host = ''; try { host = new URL(url).hostname; } catch { continue; }
+    if (!/^https?:/.test(url) || /(^|\.)bing\.com$/.test(host)) continue;
+    out.push({ title: pick('title'), url, snippet: pick('description') });
+  }
+  return out.slice(0, 8);
+}
+async function rssSearch(query) {
+  try {
+    const res = await fetch(`https://www.bing.com/search?q=${encodeURIComponent(query)}&format=rss&setmkt=en-IN&cc=IN`, { signal: AbortSignal.timeout(20000), headers: { 'accept-language': 'en-IN,en;q=0.9' } });
+    if (!res.ok) return [];
+    return parseBingRss(await res.text());
+  } catch { return []; }
+}
 async function searchResults(context, query, opts = {}) {
   let shot = '';
   await searchTurn(); // searches are spaced out across all workers
   searchStats.calls++;
   let reason = 'empty';
+  // First choice: Bing RSS over plain HTTP (no browser session to get flagged). Only if it returns nothing do we open pages.
+  const rss = await rssSearch(query);
+  if (rss.length) { rss.engine = 'bing-rss'; gov.ok(); return rss; }
   if (++searchesInSession > 40) await freshSearchSession();
   const sc = await searchCtx(context);
   for (const eng of ENGINES) {
