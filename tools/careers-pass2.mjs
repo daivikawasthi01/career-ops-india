@@ -190,11 +190,13 @@ async function processCompany2({ context, row, rejectedUrls, llm, vision }) {
 
 /** Providers, http context and the India location filter used to count a board's postings. */
 export async function initEnv() {
+  const { applyPipelineConfig } = await import('../lib/pipeline-config.mjs');
+  const { buildLocationFilter } = await import('../scan.mjs');
   const { loadProviders, resolveProvider } = await import('../providers/_registry.mjs');
   const { makeHttpCtx } = await import('../providers/_http.mjs');
   const portals = existsSync(PORTALS) ? (loadYaml(read(PORTALS)) || {}) : {};
   env.known = new Map((portals.tracked_companies || []).filter((e) => e?.name && /^https?:/.test(e.careers_url || '') && e.enabled !== false).map((e) => [String(e.name).toLowerCase().replace(/[^a-z0-9]/g, ''), e.careers_url]));
-  Object.assign(env, { providers: await loadProviders(join(REPO, 'providers')), resolveProvider, http: makeHttpCtx(), inIndia: (loc) => isIndiaLoc(loc) }); // India by the posting's own location text, never by the scan's allow-list (which may admit other countries, or everything)
+  Object.assign(env, { providers: await loadProviders(join(REPO, 'providers')), resolveProvider, http: makeHttpCtx(), inIndia: buildLocationFilter(applyPipelineConfig(portals).location_filter) }); // India by the scan's location filter in portals.yml: a little miscounting is accepted
 
 }
 
