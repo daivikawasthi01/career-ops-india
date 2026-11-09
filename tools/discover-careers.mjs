@@ -32,11 +32,12 @@ import {
   registrable, sameSite, isAggregator, checkDomain, checkL1, quoteInEvidence, compareAts, boardFingerprint, fingerprintFit, gate, queryPair, redact, unwrapBingUrl,
 } from '../lib/careers-pipeline.mjs';
 
-const USAGE = `usage: discover-careers.mjs [--llm] [--limit N] [--only NAME,NAME] [--first FILE] [--list] [--slice1] [--all] [--golden FILE] [--out PATH]
+const USAGE = `usage: discover-careers.mjs [--llm] [--limit N] [--only NAME,NAME] [--first FILE] [--list] [--slice1] [--all] [--companies FILE] [--golden FILE] [--out PATH]
   Layered pipeline (see the header of this file). Output: data/careers-discovery.tsv (append-only; rerun to resume).
   Inputs: config/protected-boards.txt, portals.yml entries with watch: true, data/check-by-hand.txt.
   --llm          run the Groq layers (L1 domain, L4 verifier); GROQ_API_KEY in .env, models GROQ_MODEL / GROQ_FALLBACK_MODEL
   --first FILE   look at the names in FILE before everything else
+  --companies F  also run every name in F (one per line, # comments), in file order, after the lists above
   --all          every enabled company in portals.yml, plus the protected, watch and check-by-hand lists
   --golden FILE  run only the cases in FILE and check them; a pass is required before a full run
   (debug) CAREER_OPS_UNVALIDATED=1 starts a full run without a passing golden check; every row is then stamped "unvalidated"
@@ -354,7 +355,7 @@ async function main() {
   const golden = arg('--golden') ? readGolden(arg('--golden')) : null;
   let inputs = golden
     ? golden.map((g) => ({ name: g.company, sources: [...(readText(PROTECTED).split('\n').some((l) => l.replace(/#.*/, '').trim().toLowerCase() === g.company.toLowerCase()) ? ['protected'] : []), 'golden'], entry: entries.find((e) => e.name?.toLowerCase() === g.company.toLowerCase()) || null }))
-    : buildInputs({ protectedText: readText(PROTECTED), portalsEntries: entries, checkByHandText: readText(CHECK_BY_HAND), extraNames: [...(has('--slice1') ? slice1Names() : []), ...(has('--all') ? entries.filter((e) => e && typeof e.name === 'string' && e.enabled !== false).map((e) => e.name) : [])], only: (arg('--only') || '').split(',').map((s) => s.trim()).filter(Boolean) });
+    : buildInputs({ protectedText: readText(PROTECTED), portalsEntries: entries, checkByHandText: readText(CHECK_BY_HAND), extraNames: [...(has('--slice1') ? slice1Names() : []), ...(arg('--companies') ? readText(arg('--companies')).split('\n').map((l) => l.replace(/#.*/, '').split('\t')[0].trim()).filter(Boolean) : []), ...(has('--all') ? entries.filter((e) => e && typeof e.name === 'string' && e.enabled !== false).map((e) => e.name) : [])], only: (arg('--only') || '').split(',').map((s) => s.trim()).filter(Boolean) });
   if (arg('--first')) {
     const first = readText(arg('--first')).split('\n').map((l) => l.replace(/#.*/, '').split('\t')[0].trim()).filter(Boolean);
     const rank = new Map(first.map((n, i) => [n.toLowerCase(), i]));
@@ -428,6 +429,7 @@ async function main() {
         status.first10 = timingReport(status.seconds_per_company, total - done.size);
         console.log(`First 10: ${status.first10.avg_seconds}s per company on average; about ${status.first10.estimated_total_minutes} min for all ${total - done.size}.`);
       }
+      if (llm) status.llm_usage = llm.usage;
       writeStatus(status);
       if (failures >= 5) throw new Halt(3, `5 consecutive companies could not be loaded (last: ${item.name})`);
       await sleep(1000);

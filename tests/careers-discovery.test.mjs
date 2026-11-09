@@ -340,3 +340,10 @@ test('query pairs: pass 1 merges the sde and official-website forms, the retry m
   assert.deepEqual(queryPair('Zepto', {}, 0), ['Zepto careers sde', 'Zepto official website']);
   assert.deepEqual(queryPair('Zepto', {}, 1), ['Zepto careers', 'Zepto jobs']);
 });
+
+test('llm: retry-after is honoured and capped', async () => {
+  const { retryAfterSeconds } = await import('../lib/careers-llm.mjs');
+  assert.equal(retryAfterSeconds({ headers: { 'retry-after': '7' } }), 7);
+  assert.equal(retryAfterSeconds({ headers: new Map([['retry-after', '500']]) }), 90);
+  assert.equal(retryAfterSeconds({}), 20);
+});
