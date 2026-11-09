@@ -337,8 +337,8 @@ test('bing result links are unwrapped to the real URL', () => {
 });
 
 test('query pairs: pass 1 merges the sde and official-website forms, the retry merges the other two', () => {
-  assert.deepEqual(queryPair('Zepto', {}, 0), ['Zepto careers sde', 'Zepto official website']);
-  assert.deepEqual(queryPair('Zepto', {}, 1), ['Zepto careers', 'Zepto jobs']);
+  assert.deepEqual(queryPair('Zepto', {}, 0), ['Zepto careers sde india', 'Zepto official website india']);
+  assert.deepEqual(queryPair('Zepto', {}, 1), ['Zepto careers india', 'Zepto jobs india']);
 });
 
 test('llm: retry-after is honoured and capped', async () => {
