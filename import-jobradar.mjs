@@ -20,6 +20,7 @@
  * discover-ats.mjs run is active, since that run also rewrites the file.
  */
 
+import { isMainModule } from './lib/is-main-module.mjs';
 import { existsSync, readFileSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
@@ -165,4 +166,4 @@ function main() {
   if (!enabled) console.log('Next: node board-india-check.mjs --source jobradar --apply   (enables the ones with India entry-level postings)');
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+if (isMainModule(import.meta.url)) main();

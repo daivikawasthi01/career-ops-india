@@ -2,6 +2,7 @@
 // audit-helper.mjs: read-only answers for tools/audit_missed.py and tools/weekly_report.py.
 //   node audit-helper.mjs explain "<title>"   which title rule blocks it (config/pipeline.yml), as JSON
 //   node audit-helper.mjs tracked             names and board URLs of enabled tracked_companies, as JSON
+import { isMainModule } from './lib/is-main-module.mjs';
 import { readFileSync, existsSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -31,7 +32,7 @@ function tracked() {
     .map((e) => ({ name: e.name, url: e.careers_url || e.api || '' }));
 }
 
-if (process.argv[1] && process.argv[1].endsWith('audit-helper.mjs')) {
+if (isMainModule(import.meta.url)) {
   const [cmd, arg] = process.argv.slice(2);
   if (cmd === 'explain') console.log(JSON.stringify(explainTitle(arg || '', requirePipelineConfig().title_filter)));
   else if (cmd === 'tracked') console.log(JSON.stringify(tracked()));

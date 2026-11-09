@@ -24,6 +24,7 @@
  * The report goes to data/cache/board-india-check.tsv.
  */
 
+import { isMainModule } from './lib/is-main-module.mjs';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
@@ -158,6 +159,6 @@ async function main() {
   console.log(`portals.yml updated. Backup: ${backup}`);
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   main().catch((err) => { console.error(err?.stack || err); process.exit(1); });
 }
