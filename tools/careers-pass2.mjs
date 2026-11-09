@@ -85,7 +85,8 @@ async function testUrl(context, url, name, st, depth = 0) {
       if (PASSING.has(sub.verdict) || sub.verdict === 'board-empty') return { ...sub, via: url };
     }
   }
-  return done({ verdict: cls.verdict, total: cls.count, sample: cls.sample || [], snippet: v.text.slice(0, 600) });
+  const indiaMentions = (v.text.match(/\b(india|bengaluru|bangalore|hyderabad|pune|mumbai|delhi|gurgaon|gurugram|noida|chennai|kolkata|ahmedabad)\b/gi) || []).length;
+  return done({ verdict: cls.verdict, total: cls.count, sample: cls.sample || [], snippet: v.text.slice(0, 600), indiaMentions });
 }
 
 async function processCompany2({ context, row, rejectedUrls, llm, vision }) {
@@ -130,11 +131,12 @@ async function processCompany2({ context, row, rejectedUrls, llm, vision }) {
   const top = best(verdicts);
   const win = st.results.find((r) => r.verdict === top && !r.via) || st.results.find((r) => r.verdict === top);
   let final = !verdicts.length ? (searchBlocked ? 'search-blocked' : 'no-candidate') : PASSING.has(top) || top === 'board-empty' ? top : top === 'bot-blocked' ? 'bot-blocked' : 'unresolved';
+  if (final === 'jobs-found' && win?.india === 0) final = 'right-portal-no-india'; // the portal is right; nothing in India right now
   if (final === 'unresolved' && searchBlocked) final = 'search-blocked';
   return {
     company: name, final_status: final, careers_url: win && final !== 'no-candidate' ? win.url : '', ats: win?.ats || '',
     jobs_total: win?.total ?? '', jobs_india: win?.india ?? '', sample_titles: (win?.sample || []).slice(0, 5).join(' | '), rounds, tests: st.tests, via: '',
-    tried: JSON.stringify(st.results.slice(0, 12).map((r) => ({ u: r.url, v: r.verdict }))), queries: st.queries.join(' | '), models: [...st.models].join(','), notes: st.notes.join(','),
+    tried: JSON.stringify(st.results.slice(0, 12).map((r) => ({ u: r.url, v: r.verdict }))), queries: st.queries.join(' | '), models: [...st.models].join(','), notes: [...st.notes, win?.indiaMentions !== undefined ? `india-mentions:${win.indiaMentions}` : ''].filter(Boolean).join(','),
   };
 }
 
