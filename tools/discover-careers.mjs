@@ -55,6 +55,7 @@ const PORTALS = process.env.CAREER_OPS_PORTALS || join(ROOT, 'portals.yml');
 const PROTECTED = process.env.CAREER_OPS_PROTECTED || join(ROOT, 'config', 'protected-boards.txt');
 const CHECK_BY_HAND = process.env.CAREER_OPS_CHECK_BY_HAND || join(ROOT, 'data', 'check-by-hand.txt');
 const DOMAINS_FILE = join(ROOT, 'data', 'company-domains.tsv');
+const ENV_DIRS = [process.env.CAREER_OPS_ENV_DIR, ROOT].filter(Boolean); // a worktree or scratch root has no .env: point CAREER_OPS_ENV_DIR at the folder that has it
 const REPO = join(dirname(new URL(import.meta.url).pathname), '..');
 const NAV_TIMEOUT = 20000;
 const COMPANY_DEADLINE_MS = Number(process.env.CAREER_OPS_COMPANY_DEADLINE_MS || 120000);
@@ -85,7 +86,7 @@ function slice1Names() {
 function llmConfig() {
   const p = join(ROOT, 'config', 'pipeline.yml');
   const c = existsSync(p) ? (loadYaml(readText(p)) || {}).discovery?.llm : null;
-  return loadModels([ROOT, REPO], c && typeof c === 'object' ? c : {});
+  return loadModels([...ENV_DIRS, REPO], c && typeof c === 'object' ? c : {});
 }
 
 /** Load one page. Never throws: a failed load is {ok:false}. Collects links, iframes and every request URL. */
@@ -323,7 +324,7 @@ async function main() {
 
   let llm = null;
   if (has('--llm')) {
-    const apiKey = loadGroqKey([ROOT, REPO]);
+    const apiKey = loadGroqKey([...ENV_DIRS, REPO]);
     if (!apiKey) { console.error('--llm needs GROQ_API_KEY in the environment or in .env'); return 1; }
     const m = llmConfig();
     llm = await makeLlm({ apiKey, ...m });
