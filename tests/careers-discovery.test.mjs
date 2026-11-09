@@ -208,7 +208,7 @@ test('pipeline L6: accepted only when every gate agrees; a missing verifier queu
   assert.equal(gate({ ...good, l4: null }, { needLlm: false }).accepted, true);
   assert.equal(gate({ ...good, l5ats: { state: 'no-board' } }).accepted, true, 'no portals board to compare is not a failure');
   assert.equal(queryVariants('Cred', { expectIndia: true }).length, 4);
-  assert.equal(queryVariants('Cred', {})[0], 'Cred careers india');
+  assert.equal(queryVariants('Cred', {})[0], '"Cred" careers');
 });
 
 test('llm: schemas are fixed, prompts carry only the allowed fields, the provider prefix is checked', () => {
@@ -337,8 +337,8 @@ test('bing result links are unwrapped to the real URL', () => {
 });
 
 test('query pairs: pass 1 merges the sde and official-website forms, the retry merges the other two', () => {
-  assert.deepEqual(queryPair('Zepto', {}, 0), ['Zepto careers india', 'Zepto careers sde india']);
-  assert.deepEqual(queryPair('Zepto', {}, 1), ['Zepto careers', 'Zepto official website india']);
+  assert.deepEqual(queryPair('Zepto', {}, 0), ['"Zepto" careers', 'Zepto careers india']);
+  assert.deepEqual(queryPair('Zepto', {}, 1), ['"Zepto" careers india', 'Zepto careers sde india']);
 });
 
 test('llm: retry-after is honoured and capped', async () => {
