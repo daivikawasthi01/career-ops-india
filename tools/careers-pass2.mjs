@@ -24,7 +24,7 @@ import { atsFromUrl, findAtsLinks, pickAts, extractUrls } from '../lib/careers-d
 import { boardFingerprint, redact } from '../lib/careers-pipeline.mjs';
 import { makeLlm, loadGroqKeys, loadModels } from '../lib/careers-llm.mjs';
 import { slugMatchesName } from '../lib/board-audit.mjs';
-import { classifyPage, followLinks, best, PASSING, CAREERS_PATH, identityOk, keyOf, rankCandidates, mark, seen, shouldStop, LIMITS, visionAction, INDIA_RE, indiaStatus, guessCareerUrls } from '../lib/careers-pass2.mjs';
+import { classifyPage, followLinks, best, PASSING, CAREERS_PATH, identityOk, keyOf, rankCandidates, mark, seen, shouldStop, LIMITS, visionAction, INDIA_RE, indiaStatus, guessCareerUrls, HIRING_SIGNAL } from '../lib/careers-pass2.mjs';
 import { parseTsv } from './careers-review.mjs';
 import { visit, searchResults, hostOf, Halt, gov, sleep, setSessionContext } from './discover-careers.mjs';
 import { queryPair } from '../lib/careers-pipeline.mjs';
@@ -108,7 +108,7 @@ export async function testUrl(context, url, name, st, depth = 0) {
       if (c2.verdict === 'listings-on-page') return done({ verdict: 'listings-on-page', total: c2.count, sample: c2.sample, note: 'listings after typing in the portal search box' });
     }
   }
-  if ((cls.verdict === 'landing' || cls.verdict === 'not-careers') && cls.note !== 'page says not found' && looksOwn && CAREERS_PATH.test(new URL(v.finalUrl).pathname + ' ' + v.title)) return done({ verdict: 'listings-unread', note: 'careers-looking page, listings not readable', snippet: v.text.slice(0, 600), indiaMentions: (v.text.match(new RegExp(INDIA_RE.source, 'gi')) || []).length });
+  if ((cls.verdict === 'landing' || cls.verdict === 'not-careers') && cls.note !== 'page says not found' && HIRING_SIGNAL.test(v.text) && looksOwn && CAREERS_PATH.test(new URL(v.finalUrl).pathname + ' ' + v.title)) return done({ verdict: 'listings-unread', note: 'careers-looking page, listings not readable', snippet: v.text.slice(0, 600), indiaMentions: (v.text.match(new RegExp(INDIA_RE.source, 'gi')) || []).length });
   const indiaMentions = (v.text.match(new RegExp(INDIA_RE.source, 'gi')) || []).length;
   return done({ verdict: cls.verdict, total: cls.count, sample: cls.sample || [], snippet: v.text.slice(0, 600), indiaMentions });
 }

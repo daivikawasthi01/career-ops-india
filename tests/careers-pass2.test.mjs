@@ -162,6 +162,12 @@ test('a site menu or product list in page JSON is not a job list, and a soft 404
   assert.equal(classifyPage({ status: 200, text: 'Careers | open positions', links }).verdict, 'listings-on-page');
 });
 
+import { HIRING_SIGNAL } from '../lib/careers-pass2.mjs';
+test('hiring signal: an about-us page titled Career does not have it, a real careers page does', () => {
+  assert.ok(!HIRING_SIGNAL.test('Career | BlueStone.com About Us Established in 2011, BlueStone is India\'s leading destination for fine jewellery'));
+  for (const t of ['Current openings', 'Join our team', 'We are hiring', 'Apply now', 'email careers@x.com', 'View all jobs']) assert.ok(HIRING_SIGNAL.test(t), t);
+});
+
 import { OPEN_ROLES_RE } from '../tools/discover-careers.mjs';
 test('open-roles button text is recognised, apply-style buttons are not', () => {
   for (const t of ['Show open roles', 'View all jobs', 'See open positions', 'Explore openings', 'Open Roles', 'View current openings →']) assert.ok(OPEN_ROLES_RE.test(t), t);

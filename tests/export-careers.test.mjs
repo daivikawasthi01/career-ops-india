@@ -19,6 +19,11 @@ test('export picks the best source per company and honours the review', () => {
   assert.equal(rows.E.mode, 'scan');
 });
 
+test('a page whose jobs were not read is exported as watch, never scan', () => {
+  const rows = choose({ pass2: [{ company: 'U', final_status: 'listings-unread', careers_url: 'https://u.com/careers' }, { company: 'K', final_status: 'india-unknown', careers_url: 'https://k.com/c' }] });
+  assert.deepEqual(rows.map((r) => r.mode), ['watch', 'watch']);
+});
+
 test('right-portal-no-india with no pass 3 switch is exported as watch', () => {
   const rows = choose({ pass2: [{ company: 'B', final_status: 'right-portal-no-india', careers_url: 'https://jobs.lever.co/b' }] });
   assert.equal(rows[0].mode, 'watch');

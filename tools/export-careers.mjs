@@ -8,8 +8,8 @@
  * Per company, the best source wins:
  *   1. your dashboard decision: a cross drops the company; a tick uses your (possibly edited) URL;
  *   2. pass 3 "switch" (the India version of the portal);
- *   3. pass 2 result: jobs-found / listings-on-page / listings-unread / india-unknown use its URL;
- *      right-portal-no-india uses its URL with Mode=watch (right portal, nothing in India right now: checked weekly, not scanned);
+ *   3. pass 2 result: jobs-found / listings-on-page use its URL (Mode=scan);
+ *      right-portal-no-india, listings-unread and india-unknown use its URL with Mode=watch (right page, but no jobs a scan can use: checked weekly, not scanned);
  *      needs-identity-check, bot-blocked, no-candidate, unresolved and the rest are left out;
  *   4. pass 1: an accepted row's URL.
  * Mode is "scan" or "watch". A company already in your hand-verified portals.yml entry is replaced only if apply-verified-list says so.
@@ -22,7 +22,8 @@ import { getCareerOpsRoot } from '../path-resolver.mjs';
 const tsv = (text) => { const [h, ...ls] = String(text).split('\n').filter(Boolean); const cols = (h || '').split('\t'); return ls.map((l) => { const c = l.split('\t'); return Object.fromEntries(cols.map((k, i) => [k, c[i] ?? ''])); }); };
 const key = (n) => String(n).toLowerCase().replace(/[^a-z0-9]/g, '');
 const csvCell = (v) => (/[",\n]/.test(v) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
-const PASS2_SCAN = new Set(['jobs-found', 'listings-on-page', 'listings-unread', 'india-unknown']);
+const PASS2_SCAN = new Set(['jobs-found', 'listings-on-page']); // jobs were actually read
+const PASS2_WATCH = new Set(['right-portal-no-india', 'listings-unread', 'india-unknown']); // right page, but nothing a scan can use: checked weekly by hand
 
 /** Pure: pick one {name, url, mode, source} per company from the four sources. */
 export function choose({ pass1 = [], pass2 = [], pass3 = [], review = {} }) {
@@ -34,11 +35,11 @@ export function choose({ pass1 = [], pass2 = [], pass3 = [], review = {} }) {
     const rv = review[name] || review[k] || {};
     if (rv.decision === 'bad') continue;
     const r3 = p3.get(k); const r2 = p2.get(k); const r1 = p1.get(k);
-    const mode2 = r2?.final_status === 'right-portal-no-india' ? 'watch' : 'scan';
+    const mode2 = PASS2_WATCH.has(r2?.final_status) ? 'watch' : 'scan';
     let pick = null;
     if (rv.decision === 'ok' && (rv.careers_url || r2?.careers_url || r1?.careers_url)) pick = { url: rv.careers_url || r2?.careers_url || r1.careers_url, mode: mode2, source: 'review' };
     else if (r3?.decision === 'switch' && r3.new_url) pick = { url: r3.new_url, mode: 'scan', source: 'pass3' };
-    else if (r2 && (PASS2_SCAN.has(r2.final_status) || r2.final_status === 'right-portal-no-india') && r2.careers_url) pick = { url: r2.careers_url, mode: mode2, source: 'pass2' };
+    else if (r2 && (PASS2_SCAN.has(r2.final_status) || PASS2_WATCH.has(r2.final_status)) && r2.careers_url) pick = { url: r2.careers_url, mode: mode2, source: 'pass2' };
     else if (r1?.status === 'accepted' && r1.careers_url) pick = { url: r1.careers_url, mode: 'scan', source: 'pass1' };
     if (pick) out.push({ name, ...pick });
   }
