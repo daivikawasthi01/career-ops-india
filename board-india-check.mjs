@@ -17,6 +17,12 @@
  *                                                         # disable enabled boards with both = 0
  *   node board-india-check.mjs --company Razorpay         # one board
  *   node board-india-check.mjs --disabled | --all        # other selections
+ *   node board-india-check.mjs --recheck-disabled        # re-test boards this tool auto-disabled; --apply re-enables those with any India posting
+ *
+ * Criterion (--apply): disable only when india_any = 0 (nothing located in India at any level). india_any > 0 with
+ * india_entry = 0 stays enabled and gets `watch: true`. Boards listed in config/protected-boards.txt are never
+ * disabled and are always enabled with `watch: true`. Every auto-disable adds `# auto-disabled <date> by
+ * board-india-check (india_any=0)`.
  *   options: --limit N  --concurrency N (default 6)  --force (apply while discover-ats runs)
  *
  * Re-enabling is limited to boards tagged `source: jobradar`; boards you disabled yourself are
@@ -33,11 +39,18 @@ import { loadProviders, resolveProvider } from './providers/_registry.mjs';
 import { makeHttpCtx } from './providers/_http.mjs';
 import { buildTitleFilter, buildLocationFilter } from './scan.mjs';
 import { applyPipelineConfig } from './lib/pipeline-config.mjs';
-import { discoverIsRunning, backupFile, atomicWrite, setEnabledInText } from './lib/portals-edit.mjs';
+import { discoverIsRunning, backupFile, atomicWrite, setEnabledInText, setFieldInText, autoDisabledNames } from './lib/portals-edit.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PORTALS_PATH = process.env.CAREER_OPS_PORTALS || join(HERE, 'portals.yml');
 const REPORT_PATH = join(HERE, 'data', 'cache', 'board-india-check.tsv');
+// One name per line, # comments: boards that stay enabled and watched whatever the counts say.
+const PROTECTED_PATH = process.env.CAREER_OPS_PROTECTED || join(HERE, 'config', 'protected-boards.txt');
+
+export function loadProtected(path = PROTECTED_PATH) {
+  if (!existsSync(path)) return new Set();
+  return new Set(readFileSync(path, 'utf-8').split('\n').map((l) => l.replace(/#.*/, '').trim().toLowerCase()).filter(Boolean));
+}
 
 /** Count postings that pass the location filter, the title filter, and both. Pure. */
 export function scoreJobs(jobs, titleFilter, locationFilter) {
@@ -51,16 +64,38 @@ export function scoreJobs(jobs, titleFilter, locationFilter) {
     if (entryLevel) entry++;
     if (inIndia && entryLevel) both++;
   }
-  return { total: Array.isArray(jobs) ? jobs.length : 0, india, entry, both };
+  // india_any: passes the location filter at any level. india_entry: passes both filters.
+  return { total: Array.isArray(jobs) ? jobs.length : 0, india, entry, both, india_any: india, india_entry: both };
 }
 
-/** What --apply should do for one checked entry, or null for no change. Pure. */
-export function decideChange(entry, result) {
-  if (result.status !== 'ok') return null; // errors are never read as zero
+/**
+ * What --apply should do for one checked entry, or null for no change. Pure.
+ *
+ *   disable       enabled, india_any = 0 (nothing in India at any level)
+ *   watch         enabled, india_any > 0 but india_entry = 0: stays on, flagged `watch: true`
+ *   enable        disabled `source: jobradar` board that now has an India entry-level posting
+ *   enable-watch  a protected board that is off: protected boards are always on and watched
+ * Protected boards are never disabled. Errors are never read as zero.
+ */
+export function decideChange(entry, result, { protectedSet = new Set() } = {}) {
+  if (result.status !== 'ok') return null;
   const enabled = entry.enabled !== false;
-  if (result.both === 0 && enabled) return 'disable';
-  if (result.both > 0 && !enabled && entry.source === 'jobradar') return 'enable';
+  const any = result.india_any ?? result.india ?? 0;
+  const ent = result.india_entry ?? result.both ?? 0;
+  if (protectedSet.has(String(entry.name).toLowerCase())) {
+    if (!enabled) return 'enable-watch';
+    return entry.watch === true ? null : 'watch';
+  }
+  if (enabled && any === 0) return 'disable';
+  if (enabled && any > 0 && ent === 0 && entry.watch !== true) return 'watch';
+  if (!enabled && ent > 0 && entry.source === 'jobradar') return 'enable';
   return null;
+}
+
+/** --recheck-disabled: an auto-disabled board comes back when it now has any India posting. */
+export function decideRecheck(entry, result) {
+  if (result.status !== 'ok' || entry.enabled !== false) return null;
+  return (result.india_any ?? result.india ?? 0) > 0 ? 'reenable' : null;
 }
 
 async function pool(items, limit, fn) {
@@ -76,6 +111,7 @@ function parseArgs(argv) {
     force: argv.includes('--force'),
     all: argv.includes('--all'),
     disabled: argv.includes('--disabled'),
+    recheck: argv.includes('--recheck-disabled'),
     source: get('--source'),
     company: get('--company'),
     limit: Number(get('--limit')) || 0,
@@ -83,10 +119,11 @@ function parseArgs(argv) {
   };
 }
 
-const USAGE = `usage: board-india-check.mjs (--source NAME | --company NAME | --disabled | --all) [--apply]
+const USAGE = `usage: board-india-check.mjs (--source NAME | --company NAME | --disabled | --all | --recheck-disabled) [--apply]
   --source NAME     boards tagged with that source (for example jobradar)
   --company NAME    one board
   --disabled | --all  other selections
+  --recheck-disabled  re-test the boards this tool auto-disabled (monthly); --apply re-enables those with any India posting
   --apply           write portals.yml (backup first); without it this is a preview
   --limit N  --concurrency N (default 6)  --force
   --help, -h        print this and exit (fetches nothing, writes nothing)`;
@@ -95,8 +132,8 @@ async function main() {
   const argv = process.argv.slice(2);
   if (argv.includes('--help') || argv.includes('-h')) { console.log(USAGE); return; }
   const opts = parseArgs(argv);
-  if (!(opts.all || opts.disabled || opts.source || opts.company)) {
-    console.error('Pick a selection: --source jobradar | --company NAME | --disabled | --all\n(see --help)');
+  if (!(opts.all || opts.disabled || opts.source || opts.company || opts.recheck)) {
+    console.error('Pick a selection: --source jobradar | --company NAME | --disabled | --all | --recheck-disabled\n(see --help)');
     process.exit(1);
   }
   if (!existsSync(PORTALS_PATH)) { console.error(`Error: ${PORTALS_PATH} not found.`); process.exit(1); }
@@ -105,7 +142,9 @@ async function main() {
   const portalsText = readFileSync(PORTALS_PATH, 'utf-8');
   const config = applyPipelineConfig(loadYaml(portalsText) || {});
   const entries = (config.tracked_companies || []).filter((e) => e && typeof e.name === 'string');
+  const autoOff = opts.recheck ? new Set(autoDisabledNames(portalsText)) : null;
   let selected = entries.filter((e) => {
+    if (opts.recheck) return e.enabled === false && autoOff.has(e.name);
     if (opts.company) return e.name.toLowerCase() === opts.company.toLowerCase();
     if (opts.source) return e.source === opts.source;
     if (opts.disabled) return e.enabled === false;
@@ -113,6 +152,7 @@ async function main() {
   });
   if (opts.limit) selected = selected.slice(0, opts.limit);
   if (!selected.length) { console.log('No entries match that selection.'); return; }
+  const protectedSet = loadProtected();
 
   const providers = await loadProviders(resolve(HERE, 'providers'));
   const titleFilter = buildTitleFilter(config.title_filter);
@@ -141,9 +181,11 @@ async function main() {
 
   const today = new Date().toISOString().slice(0, 10);
   mkdirSync(dirname(REPORT_PATH), { recursive: true });
+  const decide = (e, r) => (opts.recheck ? decideRecheck(e, r) : decideChange(e, r, { protectedSet }));
   const rows = selected.map((e, i) => [today, e.name, e.source || '', e.enabled === false ? 'disabled' : 'enabled',
-    results[i].status, results[i].total, results[i].india, results[i].entry, results[i].both, results[i].note || ''].join('\t'));
-  writeFileSync(REPORT_PATH, ['date\tcompany\tsource\tstate\tstatus\ttotal\tindia\tentry\tboth\tnote', ...rows].join('\n') + '\n');
+    results[i].status, results[i].total, results[i].india, results[i].entry, results[i].both,
+    results[i].india_any ?? '', results[i].india_entry ?? '', decide(e, results[i]) || '', results[i].note || ''].join('\t'));
+  writeFileSync(REPORT_PATH, ['date\tcompany\tsource\tstate\tstatus\ttotal\tindia\tentry\tboth\tindia_any\tindia_entry\taction\tnote', ...rows].join('\n') + '\n');
 
   const ok = results.filter((r) => r.status === 'ok');
   const withBoth = ok.filter((r) => r.both > 0);
@@ -151,9 +193,17 @@ async function main() {
   console.log(`with an India entry-level posting: ${withBoth.length}   scoring zero: ${ok.length - withBoth.length}`);
   console.log(`report: ${REPORT_PATH}`);
 
-  const changes = selected.map((e, i) => ({ e, r: results[i], action: decideChange(e, results[i]) })).filter((c) => c.action);
-  console.log(`--apply would enable ${changes.filter((c) => c.action === 'enable').length} and disable ${changes.filter((c) => c.action === 'disable').length}`);
-  if (!opts.apply) { console.log('Preview only. Add --apply to change portals.yml.'); return; }
+  const changes = selected.map((e, i) => ({ e, r: results[i], action: decide(e, results[i]) })).filter((c) => c.action);
+  const by = (a) => changes.filter((c) => c.action === a);
+  console.log(`--apply would: disable ${by('disable').length} (india_any=0), watch ${by('watch').length} (india_any>0, india_entry=0), `
+    + `enable ${by('enable').length}, enable+watch ${by('enable-watch').length}, re-enable ${by('reenable').length}`);
+  if (!opts.apply) {
+    for (const a of ['disable', 'watch', 'enable', 'enable-watch', 'reenable']) {
+      if (by(a).length) console.log(`\n${a} (${by(a).length}):\n  ${by(a).map((c) => `${c.e.name} [any ${c.r.india_any}, entry ${c.r.india_entry}, of ${c.r.total}]`).join('\n  ')}`);
+    }
+    console.log('\nPreview only. Add --apply to change portals.yml.');
+    return;
+  }
   if (!changes.length) { console.log('Nothing to change.'); return; }
   if (!opts.force && discoverIsRunning()) {
     console.error('Refusing to write: a discover-ats.mjs run is active and also rewrites portals.yml. Wait, or pass --force.');
@@ -161,9 +211,11 @@ async function main() {
   }
   const backup = backupFile(PORTALS_PATH);
   let text = portalsText;
-  for (const { e, action } of changes) {
-    const note = action === 'disable' ? `disabled ${today} by board-india-check: no India entry-level postings` : '';
-    text = setEnabledInText(text, e.name, action === 'enable', note).text;
+  for (const { e, r, action } of changes) {
+    if (action === 'disable') text = setEnabledInText(text, e.name, false, `auto-disabled ${today} by board-india-check (india_any=0)`).text;
+    else if (action === 'reenable') text = setEnabledInText(text, e.name, true, `re-enabled ${today} by board-india-check --recheck-disabled (india_any=${r.india_any})`).text;
+    else if (action === 'enable' || action === 'enable-watch') text = setEnabledInText(text, e.name, true, '').text;
+    if (action === 'watch' || action === 'enable-watch') text = setFieldInText(text, e.name, 'watch', 'true').text;
   }
   atomicWrite(PORTALS_PATH, text);
   console.log(`portals.yml updated. Backup: ${backup}`);
