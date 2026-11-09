@@ -31,7 +31,7 @@
  * Issue #1864 — github.com/career-ops-hq/career-ops
  */
 
-import { readFileSync, existsSync, writeFileSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync, appendFileSync, mkdirSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { loadYaml } from './lib/yaml-document.mjs';
@@ -56,6 +56,8 @@ import { isMainModule } from './lib/is-main-module.mjs';
 import { getCareerOpsRoot } from './path-resolver.mjs';
 import { DEFAULT_SMALL_THRESHOLD, isSmallBoard, smallBoardDetail } from './lib/small-board.mjs';
 import { findBlacklistEntry, loadBlacklist } from './scan.mjs';
+import { gateByIdentity, appendReviewFile } from './lib/board-identity.mjs';
+import { probeFetchJson, probeFetchText } from './verify-portals.mjs';
 
 const CAREER_OPS = dirname(fileURLToPath(import.meta.url));
 const DATA_ROOT = getCareerOpsRoot();
@@ -1262,7 +1264,14 @@ async function main() {
   // A resolved board's host can hit a domain-scope entry the name did not
   // (e.g. a company listed under a different name on a blacklisted host).
   const post = partitionBlacklisted(discovered.resolved, blacklist, (r) => [r.careers_url]);
-  const resolved = post.allowed;
+  // A board that answers is not proof it is the company's: every match needs an owner-name or
+  // website confirmation (lib/board-identity.mjs). The rest go to a review file, never to portals.yml.
+  const gate = await gateByIdentity(post.allowed, companies, {
+    fetchText: (u) => probeFetchText(u, { maxBytes: 400_000 }),
+    fetchJson: (u) => probeFetchJson(u),
+  });
+  const resolved = gate.confirmed;
+  const review = gate.review;
   const blacklisted = [...pre.blacklisted, ...post.blacklisted];
   // Advisory only: resolution and exit codes are unchanged (#4772).
   flagSmallBoards(resolved, opts.smallThreshold);
@@ -1315,7 +1324,23 @@ async function main() {
     ? await withPipelineLock(PORTALS_PATH, updatePortals)
     : updatePortals();
 
+  // Boards that did not pass the identity check are kept for a human, in a file of their own.
+  // Only --write touches it, like portals.yml.
+  const reviewPath = join(getCareerOpsRoot(), 'data', 'discovery-review.tsv');
+  let reviewWritten = 0;
+  if (opts.write && review.length) {
+    reviewWritten = appendReviewFile(reviewPath, review, new Date().toISOString().slice(0, 10),
+      { existsSync, readFileSync, appendFileSync, mkdirSync });
+  }
+  if (review.length) {
+    warnings.push(`${review.length} board(s) matched a name but could not be confirmed as the company's own; `
+      + `${opts.write ? `listed in ${reviewPath}` : 'shown in "review" (re-run with --write to save them to data/discovery-review.tsv)'}, not added to portals.yml`);
+  }
+
   const metadata = {
+    needsReview: review.length,
+    reviewFile: opts.write && review.length ? reviewPath : null,
+    reviewWritten,
     resolved: resolved.length,
     unresolved: unresolved.length,
     duplicatesSkipped: duplicates.length,
@@ -1331,7 +1356,7 @@ async function main() {
   if (opts.summary) {
     printSummary({ resolved, unresolved, duplicates, blacklisted });
   } else {
-    const out = { metadata, resolved, unresolved, blacklisted };
+    const out = { metadata, resolved, unresolved, blacklisted, review: review.map((r) => ({ name: r.name, vendor: r.vendor, careers_url: r.careers_url, jobCount: r.jobCount, reason: r.identity?.reason, owner: r.identity?.owner })) };
     // Show the would-be YAML whenever we didn't write it (preview, or --write
     // that couldn't find the file), so the user can paste it manually.
     if (!written) out.pendingEntries = snippets.join('');

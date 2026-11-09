@@ -87,8 +87,8 @@ const followRedirects = (fetchFn) => async (url, opts = {}) => {
     }
   }
 };
-const probeFetchJson = followRedirects(defaultFetchJson);
-const probeFetchText = followRedirects(defaultFetchText);
+export const probeFetchJson = followRedirects(defaultFetchJson);
+export const probeFetchText = followRedirects(defaultFetchText);
 import { decodeEntities } from './providers/_html-entities.mjs';
 import { asciiFold } from './lib/ascii-fold.mjs';
 import { loadProviders, resolveProvider } from './providers/_registry.mjs';
