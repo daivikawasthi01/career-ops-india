@@ -64,6 +64,25 @@ export function mergePass2(rows, p2rows, p3rows = []) {
   });
 }
 
+const RUN_DIR = dirname(TSV);
+const runFile = (n, kind) => join(RUN_DIR, `careers-run-pass${n}.${kind}`);
+/** A phase status file as the page shows it: a run that stopped updating (Ctrl-C, crash) is "stopped", not "running". */
+export function phaseView(raw, now = Date.now(), staleMs = 90000) {
+  if (!raw || typeof raw !== 'object') return null;
+  const live = raw.state === 'running' && now - Date.parse(raw.updated_at || 0) < staleMs;
+  return { ...raw, state: raw.state === 'running' && !live ? 'stopped' : raw.state, live };
+}
+function readPhases() {
+  return [1, 2, 3].map((n) => { try { return { phase: n, ...phaseView(JSON.parse(readFileSync(runFile(n, 'status.json'), 'utf8'))) }; } catch { return { phase: n, state: 'not run' }; } });
+}
+function tailLog(n, lines = 60) {
+  try {
+    const fd = openSync(runFile(n, 'log'), 'r'); const size = fstatSync(fd).size; const len = Math.min(size, 65536);
+    const buf = Buffer.alloc(len); readSync(fd, buf, 0, len, size - len); closeSync(fd);
+    return buf.toString('utf8').split('\n').filter(Boolean).slice(-lines);
+  } catch { return []; }
+}
+
 const readReview = () => { try { return JSON.parse(readFileSync(REVIEW, 'utf8')); } catch { return {}; } };
 function saveReview(obj) {
   mkdirSync(dirname(REVIEW), { recursive: true });
