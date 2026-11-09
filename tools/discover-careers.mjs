@@ -161,7 +161,8 @@ const searchTurn = async () => {
   return p;
 };
 /** Top results from the first engine that returns any. Zero results from every engine is reported as an empty search, never as "no candidates". */
-async function searchResults(context, query) {
+async function searchResults(context, query, opts = {}) {
+  let shot = '';
   await searchTurn(); // searches are spaced out across all workers
   searchStats.calls++;
   for (const eng of ENGINES) {
@@ -177,6 +178,7 @@ async function searchResults(context, query) {
         return { title: r.title.trim(), url, snippet: r.snippet.trim() };
       }).filter((r) => /^https?:/.test(r.url) && !/(duckduckgo|bing)\.com/.test(new URL(r.url).hostname)).slice(0, 8);
       if (out.length) { out.engine = eng.name; gov.ok(); return out; }
+      if (opts.shot && !shot) shot = (await page.screenshot({ type: 'jpeg', quality: 60 }).catch(() => Buffer.alloc(0))).toString('base64');
     } catch (err) {
       if (err instanceof Halt) throw err;
     } finally {
@@ -192,7 +194,7 @@ async function searchResults(context, query) {
   }
   console.error(`[search] blocked or empty: ${gov.active}/${gov.maxLanes} lanes, +${gov.extraMs} ms spacing, pause ${Math.round(gov.pauseMs() / 1000)} s (${gov.blocksInRow} in a row)`);
   if (gov.shouldHalt()) throw new Halt(2, `search engines returned nothing ${gov.blocksInRow} times in a row, even after cooling down`);
-  const none = []; none.engine = 'none';
+  const none = []; none.engine = 'none'; none.shot = shot;
   return none;
 }
 
@@ -528,4 +530,5 @@ function goldenVerdict(cases, fails) {
   const confirmed = cases.filter((c) => c.expect !== 'unknown' && c.domains.length).length;
   return { confirmed, passed: fails.length === 0 && confirmed >= MIN_CONFIRMED, enough: confirmed >= MIN_CONFIRMED };
 }
-export { checkGolden, readGolden, goldenVerdict, tsvRow, COLUMNS };
+export { checkGolden, readGolden, goldenVerdict, tsvRow, COLUMNS, visit, searchResults, hostOf, Halt, gov, sleep };
+export const setSessionContext = (c) => { sessionContext = c; };
