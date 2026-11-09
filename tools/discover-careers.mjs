@@ -29,7 +29,7 @@ import {
 } from '../lib/careers-discovery.mjs';
 import { makeLlm, loadGroqKeys, loadModels, domainPrompt } from '../lib/careers-llm.mjs';
 import {
-  registrable, sameSite, isAggregator, checkDomain, checkL1, quoteInEvidence, compareAts, boardFingerprint, fingerprintFit, gate, queryPair, redact, unwrapBingUrl,
+  registrable, sameSite, isAggregator, checkDomain, checkL1, quoteInEvidence, compareAts, boardFingerprint, fingerprintFit, gate, queryPair, redact, unwrapBingUrl, SearchGovernor,
 } from '../lib/careers-pipeline.mjs';
 
 const USAGE = `usage: discover-careers.mjs [--llm] [--limit N] [--only NAME,NAME] [--first FILE] [--list] [--slice1] [--workers N] [--search-lanes N] [--all] [--companies FILE] [--golden FILE] [--out PATH]
@@ -125,13 +125,16 @@ const ENGINES = [
     read: () => [...document.querySelectorAll('.result')].slice(0, 12).map((r) => ({ title: r.querySelector('.result__a')?.innerText || '', href: r.querySelector('.result__a')?.href || '', snippet: r.querySelector('.result__snippet')?.innerText || '' })) },
 ];
 const searchStats = { empty: 0, calls: 0 };
-// Search lanes: each lane spaces its own searches 2 to 3.5 s apart; several lanes run side by side.
+// Search lanes, paced by a governor: a block halves the lanes and pauses; good searches bring them back slowly.
 const LANES = Math.max(1, Number(arg('--search-lanes')) || 3);
+const gov = new SearchGovernor({ lanes: LANES });
 const lanes = Array.from({ length: LANES }, () => ({ chain: Promise.resolve(), last: 0 }));
 let laneTurn = 0;
-const searchTurn = () => {
-  const lane = lanes[laneTurn++ % LANES];
-  const p = lane.chain.then(async () => { const wait = 2000 + Math.random() * 1500 - (Date.now() - lane.last); if (wait > 0) await sleep(wait); lane.last = Date.now(); });
+const searchTurn = async () => {
+  const pause = gov.pauseMs();
+  if (pause) await sleep(pause);
+  const lane = lanes[laneTurn++ % gov.active];
+  const p = lane.chain.then(async () => { const wait = gov.spacingMs() - (Date.now() - lane.last); if (wait > 0) await sleep(wait); lane.last = Date.now(); });
   lane.chain = p.catch(() => {});
   return p;
 };
@@ -151,7 +154,7 @@ async function searchResults(context, query) {
         try { const t = new URL(r.href).searchParams.get('uddg'); if (t) url = decodeURIComponent(t); } catch { /* keep */ }
         return { title: r.title.trim(), url, snippet: r.snippet.trim() };
       }).filter((r) => /^https?:/.test(r.url) && !/(duckduckgo|bing)\.com/.test(new URL(r.url).hostname)).slice(0, 8);
-      if (out.length) { out.engine = eng.name; return out; }
+      if (out.length) { out.engine = eng.name; gov.ok(); return out; }
     } catch (err) {
       if (err instanceof Halt) throw err;
     } finally {
@@ -159,6 +162,9 @@ async function searchResults(context, query) {
     }
   }
   searchStats.empty++;
+  gov.blocked();
+  console.error(`[search] blocked or empty: ${gov.active}/${gov.maxLanes} lanes, +${gov.extraMs} ms spacing, pause ${Math.round(gov.pauseMs() / 1000)} s (${gov.blocksInRow} in a row)`);
+  if (gov.shouldHalt()) throw new Halt(2, `search engines returned nothing ${gov.blocksInRow} times in a row, even after cooling down`);
   const none = []; none.engine = 'none';
   return none;
 }
@@ -226,8 +232,6 @@ async function pass({ context, item, profile, queries, overrides, llm, fp }) {
   for (const q of queries) for (const r of await searchResults(context, q)) if (!results.some((x) => x.url === r.url)) results.push(r);
   // Seed from Wikidata's official-website property: retrieved evidence, not model memory.
   for (const w of await wikidataSites(item.name)) if (!results.some((x) => sameSite(hostOf(x.url), hostOf(w.url)))) results.push(w);
-  searchStats.run = results.length ? 0 : (searchStats.run || 0) + 1;
-  if (searchStats.run >= 3) throw new Halt(2, 'search returned nothing from every engine 3 times in a row (blocked?)');
   if (!results.length) return { ...early(gate({ l1: { ok: false, why: 'search returned no results from any engine, so no candidates were gathered' } })), ev, model: '', raw: '', domain: '', retry: true };
   const cands = [];
   const add = (domain, source) => { if (domain && !cands.some((c) => sameSite(c.domain, domain))) cands.push({ domain, source, results: [] }); };

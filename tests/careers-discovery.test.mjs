@@ -358,3 +358,26 @@ test('llm: every key is collected once, from GROQ_API_KEYS, GROQ_API_KEY and num
     assert.deepEqual(loadGroqKeys([dir]).sort(), ['gsk_a', 'gsk_b', 'gsk_c']);
   } finally { Object.assign(process.env, saved); rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('search governor: blocks halve lanes and pause, good searches recover slowly, many blocks in a row halt', async () => {
+  const { SearchGovernor } = await import('../lib/careers-pipeline.mjs');
+  let t = 0;
+  const g = new SearchGovernor({ lanes: 4, recoverAfter: 3, haltAfter: 3, now: () => t });
+  assert.equal(g.active, 4);
+  g.blocked();
+  assert.equal(g.active, 2);
+  assert.equal(g.pauseMs(), 30000);
+  assert.equal(g.extraMs, 2000);
+  t += 31000; assert.equal(g.pauseMs(), 0);
+  g.blocked(); assert.equal(g.active, 1); assert.equal(g.pauseMs(), 60000); assert.equal(g.shouldHalt(), false);
+  g.ok(); assert.equal(g.blocksInRow, 0);
+  g.ok(); g.ok(); assert.equal(g.extraMs, 2000, 'spacing halves first: 4000 -> 2000');
+  for (let i = 0; i < 3; i++) g.ok();
+  assert.equal(g.extraMs, 1000);
+  for (let i = 0; i < 3; i++) g.ok();
+  assert.equal(g.extraMs, 0);
+  for (let i = 0; i < 3; i++) g.ok();
+  assert.equal(g.active, 2, 'then lanes come back one at a time');
+  g.blocked(); g.blocked(); g.blocked();
+  assert.equal(g.shouldHalt(), true);
+});
