@@ -24,6 +24,7 @@ import { browserLaunchOptions } from '../lib/browser-launch.mjs';
 import { atsFromUrl, findAtsLinks, pickAts, extractUrls } from '../lib/careers-discovery.mjs';
 import { boardFingerprint, redact } from '../lib/careers-pipeline.mjs';
 import { makeLlm, loadGroqKeys, loadModels } from '../lib/careers-llm.mjs';
+import { loadGeminiKeys, loadGeminiModel } from '../lib/careers-gemini.mjs';
 import { slugMatchesName } from '../lib/board-audit.mjs';
 import { classifyPage, followLinks, best, PASSING, CAREERS_PATH, identityOk, keyOf, rankCandidates, mark, seen, shouldStop, LIMITS, visionAction, INDIA_RE, indiaStatus, guessCareerUrls, HIRING_SIGNAL, visionListingsOk, indiaPass, outcomeOf, isIndiaLoc } from '../lib/careers-pass2.mjs';
 import { parseTsv } from './careers-review.mjs';
@@ -223,7 +224,7 @@ async function main() {
     if (!keys.length) { console.error('--llm needs GROQ_API_KEY in the environment or .env'); return 1; }
     const cfgPath = join(ROOT, 'config', 'pipeline.yml');
     const c = existsSync(cfgPath) ? (loadYaml(read(cfgPath)) || {}).discovery?.llm : null;
-    llm = await makeLlm({ keys, ...loadModels([...ENV_DIRS, REPO], c && typeof c === 'object' ? c : {}) });
+    llm = await makeLlm({ keys, geminiKeys: loadGeminiKeys([...ENV_DIRS, REPO]), geminiModel: loadGeminiModel([...ENV_DIRS, REPO]), ...loadModels([...ENV_DIRS, REPO], c && typeof c === 'object' ? c : {}) });
   }
   await initEnv();
   env.readListings = llm && !has('--no-vision') ? llm.readListings : null;
