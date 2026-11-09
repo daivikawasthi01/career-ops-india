@@ -1,0 +1,39 @@
+# location<TAB>expected (pass|fail) against the India location_filter. Probed cities and alternate spellings pass;
+# ambiguous names pass only with their state; plain Remote, APAC and other regions stay excluded.
+Bengaluru	pass
+Mumbai, MH	pass
+Navi Mumbai	pass
+Pan India	pass
+Remote - India	pass
+Remote, India	pass
+India (Remote)	pass
+Bhubaneshwar	pass
+Bhubaneswar, Odisha	pass
+Mysuru	pass
+Mysore	pass
+Visakhapatnam	pass
+Vizag	pass
+Nashik	pass
+Bhopal	pass
+Ranchi	pass
+Kozhikode	pass
+Calicut	pass
+Thane, Maharashtra	pass
+Thane, MH	pass
+Surat, Gujarat	pass
+Surat, GJ	pass
+Patna, Bihar	pass
+Patna, BR	pass
+Surat	fail
+Patna	fail
+Thane	fail
+Surat Thani, Thailand	fail
+Patna, Scotland	fail
+Remote	fail
+APAC	fail
+Asia Pacific	fail
+Anywhere	fail
+Worldwide	fail
+Global	fail
+Berlin	fail
+London, United Kingdom	fail

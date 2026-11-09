@@ -41,6 +41,7 @@ import { loadProviders, resolveProvider } from './providers/_registry.mjs';
 import { makeHttpCtx } from './providers/_http.mjs';
 import { buildTitleFilter, buildLocationFilter } from './scan.mjs';
 import { applyPipelineConfig } from './lib/pipeline-config.mjs';
+import { writeSection } from './lib/check-by-hand.mjs';
 import { discoverIsRunning, backupFile, atomicWrite, setEnabledInText, setFieldInText, removeFieldInText, autoDisabledNames } from './lib/portals-edit.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -214,10 +215,9 @@ async function main() {
     + `enable ${by('enable').length}, enable+watch ${by('enable-watch').length}, re-enable ${by('reenable').length}`);
   // Small boards are never disabled on a zero count; they go to a file for a person to look at.
   if (by('check-by-hand').length) {
-    const lines = ['# Boards with no India posting but 3 or fewer postings in total: probably not read in full. Check by hand.',
-      '# name\tpostings\tcareers_url', ...by('check-by-hand').map((c) => `${c.e.name}\t${c.r.total}\t${c.e.careers_url || c.e.api || ''}`)];
-    mkdirSync(dirname(CHECK_BY_HAND_PATH), { recursive: true });
-    writeFileSync(CHECK_BY_HAND_PATH, lines.join('\n') + '\n');
+    writeSection(CHECK_BY_HAND_PATH, 'small-boards', [
+      '# Boards with no India posting but 3 or fewer postings in total: probably not read in full. name<TAB>postings<TAB>careers_url',
+      ...by('check-by-hand').map((c) => `${c.e.name}\t${c.r.total}\t${c.e.careers_url || c.e.api || ''}`)]);
     console.log(`check-by-hand list (${by('check-by-hand').length}): ${CHECK_BY_HAND_PATH}`);
   }
   if (!opts.apply) {

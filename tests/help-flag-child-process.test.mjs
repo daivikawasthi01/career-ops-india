@@ -10,7 +10,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const SCRIPTS = ['audit-portals.mjs', 'audit-helper.mjs', 'board-india-check.mjs', 'import-jobradar.mjs'];
+const SCRIPTS = ['audit-portals.mjs', 'audit-helper.mjs', 'board-india-check.mjs', 'import-jobradar.mjs', 'audit-board-identity.mjs'];
 
 for (const script of SCRIPTS) {
   for (const flag of ['--help', '-h']) {
