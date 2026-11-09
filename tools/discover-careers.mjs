@@ -282,7 +282,7 @@ async function searchResults(context, query, opts = {}) {
   const rss = await rssSearch(query);
   if (rss.length) { rss.engine = 'bing-rss'; gov.ok(); return rss; }
   // Bing answered, but with pages that are not about this company (this query only). Not a block: no pause, the next query variant tries again.
-  if (rss.decoy) { const none = []; none.engine = 'decoy'; return none; }
+  if (rss.decoy) reason = 'decoy results'; // not a block by itself: the browser pages get a try below
   if (++searchesInSession > 40) await freshSearchSession();
   const sc = await searchCtx(context);
   for (const eng of ENGINES) {
@@ -311,6 +311,7 @@ async function searchResults(context, query, opts = {}) {
     }
   }
   searchStats.empty++;
+  if (reason === 'decoy results') { const none = []; none.engine = 'decoy'; none.shot = shot; return none; } // junk for this query only: no pause, the next query variant tries again
   gov.blocked();
   await freshSearchSession(); // step 1, on every block: a brand new browser, nothing carried over
   if (gov.blocksInRow >= 2 && !solving && !has('--no-headed') && !process.env.CAREER_OPS_NO_HEADED) { // step 2: a person solves it
