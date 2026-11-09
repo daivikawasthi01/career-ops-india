@@ -139,7 +139,7 @@ async function processCompany2({ context, row, rejectedUrls, llm, vision }) {
       if (!res.length) { empties++; shot = shot || res.shot || ''; }
       pool.push(...res);
     }
-    if (!st.tests && rounds === 1) for (const h of [hostOf(row.careers_url || ''), String(row.domain || '').replace(/^https?:\/\//, '').replace(/[/?#].*$/, '')].filter(Boolean)) pool.push(...guessCareerUrls(h).map((url) => ({ url, title: '' }))); // search gave nothing: try the usual spots on a known host
+    if (!passed()) for (const h of [hostOf(row.careers_url || ''), String(row.domain || '').replace(/^https?:\/\//, '').replace(/[/?#].*$/, '')].filter(Boolean)) pool.push(...guessCareerUrls(h).map((url) => ({ url, title: '' }))); // search gave nothing: try the usual spots on a known host
     let cands = rankCandidates(pool, st.tried, { limit: LIMITS.perRound, companyHost: hostOf(row.careers_url || row.domain || ''), name });
     if (!cands.length && vision && llm && shot) {
       const v = await llm.seeScreenshot({ company: name, query: queries[0], imageB64: shot });
