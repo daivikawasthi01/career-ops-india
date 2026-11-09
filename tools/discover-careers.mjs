@@ -41,6 +41,7 @@ const USAGE = `usage: discover-careers.mjs [--limit N] [--only NAME,NAME] [--lis
   --slice1      also look at every name in companies.txt slice 1
   --no-search   skip step 2 (the web search)
   --llm         send uncertain rows (page title, domain, link texts, vetted candidates) to Groq; needs GROQ_API_KEY in .env
+  --first FILE  look at the names in FILE (first column, # comments ignored) before everything else
   --list        print the companies it would look at and exit
   --help, -h    print this and exit
   Exit codes: 0 finished, 2 halted on a captcha or rate limit, 3 halted after 5 consecutive failures.`;
@@ -193,6 +194,12 @@ async function main() {
     protectedText: readText(PROTECTED), portalsEntries: entries, checkByHandText: readText(CHECK_BY_HAND),
     extraNames: has('--slice1') ? slice1Names() : [], only: (arg('--only') || '').split(',').map((s) => s.trim()).filter(Boolean),
   });
+  if (arg('--first')) {
+    const first = readText(arg('--first')).split('\n').map((l) => l.replace(/#.*/, '').split('\t')[0].trim()).filter(Boolean);
+    const rank = new Map(first.map((n, i) => [n.toLowerCase(), i]));
+    for (const n of first) if (!inputs.some((i) => i.name.toLowerCase() === n.toLowerCase())) inputs.push({ name: n, sources: ['first'], entry: null });
+    inputs = [...inputs].sort((a, b) => (rank.get(a.name.toLowerCase()) ?? 1e9) - (rank.get(b.name.toLowerCase()) ?? 1e9));
+  }
   if (has('--list')) { for (const i of inputs) console.log(`${i.name}\t${i.sources.join(',')}`); console.log(`\n${inputs.length} companies`); return 0; }
   const done = readDone(OUT);
   const todo = inputs.filter((i) => !done.has(i.name.toLowerCase()));
