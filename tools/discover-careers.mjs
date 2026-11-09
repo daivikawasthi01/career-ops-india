@@ -249,12 +249,22 @@ export function parseBingRss(xml) {
   }
   return out.slice(0, 8);
 }
+let rssFailLogged = 0;
 async function rssSearch(query) {
-  try {
-    const res = await fetch(`https://www.bing.com/search?q=${encodeURIComponent(query)}&format=rss&setmkt=en-IN&cc=IN`, { signal: AbortSignal.timeout(20000), headers: { 'accept-language': 'en-IN,en;q=0.9' } });
-    if (!res.ok) return [];
-    return parseBingRss(await res.text());
-  } catch { return []; }
+  let why = '';
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(`https://www.bing.com/search?q=${encodeURIComponent(query)}&format=rss&setmkt=en-IN&cc=IN`, { signal: AbortSignal.timeout(20000), headers: { 'accept-language': 'en-IN,en;q=0.9' } });
+      const text = await res.text();
+      const rows = res.ok ? parseBingRss(text) : [];
+      if (rows.length) return rows;
+      why = `HTTP ${res.status}, ${text.length} bytes, ${(text.match(/<item>/g) || []).length} items, starts "${text.replace(/\s+/g, ' ').slice(0, 80)}"`;
+    } catch (err) { why = `fetch failed: ${err?.cause?.code || err?.message || err}`; }
+    await sleep(2000);
+  }
+  searchStats.rssFail = (searchStats.rssFail || 0) + 1;
+  if (rssFailLogged++ < 5) console.error(`[search] RSS gave nothing for "${String(query).slice(0, 40)}": ${why}`);
+  return [];
 }
 async function searchResults(context, query, opts = {}) {
   let shot = '';
