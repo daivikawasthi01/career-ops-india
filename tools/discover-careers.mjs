@@ -204,7 +204,7 @@ async function solveByHand() {
     await page.goto('https://www.bing.com/search?q=careers', { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT }).catch(() => {});
     for (let i = 0; i < 200; i++) {
       const n = await page.evaluate(() => document.querySelectorAll('li.b_algo').length).catch(() => 0);
-      if (n > 0) { await sessionContext.addCookies(await ctx.cookies()); return true; }
+      if (n > 0) { await (await searchCtx(sessionContext)).addCookies(await ctx.cookies()); return true; }
       await sleep(3000);
     }
     return false;
@@ -220,23 +220,40 @@ const searchTurn = async () => {
   return p;
 };
 /** Top results from the first engine that returns any. Zero results from every engine is reported as an empty search, never as "no candidates". */
+// Searches run in their own browser, thrown away and replaced after every block and every 40 searches: a throttled or flagged session
+// (cookies, state) is never reused. The page loads keep their own persistent context.
+let searchBrowser = null; let searchCtxObj = null; let searchesInSession = 0;
+async function searchCtx(fallback) {
+  if (!searchCtxObj) {
+    try { const { chromium: pw } = await import('playwright'); searchBrowser = await pw.launch(browserLaunchOptions({ headless: true })); searchCtxObj = await searchBrowser.newContext({ locale: 'en-IN' }); searchesInSession = 0; } catch { return fallback; }
+  }
+  return searchCtxObj;
+}
+async function freshSearchSession() {
+  const c = searchCtxObj; const b = searchBrowser; searchCtxObj = null; searchBrowser = null;
+  // other lanes may be mid-search in the old browser: close it a little later, new searches already use the new one
+  setTimeout(() => { c?.close().catch(() => {}); b?.close().catch(() => {}); }, 30000).unref();
+}
 /** Result rows that carry links but almost no title text: a throttled page, not results. */
 export const isHollowResults = (rs) => rs.length > 0 && rs.filter((r) => String(r.title || '').trim().length > 3).length < Math.min(3, rs.length);
 async function searchResults(context, query, opts = {}) {
   let shot = '';
   await searchTurn(); // searches are spaced out across all workers
   searchStats.calls++;
+  let reason = 'empty';
+  if (++searchesInSession > 40) await freshSearchSession();
+  const sc = await searchCtx(context);
   for (const eng of ENGINES) {
-    const page = await context.newPage();
+    const page = await sc.newPage();
     try {
       await page.goto(eng.url(query), { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT });
       const text = await page.evaluate(() => (document.body?.innerText || '').slice(0, 3000));
-      if (captchaLikely({ status: 200, html: text, url: page.url() })) continue;
+      if (captchaLikely({ status: 200, html: text, url: page.url() })) { reason = 'captcha'; continue; }
       let rows = await page.evaluate(eng.read);
       // Bing sometimes returns the result rows with no text (a throttled, hollow page). Links without titles are not results: wait once, read again,
       // and otherwise treat the engine as blocked so the next one is tried and the governor slows down.
       if (isHollowResults(rows)) { await page.waitForTimeout(4000); rows = await page.evaluate(eng.read); }
-      if (isHollowResults(rows)) { searchStats.hollow = (searchStats.hollow || 0) + 1; continue; }
+      if (isHollowResults(rows)) { searchStats.hollow = (searchStats.hollow || 0) + 1; reason = 'hollow rows'; continue; }
       const out = rows.map((r) => {
         let url = unwrapBingUrl(r.href);
         try { const t = new URL(r.href).searchParams.get('uddg'); if (t) url = decodeURIComponent(t); } catch { /* keep */ }
@@ -252,12 +269,12 @@ async function searchResults(context, query, opts = {}) {
   }
   searchStats.empty++;
   gov.blocked();
-  if (gov.blocksInRow === 1) await context.clearCookies().catch(() => {}); // step 1: a fresh session
-  else if (!solving && !has('--no-headed') && !process.env.CAREER_OPS_NO_HEADED) { // step 2: a person solves it
+  await freshSearchSession(); // step 1, on every block: a brand new browser, nothing carried over
+  if (gov.blocksInRow >= 2 && !solving && !has('--no-headed') && !process.env.CAREER_OPS_NO_HEADED) { // step 2: a person solves it
     solving = solveByHand().finally(() => { solving = null; });
     if (await solving) { gov.reset(); console.error('[search] captcha solved by hand; carrying on gently'); }
   }
-  console.error(`[search] blocked or empty: ${gov.active}/${gov.maxLanes} lanes, +${gov.extraMs} ms spacing, pause ${Math.round(gov.pauseMs() / 1000)} s (${gov.blocksInRow} in a row)`);
+  console.error(`[search] blocked or empty (${reason}) on "${String(query).slice(0, 40)}": fresh browser next; ${gov.active}/${gov.maxLanes} lanes, +${gov.extraMs} ms spacing, pause ${Math.round(gov.pauseMs() / 1000)} s (${gov.blocksInRow} in a row)`);
   if (gov.shouldHalt()) throw new Halt(2, `search engines returned nothing ${gov.blocksInRow} times in a row, even after cooling down`);
   const none = []; none.engine = 'none'; none.shot = shot;
   return none;
