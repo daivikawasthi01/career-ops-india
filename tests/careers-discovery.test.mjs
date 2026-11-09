@@ -137,7 +137,11 @@ import {
   registrable, sameSite, isAggregator, classifyFetch, isParked, botWall, checkDomain, quoteInEvidence, checkL1, compareAts,
   boardFingerprint, fingerprintFit, gate, queryVariants,
 } from '../lib/careers-pipeline.mjs';
-import { checkGolden, readGolden } from '../tools/discover-careers.mjs';
+import { checkGolden, readGolden, goldenVerdict, tsvRow, COLUMNS } from '../tools/discover-careers.mjs';
+import { redact } from '../lib/careers-pipeline.mjs';
+import { parseAggregatorHosts, isAggregatorBoard } from '../lib/board-audit.mjs';
+import { auditBoard } from '../audit-board-identity.mjs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 test('pipeline: registrable domains and aggregators', () => {
   assert.equal(registrable('www.careers.cred.co.in'), 'cred.co.in');
@@ -250,7 +254,7 @@ test('golden: unconfirmed expectations must be queued; confirmed ones are checke
 test('gate: a row decided only by the fallback model at both LLM layers is queued', () => {
   const good = { l1: { ok: true }, l2: { class: 'ok' }, l3: { careersUrl: 'https://x' }, l4: { ok: true } };
   assert.equal(gate({ ...good, fb: { l1: true, l4: false } }).accepted, true);
-  assert.equal(gate({ ...good, fb: { l1: false, l4: true } }).accepted, true);
+  assert.equal(gate({ ...good, fb: { l1: false, l4: true } }).accepted, false, 'verifier on the fallback model always queues');
   const both = gate({ ...good, fb: { l1: true, l4: true } });
   assert.equal(both.accepted, false);
   assert.match(both.failed[0], /primary_model/);
@@ -259,4 +263,67 @@ test('gate: a row decided only by the fallback model at both LLM layers is queue
 test('classify: a custom careers page on a domain we only guessed goes to review', () => {
   assert.equal(classify({ domain: 'cred.co.in', domainVerified: true, domainSource: 'guess', ats: null, careersUrl: 'https://cred.co.in/', pagesLoaded: 2 }).confidence, 'needs-review');
   assert.equal(classify({ domain: 'a.com', domainVerified: true, domainSource: 'override', ats: null, careersUrl: 'https://a.com/careers', pagesLoaded: 2 }).confidence, 'medium');
+});
+
+test('golden: an all-unknown file never counts as a pass, and fewer than 10 confirmed cases never counts either', () => {
+  const unknown = Array.from({ length: 18 }, (_, i) => ({ company: `C${i}`, domains: [], expect: 'unknown', ats: '' }));
+  const v = goldenVerdict(unknown, []);
+  assert.equal(v.passed, false);
+  assert.equal(v.confirmed, 0);
+  const nine = Array.from({ length: 9 }, (_, i) => ({ company: `K${i}`, domains: ['k.com'], expect: 'accept', ats: '' }));
+  assert.equal(goldenVerdict(nine, []).passed, false);
+  const ten = [...nine, { company: 'K9', domains: ['k.com'], expect: 'accept', ats: '' }];
+  assert.equal(goldenVerdict(ten, []).passed, true);
+  assert.equal(goldenVerdict(ten, ['K1: accepted WRONG domain']).passed, false, 'any failure blocks the marker');
+});
+
+test('golden: known-wrong domains fail once the confirmed set is filled in', () => {
+  const cases = [
+    { company: 'Zepto', domains: ['zeptonow.com'], expect: 'accept', ats: '' },
+    { company: 'Cred', domains: ['cred.club'], expect: 'accept', ats: '' },
+    { company: 'TIDE', domains: ['tide.co'], expect: 'accept', ats: '' },
+  ];
+  const rows = [
+    { company: 'Zepto', status: 'accepted', domain: 'planet1.co' },
+    { company: 'Cred', status: 'accepted', domain: 'cred.co.in' },
+    { company: 'TIDE', status: 'accepted', domain: 'tide.com' },
+  ];
+  const fails = checkGolden(cases, rows);
+  assert.equal(fails.filter((f) => /WRONG domain/.test(f)).length, 3);
+});
+
+test('tsv writer: header and row have the same column count, with validation and model present', () => {
+  assert.ok(COLUMNS.includes('validation') && COLUMNS.includes('model'));
+  const row = tsvRow({ company: 'A\tB', domain: 'a.com', model: 'L1:x;L4:y', validation: 'unvalidated', reason: 'line\nbreak' });
+  assert.equal(row.split('\t').length, COLUMNS.length);
+  assert.equal(row.split('\t')[COLUMNS.indexOf('validation')], 'unvalidated');
+  assert.equal(row.split('\t')[COLUMNS.indexOf('model')], 'L1:x;L4:y');
+});
+
+test('redact: API keys and Authorization headers never reach a log or a TSV row', () => {
+  const key = 'gsk_abcdEFGH1234567890abcd';
+  for (const t of [`GROQ_API_KEY=${key}`, `Authorization: Bearer ${key}`, `{"authorization":"Bearer ${key}"}`, `apiKey: ${key}`, `failed with ${key} in it`]) {
+    assert.ok(!redact(t).includes('abcdEFGH'), `leaked: ${redact(t)}`);
+  }
+  const row = tsvRow({ company: 'A', reason: `error: Authorization: Bearer ${key}`, evidence: `key ${key}` });
+  assert.ok(!row.includes('abcdEFGH'));
+  assert.equal(redact('plain text stays'), 'plain text stays');
+});
+
+test('aggregator boards: the identity gate skips a listed host and nothing in the pipeline writes the list', async () => {
+  const hosts = parseAggregatorHosts('# c\njobs.3one4capital.com\tnote\nhttps://x.example/path\n');
+  assert.ok(isAggregatorBoard('https://jobs.3one4capital.com/jobs', hosts));
+  assert.ok(isAggregatorBoard('https://x.example/anything', hosts));
+  assert.ok(!isAggregatorBoard('https://jobs.lever.co/acme', hosts));
+  const res = await auditBoard({ entry: { name: '3one4 Capital', careers_url: 'https://jobs.3one4capital.com/jobs' }, jobs: [{ url: 'https://other.com/1' }], strict: true, approved: new Set(), fetchOwner: async () => { throw new Error('no'); }, site: async () => ({ ok: false }), aggregators: hosts });
+  assert.equal(res.how, 'aggregator');
+  assert.deepEqual(res.reasons, []);
+  const flagged = await auditBoard({ entry: { name: '3one4 Capital', careers_url: 'https://jobs.3one4capital.com/jobs' }, jobs: [], strict: true, approved: new Set(), fetchOwner: async () => '', site: async () => ({ ok: false }) });
+  assert.ok(flagged.reasons.length, 'without the list the same board is flagged');
+  const root = new URL('..', import.meta.url).pathname;
+  for (const dir of ['lib', 'tools']) for (const f of readdirSync(join(root, dir)).filter((x) => x.endsWith('.mjs'))) {
+    const src = readFileSync(join(root, dir, f), 'utf8');
+    if (!src.includes('aggregator-boards')) continue;
+    assert.ok(!/(writeFileSync|appendFileSync|writeFile|renameSync)\([^)]*aggregator/i.test(src), `${f} must not write aggregator-boards.tsv`);
+  }
 });

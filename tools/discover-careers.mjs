@@ -29,7 +29,7 @@ import {
 } from '../lib/careers-discovery.mjs';
 import { makeLlm, loadGroqKey, loadModels } from '../lib/careers-llm.mjs';
 import {
-  registrable, sameSite, isAggregator, checkDomain, checkL1, quoteInEvidence, compareAts, boardFingerprint, fingerprintFit, gate, queryVariants,
+  registrable, sameSite, isAggregator, checkDomain, checkL1, quoteInEvidence, compareAts, boardFingerprint, fingerprintFit, gate, queryVariants, redact,
 } from '../lib/careers-pipeline.mjs';
 
 const USAGE = `usage: discover-careers.mjs [--llm] [--limit N] [--only NAME,NAME] [--first FILE] [--list] [--slice1] [--golden FILE] [--out PATH]
@@ -66,7 +66,7 @@ const hostOf = (u) => { try { return new URL(u).hostname.toLowerCase().replace(/
 class Halt extends Error { constructor(code, reason) { super(reason); this.code = code; } }
 
 const COLUMNS = ['company', 'domain', 'careers_url', 'ats', 'campus_url', 'confidence', 'notes', 'model', 'raw_decision', 'status', 'board_match', 'reason', 'evidence', 'validation'];
-const tsvRow = (r) => COLUMNS.map((c) => String(r[c] ?? '').replace(/[\t\r\n]+/g, ' ').trim()).join('\t');
+const tsvRow = (r) => COLUMNS.map((c) => redact(String(r[c] ?? '')).replace(/[\t\r\n]+/g, ' ').trim()).join('\t');
 
 function loadDomainOverrides() {
   const map = new Map();
@@ -327,7 +327,7 @@ async function main() {
   if (has('--list')) { for (const i of inputs) console.log(`${i.name}\t${i.sources.join(',')}`); console.log(`\n${inputs.length} companies`); return 0; }
   const unvalidated = !golden && !existsSync(GOLDEN_PASS);
   if (unvalidated && process.env.CAREER_OPS_UNVALIDATED !== '1') { console.error(`No passing golden check (${GOLDEN_PASS}). Run with --golden tests/discover-golden.tsv --llm first.`); return 5; }
-  const validation = golden ? 'golden-run' : unvalidated ? 'unvalidated' : 'golden-passed';
+  const validation = golden ? (goldenVerdict(golden, []).enough ? 'golden-run' : 'golden-unconfirmed') : unvalidated ? 'unvalidated' : 'golden-passed';
 
   let llm = null;
   if (has('--llm')) {
@@ -399,7 +399,7 @@ async function main() {
   } catch (err) {
     if (!(err instanceof Halt)) throw err;
     status.state = 'halted'; status.halt_reason = err.message; code = err.code;
-    console.error(`HALTED: ${err.message}. ${status.done} of ${total} done; rerun to resume.`);
+    console.error(redact(`HALTED: ${err.message}. ${status.done} of ${total} done; rerun to resume.`));
   } finally {
     status.current = null;
     if (llm) { status.llm_usage = llm.usage; console.log(`LLM usage: ${llm.usage.calls} calls, ${llm.usage.input} input tokens, ${llm.usage.output} output tokens, ${llm.usage.errors} errors`); }
@@ -417,13 +417,21 @@ async function main() {
       console.log(`${c.company} | ${bad ? 'FAIL' : 'pass'} | ${r.status} | ${r.domain || '-'} | ${layer}`);
     }
     if (fails.length) { console.error(`GOLDEN FAILED:\n  ${fails.join('\n  ')}`); return 5; }
-    writeFileSync(GOLDEN_PASS, JSON.stringify({ passed_at: new Date().toISOString(), cases: golden.length, llm: Boolean(llm), accepted: status.accepted }, null, 1) + '\n');
-    console.log(`GOLDEN PASSED: ${golden.length} cases.`);
+    const verdict = goldenVerdict(golden, fails);
+    if (!verdict.passed) { console.error(`GOLDEN NOT COUNTED: only ${verdict.confirmed} cases have confirmed domains and an expectation (need ${MIN_CONFIRMED}). No pass marker written.`); return 5; }
+    writeFileSync(GOLDEN_PASS, JSON.stringify({ passed_at: new Date().toISOString(), cases: golden.length, confirmed: verdict.confirmed, llm: Boolean(llm), accepted: status.accepted }, null, 1) + '\n');
+    console.log(`GOLDEN PASSED: ${verdict.confirmed} confirmed cases of ${golden.length}.`);
   }
   return code;
 }
 
 if (isMainModule(import.meta.url)) {
-  main().then((c) => process.exit(c)).catch((err) => { console.error(err?.stack || err); process.exit(1); });
+  main().then((c) => process.exit(c)).catch((err) => { console.error(redact(err?.stack || err)); process.exit(1); });
 }
-export { checkGolden, readGolden };
+/** The pass marker needs enough confirmed cases; an all-unknown file can never pass. */
+const MIN_CONFIRMED = 10;
+function goldenVerdict(cases, fails) {
+  const confirmed = cases.filter((c) => c.expect !== 'unknown' && c.domains.length).length;
+  return { confirmed, passed: fails.length === 0 && confirmed >= MIN_CONFIRMED, enough: confirmed >= MIN_CONFIRMED };
+}
+export { checkGolden, readGolden, goldenVerdict, tsvRow, COLUMNS };
