@@ -56,7 +56,8 @@ import { isMainModule } from './lib/is-main-module.mjs';
 import { getCareerOpsRoot } from './path-resolver.mjs';
 import { DEFAULT_SMALL_THRESHOLD, isSmallBoard, smallBoardDetail } from './lib/small-board.mjs';
 import { findBlacklistEntry, loadBlacklist } from './scan.mjs';
-import { gateByIdentity, appendReviewFile } from './lib/board-identity.mjs';
+import { gateByIdentity, appendReviewFile, appendConfirmedLog, loadApproved } from './lib/board-identity.mjs';
+import { dataRootIsForeign, loadPipelineConfig } from './lib/pipeline-config.mjs';
 import { probeFetchJson, probeFetchText } from './verify-portals.mjs';
 
 const CAREER_OPS = dirname(fileURLToPath(import.meta.url));
@@ -136,6 +137,7 @@ const USAGE = `Usage:
   node discover-ats.mjs --in companies.yml --vendors gh,ashby,lever  # restrict probes
   node discover-ats.mjs --in companies.yml --vendors workday         # Workday only
   node discover-ats.mjs --in companies.yml --small-threshold 10  # what counts as a small board (default ${DEFAULT_SMALL_THRESHOLD}, 0 = off)
+  node discover-ats.mjs --in companies.yml --identity-gate  # require owner/website/approved proof before a board counts (--no-identity-gate: off)
   node discover-ats.mjs --self-test                   # inline test suite
   node discover-ats.mjs --help                        # print this usage block
 
@@ -1143,7 +1145,7 @@ function runSelfTest() {
 // --write is the explicit opt-in to modify portals.yml (a user-layer file);
 // without it the run is preview-only. --dry-run is accepted as a harmless alias
 // for "don't write" (the default) so an older invocation never surprises anyone.
-const KNOWN_FLAGS = ['--in', '--vendors', '--small-threshold', '--write', '--dry-run', '--summary', '--self-test', '--help', '-h'];
+const KNOWN_FLAGS = ['--in', '--vendors', '--small-threshold', '--write', '--dry-run', '--summary', '--self-test', '--identity-gate', '--no-identity-gate', '--help', '-h'];
 const VALUE_FLAGS = ['--in', '--vendors', '--small-threshold'];
 
 function parseArgs(argv) {
@@ -1211,6 +1213,8 @@ function parseArgs(argv) {
     // Preview by default; only --write may touch portals.yml. --dry-run is an
     // accepted no-op alias (it just reaffirms the default).
     write: args.includes('--write'),
+    // true / false when a flag is given, null to take config/pipeline.yml's discovery.identity_gate.
+    identityGate: args.includes('--no-identity-gate') ? false : args.includes('--identity-gate') ? true : null,
     summary: args.includes('--summary'),
     selfTest: args.includes('--self-test'),
     names,
@@ -1266,10 +1270,16 @@ async function main() {
   const post = partitionBlacklisted(discovered.resolved, blacklist, (r) => [r.careers_url]);
   // A board that answers is not proof it is the company's: every match needs an owner-name or
   // website confirmation (lib/board-identity.mjs). The rest go to a review file, never to portals.yml.
-  const gate = await gateByIdentity(post.allowed, companies, {
-    fetchText: (u) => probeFetchText(u, { maxBytes: 400_000 }),
-    fetchJson: (u) => probeFetchJson(u),
-  });
+  // Opt-in: --identity-gate, else discovery.identity_gate in config/pipeline.yml. A foreign data root (tests, a
+  // second profile) keeps its own behaviour, so the config default does not reach it.
+  const gateOn = opts.identityGate ?? (!dataRootIsForeign() && loadPipelineConfig()?.discovery?.identity_gate === true);
+  const gate = gateOn
+    ? await gateByIdentity(post.allowed, companies, {
+      fetchText: (u) => probeFetchText(u, { maxBytes: 400_000 }),
+      fetchJson: (u) => probeFetchJson(u),
+      approved: loadApproved(join(getCareerOpsRoot(), 'data', 'identity-approved.tsv'), { existsSync, readFileSync }),
+    })
+    : { confirmed: post.allowed, review: [] };
   const resolved = gate.confirmed;
   const review = gate.review;
   const blacklisted = [...pre.blacklisted, ...post.blacklisted];
@@ -1331,6 +1341,10 @@ async function main() {
   if (opts.write && review.length) {
     reviewWritten = appendReviewFile(reviewPath, review, new Date().toISOString().slice(0, 10),
       { existsSync, readFileSync, appendFileSync, mkdirSync });
+  }
+  if (gateOn && opts.write) {
+    appendConfirmedLog(join(getCareerOpsRoot(), 'data', 'identity-log.tsv'), gate.confirmed, new Date().toISOString().slice(0, 10),
+      { existsSync, appendFileSync, mkdirSync });
   }
   if (review.length) {
     warnings.push(`${review.length} board(s) matched a name but could not be confirmed as the company's own; `

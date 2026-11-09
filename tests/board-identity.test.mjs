@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { nameIdentityVerdict } from '../lib/board-identity-names.mjs';
 import {
   boardKey, linkToBoard, extractUrls, siteCandidates, confirmBoardIdentity, gateByIdentity, appendReviewFile, REVIEW_HEADER,
+  vendorSlug, loadApproved, appendConfirmedLog, APPROVED_HEADER, CONFIRMED_HEADER,
 } from '../lib/board-identity.mjs';
 
 const match = (a, b) => nameIdentityVerdict(a, b).match;
@@ -61,7 +62,7 @@ test('owner-name match confirms: Bolna on Ashby titled "Bolna AI"', async () => 
     { name: 'Bolna', careers_url: 'https://jobs.ashbyhq.com/bolna' }, {},
     { fetchText: web({ 'https://jobs.ashbyhq.com/bolna': '<title>Bolna AI Jobs</title>' }), fetchJson: json({}) });
   assert.equal(r.status, 'confirmed');
-  assert.equal(r.via, 'owner-name');
+  assert.equal(r.via, 'name');
 });
 
 test('owner-name match confirms: TIDE on Greenhouse titled "Careers at Tide"', async () => {
@@ -133,6 +134,62 @@ test('the review file has a header, one line per board, and ignores a board alre
     assert.equal(lines[0], REVIEW_HEADER);
     assert.equal(lines.length, 2);
     assert.equal(lines[1].split('\t').length, REVIEW_HEADER.split('\t').length, 'a tab inside a value cannot add a column');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('vendorSlug reads the board out of tenant hosts and path-tenant hosts', () => {
+  assert.deepEqual(vendorSlug('https://careers.smartrecruiters.com/Shipsy'), { ats: 'smartrecruiters', slug: 'shipsy' });
+  assert.deepEqual(vendorSlug('https://ats.rippling.com/everstage/jobs'), { ats: 'rippling', slug: 'everstage' });
+  assert.deepEqual(vendorSlug('https://aftershoot.recruitee.com/'), { ats: 'recruitee', slug: 'aftershoot' });
+  assert.deepEqual(vendorSlug('https://join.com/companies/novu'), { ats: 'join', slug: 'novu' });
+  assert.deepEqual(vendorSlug('https://job-boards.greenhouse.io/Tide'), { ats: 'greenhouse', slug: 'tide' });
+});
+
+test('a board listed in identity-approved.tsv passes, and is recorded as approved, not name', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'co-approved-'));
+  try {
+    const path = join(dir, 'identity-approved.tsv');
+    fs.writeFileSync(path, `${APPROVED_HEADER}\nShipsy\tsmartrecruiters\tshipsy\tchecked by hand\n`);
+    const approved = loadApproved(path, fs);
+    assert.equal(loadApproved(join(dir, 'missing.tsv'), fs).size, 0, 'no file approves nothing');
+    const io = { fetchText: web({}), fetchJson: json({}), approved };
+    const ok = await confirmBoardIdentity({ name: 'Shipsy', careers_url: 'https://careers.smartrecruiters.com/Shipsy' }, {}, io);
+    assert.equal(ok.status, 'confirmed');
+    assert.equal(ok.via, 'approved');
+    assert.equal(ok.employerConfirmed, true);
+    const other = await confirmBoardIdentity({ name: 'Walmart', careers_url: 'https://walmart.bamboohr.com' }, {}, io);
+    assert.equal(other.status, 'review', 'only the listed board is approved');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a name-only pass is labelled as such and is not employer-confirmed', async () => {
+  const r = await confirmBoardIdentity(
+    { name: 'Ghost', careers_url: 'https://jobs.ashbyhq.com/ghost' }, {},
+    { fetchText: web({ 'https://jobs.ashbyhq.com/ghost': '<title>Ghost Jobs</title>' }), fetchJson: json({}) });
+  assert.equal(r.status, 'confirmed');
+  assert.equal(r.via, 'name');
+  assert.equal(r.employerConfirmed, false);
+});
+
+test('the confirmation log records how each board was confirmed', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'co-conflog-'));
+  try {
+    const path = join(dir, 'data', 'identity-log.tsv');
+    const rows = [
+      { name: 'Bolna', careers_url: 'https://jobs.ashbyhq.com/bolna', identity: { via: 'name', employerConfirmed: false, reason: 'owner matches' } },
+      { name: 'Shipsy', careers_url: 'https://careers.smartrecruiters.com/shipsy', identity: { via: 'approved', employerConfirmed: true, reason: 'listed' } },
+    ];
+    assert.equal(appendConfirmedLog(path, rows, '2026-11-09', fs), 2);
+    const lines = readFileSync(path, 'utf-8').replace(/\n$/, '').split('\n');
+    assert.equal(lines[0], CONFIRMED_HEADER);
+    assert.deepEqual(lines.slice(1).map((l) => l.split('\t').slice(1, 6)), [
+      ['Bolna', 'ashby', 'bolna', 'name', 'no'],
+      ['Shipsy', 'smartrecruiters', 'shipsy', 'approved', 'yes'],
+    ]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

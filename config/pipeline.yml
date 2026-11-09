@@ -249,3 +249,10 @@ confirm:
   title_overlap: 0.7
   max_companies: 60
   fetch_timeout_seconds: 240
+
+# discover-ats.mjs: a board that answers is not proof it is the company's. With the gate on, a match is written
+# to portals.yml only when its owner name, its own website, or data/identity-approved.tsv vouches for it; the
+# rest go to data/discovery-review.tsv. Off for a foreign data root (tests, a second profile).
+# Override per run with --identity-gate / --no-identity-gate.
+discovery:
+  identity_gate: true
