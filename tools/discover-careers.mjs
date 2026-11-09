@@ -27,12 +27,12 @@ import {
   readDone, buildInputs, timingReport, domainCandidates, atsFromUrl, findAtsLinks, pickAts, findCampusLink, findCareersLinks,
   extractUrls, captchaLikely, homepageMatchesCompany, hostMatchesCompany,
 } from '../lib/careers-discovery.mjs';
-import { makeLlm, loadGroqKey, loadModels, domainPrompt } from '../lib/careers-llm.mjs';
+import { makeLlm, loadGroqKeys, loadModels, domainPrompt } from '../lib/careers-llm.mjs';
 import {
   registrable, sameSite, isAggregator, checkDomain, checkL1, quoteInEvidence, compareAts, boardFingerprint, fingerprintFit, gate, queryPair, redact, unwrapBingUrl,
 } from '../lib/careers-pipeline.mjs';
 
-const USAGE = `usage: discover-careers.mjs [--llm] [--limit N] [--only NAME,NAME] [--first FILE] [--list] [--slice1] [--all] [--companies FILE] [--golden FILE] [--out PATH]
+const USAGE = `usage: discover-careers.mjs [--llm] [--limit N] [--only NAME,NAME] [--first FILE] [--list] [--slice1] [--workers N] [--all] [--companies FILE] [--golden FILE] [--out PATH]
   Layered pipeline (see the header of this file). Output: data/careers-discovery.tsv (append-only; rerun to resume).
   Inputs: config/protected-boards.txt, portals.yml entries with watch: true, data/check-by-hand.txt.
   --llm          run the Groq layers (L1 domain, L4 verifier); GROQ_API_KEY in .env, models GROQ_MODEL / GROQ_FALLBACK_MODEL
@@ -125,11 +125,15 @@ const ENGINES = [
     read: () => [...document.querySelectorAll('.result')].slice(0, 12).map((r) => ({ title: r.querySelector('.result__a')?.innerText || '', href: r.querySelector('.result__a')?.href || '', snippet: r.querySelector('.result__snippet')?.innerText || '' })) },
 ];
 const searchStats = { empty: 0, calls: 0 };
+let searchChain = Promise.resolve();
+const searchTurn = () => {
+  const p = searchChain.then(async () => { const wait = 2000 + Math.random() * 1500 - (Date.now() - lastSearchAt); if (wait > 0) await sleep(wait); lastSearchAt = Date.now(); });
+  searchChain = p.catch(() => {});
+  return p;
+};
 /** Top results from the first engine that returns any. Zero results from every engine is reported as an empty search, never as "no candidates". */
 async function searchResults(context, query) {
-  const wait = 3000 + Math.random() * 2000 - (Date.now() - lastSearchAt);
-  if (wait > 0) await sleep(wait);
-  lastSearchAt = Date.now();
+  await searchTurn(); // searches are spaced out across all workers
   searchStats.calls++;
   for (const eng of ENGINES) {
     const page = await context.newPage();
@@ -369,11 +373,11 @@ async function main() {
 
   let llm = null;
   if (has('--llm')) {
-    const apiKey = loadGroqKey([...ENV_DIRS, REPO]);
-    if (!apiKey) { console.error('--llm needs GROQ_API_KEY in the environment or in .env'); return 1; }
+    const keys = loadGroqKeys([...ENV_DIRS, REPO]);
+    if (!keys.length) { console.error('--llm needs GROQ_API_KEY (or GROQ_API_KEYS, GROQ_API_KEY_2 ...) in the environment or in .env'); return 1; }
     const m = llmConfig();
-    llm = await makeLlm({ apiKey, ...m });
-    console.log(`LLM: ${m.model}, fallback ${m.fallback}`);
+    llm = await makeLlm({ keys, ...m });
+    console.log(`LLM: ${m.model}, fallback ${m.fallback}, ${keys.length} key(s)`);
   }
 
   const out = golden ? OUT.replace(/\.tsv$/, '.golden.tsv') : OUT;
@@ -406,34 +410,40 @@ async function main() {
   let failures = 0; let code = 0;
   const rows = [];
   try {
-    for (const item of batch) {
-      const t0 = Date.now();
-      status.current = item.name; writeStatus(status);
-      let r;
-      try {
-        r = await withDeadline(processCompany({ context, item, overrides, llm }), COMPANY_DEADLINE_MS, item.name);
-        failures = r.pagesLoaded ? 0 : failures + 1;
-      } catch (err) {
-        if (err instanceof Halt) throw err;
-        failures++;
-        r = { company: item.name, confidence: 'needs-review', status: 'queued', notes: `from ${item.sources.join('+')}`, reason: `error: ${String(err?.message || err).slice(0, 120)}` };
+    let next = 0; let stop = null;
+    const WORKERS = Math.max(1, Number(arg('--workers')) || 3);
+    const worker = async () => {
+      while (!stop && next < batch.length) {
+        const item = batch[next++];
+        const t0 = Date.now();
+        status.current = item.name;
+        let r;
+        try {
+          r = await withDeadline(processCompany({ context, item, overrides, llm }), COMPANY_DEADLINE_MS, item.name);
+          failures = r.pagesLoaded ? 0 : failures + 1;
+        } catch (err) {
+          if (err instanceof Halt) { stop = stop || err; return; }
+          failures++;
+          r = { company: item.name, confidence: 'needs-review', status: 'queued', notes: `from ${item.sources.join('+')}`, reason: `error: ${String(err?.message || err).slice(0, 120)}` };
+        }
+        r.validation = validation;
+        rows.push(r);
+        appendFileSync(out, tsvRow(r) + '\n');
+        status[r.status === 'accepted' ? 'accepted' : 'queued']++;
+        const secs = (Date.now() - t0) / 1000;
+        status.done++; status.seconds_per_company.push(Math.round(secs * 10) / 10);
+        console.log(`[${status.done}/${total}] ${item.name} ${r.status} ${r.domain || '-'} ${r.ats || '-'} ${secs.toFixed(0)}s${r.status === 'queued' ? '  (' + String(r.reason).slice(0, 90) + ')' : ''}`);
+        if (status.seconds_per_company.length === 10 && !status.first10) {
+          status.first10 = timingReport(status.seconds_per_company, (total - done.size) / WORKERS);
+          console.log(`First 10: ${status.first10.avg_seconds}s per company each, ${WORKERS} at a time; about ${status.first10.estimated_total_minutes} min for all ${total - done.size}.`);
+        }
+        if (llm) status.llm_usage = llm.usage;
+        writeStatus(status);
+        if (failures >= 5) stop = stop || new Halt(3, `5 consecutive companies could not be loaded (last: ${item.name})`);
       }
-      r.validation = validation;
-      rows.push(r);
-      appendFileSync(out, tsvRow(r) + '\n');
-      status[r.status === 'accepted' ? 'accepted' : 'queued']++;
-      const secs = (Date.now() - t0) / 1000;
-      status.done++; status.seconds_per_company.push(Math.round(secs * 10) / 10);
-      console.log(`[${status.done}/${total}] ${item.name} ${r.status} ${r.domain || '-'} ${r.ats || '-'} ${secs.toFixed(0)}s${r.status === 'queued' ? '  (' + String(r.reason).slice(0, 90) + ')' : ''}`);
-      if (status.seconds_per_company.length === 10 && !status.first10) {
-        status.first10 = timingReport(status.seconds_per_company, total - done.size);
-        console.log(`First 10: ${status.first10.avg_seconds}s per company on average; about ${status.first10.estimated_total_minutes} min for all ${total - done.size}.`);
-      }
-      if (llm) status.llm_usage = llm.usage;
-      writeStatus(status);
-      if (failures >= 5) throw new Halt(3, `5 consecutive companies could not be loaded (last: ${item.name})`);
-      await sleep(1000);
-    }
+    };
+    await Promise.all(Array.from({ length: WORKERS }, worker));
+    if (stop) throw stop;
     status.state = 'finished';
   } catch (err) {
     if (!(err instanceof Halt)) throw err;

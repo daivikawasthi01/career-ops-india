@@ -347,3 +347,14 @@ test('llm: retry-after is honoured and capped', async () => {
   assert.equal(retryAfterSeconds({ headers: new Map([['retry-after', '500']]) }), 90);
   assert.equal(retryAfterSeconds({}), 20);
 });
+
+test('llm: every key is collected once, from GROQ_API_KEYS, GROQ_API_KEY and numbered names', async () => {
+  const { loadGroqKeys } = await import('../lib/careers-llm.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'keys-'));
+  const saved = { ...process.env };
+  try {
+    for (const k of Object.keys(process.env)) if (k.startsWith('GROQ_API_KEY')) delete process.env[k];
+    writeFileSync(join(dir, '.env'), 'GROQ_API_KEY=gsk_a\nGROQ_API_KEY_2=gsk_b\nGROQ_API_KEYS=gsk_c, gsk_a\n');
+    assert.deepEqual(loadGroqKeys([dir]).sort(), ['gsk_a', 'gsk_b', 'gsk_c']);
+  } finally { Object.assign(process.env, saved); rmSync(dir, { recursive: true, force: true }); }
+});
