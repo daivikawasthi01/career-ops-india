@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { queryPair } from '../lib/careers-pipeline.mjs';
 import assert from 'node:assert/strict';
 import { classifyPage, jobLinks, followLinks, best, rankCandidates, mark, seen, shouldStop, looksBotBlocked, visionAction, PASSING } from '../lib/careers-pass2.mjs';
 
@@ -61,4 +62,8 @@ test('vision states map to actions', () => {
   assert.equal(visionAction({ state: 'results' }), 'read-urls');
   assert.equal(visionAction({ state: 'consent' }), 'retry');
   assert.equal(visionAction(null), 'none');
+});
+
+test('every search query asks for India', () => {
+  for (const pass of [0, 1]) for (const q of queryPair('Zepto', {}, pass)) assert.match(q, /india/i);
 });

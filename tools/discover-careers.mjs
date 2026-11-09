@@ -120,9 +120,9 @@ async function visit(context, url) {
 let lastSearchAt = 0;
 /** L0 search: top 8 results with title, url, snippet. Polite (3-5 s apart); stops the run at a captcha. */
 const ENGINES = [
-  { name: 'bing', url: (q) => `https://www.bing.com/search?q=${encodeURIComponent(q)}`,
+  { name: 'bing', url: (q) => `https://www.bing.com/search?q=${encodeURIComponent(q)}&cc=IN&setmkt=en-IN`,
     read: () => [...document.querySelectorAll('li.b_algo')].slice(0, 10).map((r) => ({ title: r.querySelector('h2')?.innerText || '', href: r.querySelector('h2 a')?.href || '', snippet: r.querySelector('.b_caption p, p')?.innerText || '' })) },
-  { name: 'duckduckgo', url: (q) => `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`,
+  { name: 'duckduckgo', url: (q) => `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}&kl=in-en`,
     read: () => [...document.querySelectorAll('.result')].slice(0, 12).map((r) => ({ title: r.querySelector('.result__a')?.innerText || '', href: r.querySelector('.result__a')?.href || '', snippet: r.querySelector('.result__snippet')?.innerText || '' })) },
 ];
 const searchStats = { empty: 0, calls: 0 };
