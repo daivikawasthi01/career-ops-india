@@ -16,7 +16,8 @@
  * Step 2: only if step 1 finds nothing: DuckDuckGo "<company> careers", 3-5 s between searches, stopping at a captcha.
  *         A result is accepted only when its domain matches the company.
  *
- * Judgement is code. Anything uncertain gets confidence=needs-review. No LLM calls in this version.
+ * Judgement is code. Anything uncertain gets confidence=needs-review. With --llm, only those uncertain rows go to a Groq model
+ * (lib/careers-llm.mjs), which may choose among candidate URLs the code already vetted and can raise a row to medium at most.
  * Halts (exit 2) on a captcha or rate limit, and (exit 3) after 5 consecutive companies that could not be loaded at all.
  * Run it detached: tools/run-discover.sh.
  */
@@ -31,6 +32,7 @@ import {
   TSV_HEADER, toRow, readDone, buildInputs, timingReport, domainCandidates, atsFromUrl, findAtsLinks, pickAts,
   findCampusLink, findCareersLinks, extractUrls, captchaLikely, homepageMatchesCompany, hostMatchesCompany, classify,
 } from '../lib/careers-discovery.mjs';
+import { makeJudge, loadGroqKey, applyDecision, DEFAULT_MODELS } from '../lib/careers-llm.mjs';
 
 const USAGE = `usage: discover-careers.mjs [--limit N] [--only NAME,NAME] [--list] [--slice1] [--no-search] [--out PATH]
   Finds each company's real careers page and ATS board from its own website (step 1), then a web search (step 2).
@@ -38,6 +40,7 @@ const USAGE = `usage: discover-careers.mjs [--limit N] [--only NAME,NAME] [--lis
   Output: data/careers-discovery.tsv (append-only; rerun to resume) and data/careers-discovery.status.json.
   --slice1      also look at every name in companies.txt slice 1
   --no-search   skip step 2 (the web search)
+  --llm         send uncertain rows (page title, domain, link texts, vetted candidates) to Groq; needs GROQ_API_KEY in .env
   --list        print the companies it would look at and exit
   --help, -h    print this and exit
   Exit codes: 0 finished, 2 halted on a captcha or rate limit, 3 halted after 5 consecutive failures.`;
@@ -66,6 +69,13 @@ function loadDomainOverrides() {
     if (name && domain) map.set(name.trim().toLowerCase(), domain.trim());
   }
   return map;
+}
+
+/** Model ids from config/pipeline.yml -> discovery.llm {model, fallback}. Missing file or keys fall back to the defaults. */
+function portalsLlmConfig() {
+  const p = join(ROOT, 'config', 'pipeline.yml');
+  const c = existsSync(p) ? (loadYaml(readText(p)) || {}).discovery?.llm : null;
+  return c && typeof c === 'object' ? c : {};
 }
 
 function slice1Names() {
@@ -128,7 +138,9 @@ async function ownSite(context, name, entry, overrides) {
     const ats = pickAts(findAtsLinks(urls), name);
     const links = pages.flatMap((p) => p.links);
     const careersPage = pages.find((p) => p !== home && p.status < 400 && hostOf(p.finalUrl) === realHost && !/\/(404|not-found)/i.test(p.finalUrl));
+    const candidates = [...new Set([careersPage?.finalUrl, ...pages.flatMap((p) => findCareersLinks(p.links, realHost)), ...ats.others.map((o) => o.url), findCampusLink(links)].filter(Boolean))].slice(0, 12);
     return {
+      evidence: { title: (careersPage || home).title, linkTexts: [...new Set(links.map((l) => l.text).filter(Boolean))].slice(0, 30), candidates },
       domain: realHost, domainVerified: true, domainSource: declared, pagesLoaded, ats,
       campus: findCampusLink(links), careersUrl: ats.best?.url || careersPage?.finalUrl || '', atsOnOwnSite: Boolean(ats.best), blocked,
     };
@@ -197,6 +209,14 @@ async function main() {
   await context.route('**/*', (route) => (['image', 'font', 'media'].includes(route.request().resourceType()) ? route.abort() : route.continue()));
 
   const overrides = loadDomainOverrides();
+  let judge = null;
+  if (has('--llm')) {
+    const apiKey = loadGroqKey([ROOT, join(dirname(new URL(import.meta.url).pathname), '..')]);
+    if (!apiKey) { console.error('--llm needs GROQ_API_KEY in the environment or in .env'); await context.close(); return 1; }
+    const cfg = { ...DEFAULT_MODELS, ...(portalsLlmConfig()) };
+    judge = await makeJudge({ apiKey, ...cfg });
+    console.log(`LLM judge: ${cfg.model}, fallback ${cfg.fallback}`);
+  }
   const status = { state: 'running', started_at: new Date().toISOString(), total, done: done.size, current: null, seconds_per_company: [], first10: null, halt_reason: null };
   writeStatus(status);
   let failures = 0;
@@ -225,6 +245,12 @@ async function main() {
           company: item.name, domain: found.domain, careers_url: found.careersUrl, ats: found.ats?.best?.ats || (found.careersUrl ? 'custom' : ''),
           campus_url: found.campus || '', confidence: verdict.confidence, notes: [`from ${item.sources.join('+')}`, ...verdict.notes].join('; '),
         };
+        const cands = s1.evidence?.candidates || [];
+        if (judge && verdict.confidence === 'needs-review' && s1.domainVerified && cands.length) {
+          const j = await judge.judge({ company: item.name, domain: found.domain, ...s1.evidence });
+          const d = applyDecision(j.decision, cands);
+          r = { ...r, ...Object.fromEntries(Object.entries({ careers_url: d.careers_url, ats: d.ats, campus_url: d.campus_url }).filter(([, v]) => v)), confidence: d.confidence, notes: `${r.notes}; ${d.note}`, model: j.model, raw_decision: j.raw };
+        }
         failures = found.pagesLoaded ? 0 : failures + 1;
       } catch (err) {
         if (err instanceof Halt) throw err;
@@ -253,6 +279,7 @@ async function main() {
     console.error(`HALTED: ${err.message}. ${status.done} of ${total} done; rerun to resume.`);
   } finally {
     status.current = null;
+    if (judge) { status.llm_usage = judge.usage; console.log(`LLM usage: ${judge.usage.calls} calls, ${judge.usage.input} input tokens, ${judge.usage.output} output tokens, ${judge.usage.errors} errors`); }
     writeStatus(status);
     await context.close().catch(() => {});
   }

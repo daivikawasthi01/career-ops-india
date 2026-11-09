@@ -256,3 +256,7 @@ confirm:
 # Override per run with --identity-gate / --no-identity-gate.
 discovery:
   identity_gate: true
+  # tools/discover-careers.mjs --llm: Groq models (GROQ_API_KEY in .env). The fallback runs when the primary errors, a 429 included.
+  llm:
+    model: groq:openai/gpt-oss-120b
+    fallback: groq:openai/gpt-oss-20b

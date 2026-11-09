@@ -97,7 +97,7 @@ test('rows are flat TSV, and resume reads the companies already written', () => 
     writeFileSync(path, TSV_HEADER + '\n');
     appendFileSync(path, toRow({ company: 'CRED', domain: 'cred.club', careers_url: 'https://x', ats: 'greenhouse', campus_url: '', confidence: 'high', notes: 'a\tb\nc' }) + '\n');
     const line = toRow({ company: 'CRED', domain: '', careers_url: '', ats: '', campus_url: '', confidence: 'needs-review', notes: 'x\ty' });
-    assert.equal(line.split('\t').length, 7);
+    assert.equal(line.split('\t').length, 9);
     assert.deepEqual([...readDone(path)], ['cred']);
     assert.equal(readDone(join(dir, 'missing.tsv')).size, 0);
   } finally {
@@ -130,4 +130,49 @@ test('a company site that blocks us is noted and the verdict stays needs-review'
   const v = classify({ domain: 'tide.com', domainVerified: false, domainSource: 'guess', ats: null, careersUrl: '', pagesLoaded: 1, blocked: ['tide.com'] });
   assert.equal(v.confidence, 'needs-review');
   assert.ok(v.notes.some((n) => /blocked automated access: tide.com/.test(n)));
+});
+
+import { applyDecision, buildPrompt, modelName, loadGroqKey, decisionSchema } from '../lib/careers-llm.mjs';
+
+test('llm: the model picks an index from the vetted list, never a URL, and can raise a row to medium at most', () => {
+  const cands = ['https://a.com/careers', 'https://boards.greenhouse.io/a', 'https://a.com/campus'];
+  const ok = applyDecision({ candidate: 1, is_careers_page: true, ats: 'custom', campus: 2, confidence: 'high', reason: 'jobs board' }, cands);
+  assert.equal(ok.confidence, 'medium');
+  assert.equal(ok.careers_url, cands[1]);
+  assert.equal(ok.ats, 'greenhouse', 'the ATS comes from the URL, not from the model');
+  assert.equal(ok.campus_url, cands[2]);
+  for (const bad of [null, { candidate: 9, is_careers_page: true, ats: '', campus: null, confidence: 'high', reason: 'x' },
+    { candidate: 0, is_careers_page: false, ats: '', campus: null, confidence: 'high', reason: 'x' },
+    { candidate: 0, is_careers_page: true, ats: '', campus: null, confidence: 'low', reason: 'x' }]) {
+    assert.equal(applyDecision(bad, cands).confidence, 'needs-review');
+  }
+});
+
+test('llm: the prompt carries only company, domain, title, 30 link texts and numbered candidates', () => {
+  const p = buildPrompt({ company: 'A', domain: 'a.com', title: 'Home', linkTexts: Array.from({ length: 50 }, (_, i) => `t${i}`), candidates: ['https://a.com/c'], html: 'SECRET' });
+  assert.ok(p.includes('0: https://a.com/c') && p.includes('t29') && !p.includes('t30') && !p.includes('SECRET'));
+});
+
+test('llm: model ids need the groq: prefix, and a schema-invalid answer is rejected', () => {
+  assert.equal(modelName('groq:openai/gpt-oss-120b'), 'openai/gpt-oss-120b');
+  assert.throws(() => modelName('openai/gpt-oss-120b'));
+  assert.equal(decisionSchema.safeParse({ candidate: 'one' }).success, false);
+});
+
+test('llm: GROQ_API_KEY comes from the environment first, then .env; no key gives an empty string', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'llm-key-'));
+  const saved = process.env.GROQ_API_KEY;
+  try {
+    delete process.env.GROQ_API_KEY;
+    assert.equal(loadGroqKey([dir]), '');
+    writeFileSync(join(dir, '.env'), 'OTHER=1\nGROQ_API_KEY="gsk_test"\n');
+    assert.equal(loadGroqKey([dir]), 'gsk_test');
+    process.env.GROQ_API_KEY = 'from-env';
+    assert.equal(loadGroqKey([dir]), 'from-env');
+  } finally { if (saved === undefined) delete process.env.GROQ_API_KEY; else process.env.GROQ_API_KEY = saved; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('classify: a custom careers page on a domain we only guessed goes to review', () => {
+  assert.equal(classify({ domain: 'cred.co.in', domainVerified: true, domainSource: 'guess', ats: null, careersUrl: 'https://cred.co.in/', pagesLoaded: 2 }).confidence, 'needs-review');
+  assert.equal(classify({ domain: 'a.com', domainVerified: true, domainSource: 'override', ats: null, careersUrl: 'https://a.com/careers', pagesLoaded: 2 }).confidence, 'medium');
 });
