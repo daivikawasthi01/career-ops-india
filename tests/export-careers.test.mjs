@@ -85,3 +85,15 @@ test('a run that stopped updating shows as stopped, a fresh one as live', () => 
   assert.equal(old.state, 'stopped'); assert.equal(old.live, false);
   assert.equal(phaseView({ state: 'finished', updated_at: '2026-11-09T10:00:00Z' }, now).state, 'finished');
 });
+
+test('each dashboard row carries the result of phase 1, 2 and 3 for that company', () => {
+  const rows = mergePass2(
+    [{ company: 'A', flag: 'bot-blocked' }, { company: 'B', flag: 'ok' }, { company: 'C', flag: 'no-domain' }],
+    [{ company: 'A', final_status: 'jobs-found', jobs_total: '23', jobs_india: '5', notes: '', careers_url: 'https://x' }, { company: 'B', final_status: 'right-portal-no-india', jobs_total: '8', jobs_india: '0', notes: 'pass3:none-found', careers_url: 'https://y' }],
+    [],
+  );
+  assert.deepEqual(rows[0].phases.map((p) => p.text), ['bot-blocked', 'pass 23/5', '-']);
+  assert.deepEqual(rows[1].phases.map((p) => p.text), ['ok', 'no-india-jobs 8/0', 'none-found']);
+  assert.deepEqual(rows[2].phases.map((p) => p.text), ['no-domain', '-', '-']);
+  assert.equal(mergePass2([{ company: 'B', flag: 'ok' }], [{ company: 'B', final_status: 'right-portal-no-india', jobs_total: '8', jobs_india: '0', notes: '' }], [{ company: 'B', decision: 'switch' }])[0].phases[2].text, 'switch');
+});
