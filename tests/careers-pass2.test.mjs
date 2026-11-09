@@ -65,8 +65,8 @@ test('vision states map to actions', () => {
   assert.equal(visionAction(null), 'none');
 });
 
-test('the first pair of queries asks for India; the retry pair adds the plain form that matched best', () => {
-  assert.ok(queryPair('Zepto', {}, 0).some((q) => /india/i.test(q)) && queryPair('Zepto', {}, 0)[0] === '"Zepto" careers');
+test('the first query is the quoted name; the retry queries ask for India', () => {
+  assert.ok(queryPair('Zepto', {}, 0)[0] === '"Zepto" careers');
   assert.ok(queryPair('Zepto', {}, 1).every((q) => /india/i.test(q)));
 });
 

@@ -384,10 +384,14 @@ async function pass({ context, item, profile, queries, overrides, llm, fp }) {
   const ev = { query: queries.join(' + ') };
   // L0
   const results = [];
-  for (const q of queries) for (const r of await searchResults(context, q)) if (!results.some((x) => x.url === r.url)) results.push(r);
-  // Seed from Wikidata's official-website property: retrieved evidence, not model memory.
-  for (const w of await wikidataSites(item.name)) if (!results.some((x) => sameSite(hostOf(x.url), hostOf(w.url)))) results.push(w);
-  if (!results.length) return { ...early(gate({ l1: { ok: false, why: 'search returned no results from any engine, so no candidates were gathered' } })), ev, model: '', raw: '', domain: '', retry: true };
+  // A domain you declared (portals.yml or the overrides file) needs no search and no model: skip both, the later checks still run.
+  const declaredHost = overrides.get(item.name.toLowerCase()) || hostOf(item.entry?.website || (item.entry?.careers_url && !atsFromUrl(item.entry.careers_url) ? item.entry.careers_url : ''));
+  if (!declaredHost) {
+    for (const q of queries) for (const r of await searchResults(context, q)) if (!results.some((x) => x.url === r.url)) results.push(r);
+    // Seed from Wikidata's official-website property: retrieved evidence, not model memory.
+    for (const w of await wikidataSites(item.name)) if (!results.some((x) => sameSite(hostOf(x.url), hostOf(w.url)))) results.push(w);
+  }
+  if (!declaredHost && !results.length) return { ...early(gate({ l1: { ok: false, why: 'search returned no results from any engine, so no candidates were gathered' } })), ev, model: '', raw: '', domain: '', retry: true };
   const cands = [];
   const add = (domain, source) => { if (domain && !cands.some((c) => sameSite(c.domain, domain))) cands.push({ domain, source, results: [] }); };
   const ov = overrides.get(item.name.toLowerCase());
@@ -403,7 +407,7 @@ async function pass({ context, item, profile, queries, overrides, llm, fp }) {
   const texts = [];
   // L1
   let l1; let model = ''; let raw = ''; const fb = {}; const by = {};
-  if (llm) {
+  if (llm && !declaredHost) {
     const shown = { company: item.name, hint: profile.hint, candidates: top.filter((c) => c.loaded !== false || c.source !== 'guess') };
     texts.push(domainPrompt(shown)); // the quote must occur in exactly what the model was shown
     const a = await llm.chooseDomain(shown);

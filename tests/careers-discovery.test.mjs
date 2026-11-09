@@ -336,9 +336,9 @@ test('bing result links are unwrapped to the real URL', () => {
   assert.equal(unwrapBingUrl('https://example.com/x'), 'https://example.com/x');
 });
 
-test('query pairs: pass 1 merges the sde and official-website forms, the retry merges the other two', () => {
-  assert.deepEqual(queryPair('Zepto', {}, 0), ['"Zepto" careers', 'Zepto careers india']);
-  assert.deepEqual(queryPair('Zepto', {}, 1), ['"Zepto" careers india', 'Zepto careers sde india']);
+test('queries: pass 1 asks one quoted question (search is the slow part), the retry asks two more', () => {
+  assert.deepEqual(queryPair('Zepto', {}, 0), ['"Zepto" careers']);
+  assert.deepEqual(queryPair('Zepto', {}, 1), ['Zepto careers india', '"Zepto" careers india']);
 });
 
 test('llm: retry-after is honoured and capped', async () => {
