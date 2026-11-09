@@ -135,7 +135,7 @@ test('a company site that blocks us is noted and the verdict stays needs-review'
 import { modelName, loadGroqKey, loadModels, domainSchema, verifySchema, domainPrompt, verifyPrompt } from '../lib/careers-llm.mjs';
 import {
   registrable, sameSite, isAggregator, classifyFetch, isParked, botWall, checkDomain, quoteInEvidence, checkL1, compareAts,
-  boardFingerprint, fingerprintFit, gate, queryVariants,
+  boardFingerprint, fingerprintFit, gate, queryVariants, queryPair,
 } from '../lib/careers-pipeline.mjs';
 import { checkGolden, readGolden, goldenVerdict, tsvRow, COLUMNS } from '../tools/discover-careers.mjs';
 import { redact, unwrapBingUrl } from '../lib/careers-pipeline.mjs';
@@ -334,4 +334,9 @@ test('bing result links are unwrapped to the real URL', () => {
   const wrapped = `https://www.bing.com/ck/a?!&&p=abc&u=a1${Buffer.from(real).toString('base64url')}&ntb=1`;
   assert.equal(unwrapBingUrl(wrapped), real);
   assert.equal(unwrapBingUrl('https://example.com/x'), 'https://example.com/x');
+});
+
+test('query pairs: pass 1 merges the sde and official-website forms, the retry merges the other two', () => {
+  assert.deepEqual(queryPair('Zepto', {}, 0), ['Zepto careers sde', 'Zepto official website']);
+  assert.deepEqual(queryPair('Zepto', {}, 1), ['Zepto careers', 'Zepto jobs']);
 });

@@ -29,7 +29,7 @@ import {
 } from '../lib/careers-discovery.mjs';
 import { makeLlm, loadGroqKey, loadModels, domainPrompt } from '../lib/careers-llm.mjs';
 import {
-  registrable, sameSite, isAggregator, checkDomain, checkL1, quoteInEvidence, compareAts, boardFingerprint, fingerprintFit, gate, queryVariants, redact, unwrapBingUrl,
+  registrable, sameSite, isAggregator, checkDomain, checkL1, quoteInEvidence, compareAts, boardFingerprint, fingerprintFit, gate, queryPair, redact, unwrapBingUrl,
 } from '../lib/careers-pipeline.mjs';
 
 const USAGE = `usage: discover-careers.mjs [--llm] [--limit N] [--only NAME,NAME] [--first FILE] [--list] [--slice1] [--all] [--golden FILE] [--out PATH]
@@ -192,11 +192,31 @@ async function fingerprintOf(entry) {
   } catch { return null; }
 }
 
+/** Official-website (P856) of the top Wikidata matches for a name. Network failure gives []. */
+async function wikidataSites(name) {
+  const get = async (u) => { const r = await fetch(u, { signal: AbortSignal.timeout(10000), headers: { 'User-Agent': 'career-ops-discovery/1.0' } }); return r.json(); };
+  try {
+    const s = await get(`https://www.wikidata.org/w/api.php?action=wbsearchentities&format=json&language=en&limit=3&search=${encodeURIComponent(name)}`);
+    const hits = (s.search || []).slice(0, 3);
+    if (!hits.length) return [];
+    const e = await get(`https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&props=claims&ids=${hits.map((h) => h.id).join('|')}`);
+    const out = [];
+    for (const h of hits) {
+      const url = e.entities?.[h.id]?.claims?.P856?.[0]?.mainsnak?.datavalue?.value;
+      if (typeof url === 'string' && /^https?:/.test(url)) out.push({ title: `Wikidata official website: ${h.label} (${h.description || 'no description'})`, url, snippet: 'official website property on Wikidata' });
+    }
+    return out;
+  } catch { return []; }
+}
+
 /** One pass of L0..L6 with one query. Returns the row fields plus `retry` when a different query could help. */
-async function pass({ context, item, profile, query, overrides, llm, fp }) {
-  const ev = { query };
+async function pass({ context, item, profile, queries, overrides, llm, fp }) {
+  const ev = { query: queries.join(' + ') };
   // L0
-  const results = await searchResults(context, query);
+  const results = [];
+  for (const q of queries) for (const r of await searchResults(context, q)) if (!results.some((x) => x.url === r.url)) results.push(r);
+  // Seed from Wikidata's official-website property: retrieved evidence, not model memory.
+  for (const w of await wikidataSites(item.name)) if (!results.some((x) => sameSite(hostOf(x.url), hostOf(w.url)))) results.push(w);
   searchStats.run = results.length ? 0 : (searchStats.run || 0) + 1;
   if (searchStats.run >= 3) throw new Halt(2, 'search returned nothing from every engine 3 times in a row (blocked?)');
   if (!results.length) return { ...early(gate({ l1: { ok: false, why: 'search returned no results from any engine, so no candidates were gathered' } })), ev, model: '', raw: '', domain: '', retry: true };
@@ -268,11 +288,10 @@ const early = (g) => ({ ...g, failed: g.failed.slice(0, 1) });
 async function processCompany({ context, item, overrides, llm }) {
   const profile = { name: item.name, expectIndia: item.sources.includes('protected'), hq: item.sources.includes('protected') ? 'India (Indian-HQ or India office)' : '', hint: item.entry?.notes ? String(item.entry.notes).slice(0, 80) : '' };
   const fp = await fingerprintOf(item.entry);
-  const queries = queryVariants(item.name, profile);
   const attempts = [];
   let last;
   for (let i = 0; i < 2; i++) {
-    last = await pass({ context, item, profile, query: queries[i], overrides, llm, fp });
+    last = await pass({ context, item, profile, queries: queryPair(item.name, profile, i), overrides, llm, fp });
     attempts.push(last);
     if (last.accepted || !last.retry) break;
     if (llmFail.n >= 5) throw new Halt(4, '5 LLM calls in a row gave no usable answer (rate limit or API error)');
