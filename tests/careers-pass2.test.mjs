@@ -31,7 +31,7 @@ test('best verdict wins; only jobs-found and listings-on-page pass', () => {
   assert.equal(best(['not-careers', 'landing', 'bot-blocked']), 'landing');
   assert.equal(best(['bot-blocked', 'jobs-found']), 'jobs-found');
   assert.equal(best([]), 'not-careers');
-  assert.ok(PASSING.has('jobs-found') && !PASSING.has('board-empty'));
+  assert.ok(PASSING.has('jobs-found') && PASSING.has('listings-unread') && !PASSING.has('board-empty'));
 });
 
 test('candidates: tried URLs, search engines and job aggregators are dropped, careers-looking own-site first', () => {
@@ -42,11 +42,12 @@ test('candidates: tried URLs, search engines and job aggregators are dropped, ca
     { url: 'https://www.bing.com/x', title: 'x' },
     { url: 'https://acme.com/about', title: 'About' },
     { url: 'https://boards.greenhouse.io/acme', title: 'Acme jobs' },
-    { url: 'https://other.com/news', title: 'news' },
+    { url: 'https://other.com/news', title: 'Acme news' },
+    { url: 'https://forum.example.com/threads/1', title: 'what are you watching' },
   ];
   assert.ok(seen(tried, 'https://acme.com/careers'));
-  const r = rankCandidates(results, tried, { companyHost: 'acme.com' });
-  assert.deepEqual(r.map((x) => x.url), ['https://boards.greenhouse.io/acme', 'https://acme.com/about', 'https://other.com/news']);
+  const r = rankCandidates(results, tried, { companyHost: 'acme.com', name: 'Acme' });
+  assert.deepEqual(r.map((x) => x.url), ['https://boards.greenhouse.io/acme', 'https://acme.com/about']);
 });
 
 test('the loop always ends: pass, round cap, test cap, or a round with nothing new', () => {

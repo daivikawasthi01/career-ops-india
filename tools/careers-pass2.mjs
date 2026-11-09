@@ -23,7 +23,7 @@ import { browserLaunchOptions } from '../lib/browser-launch.mjs';
 import { atsFromUrl, findAtsLinks, pickAts, extractUrls } from '../lib/careers-discovery.mjs';
 import { boardFingerprint, redact } from '../lib/careers-pipeline.mjs';
 import { makeLlm, loadGroqKeys, loadModels } from '../lib/careers-llm.mjs';
-import { classifyPage, followLinks, best, PASSING, rankCandidates, mark, seen, shouldStop, LIMITS, visionAction } from '../lib/careers-pass2.mjs';
+import { classifyPage, followLinks, best, PASSING, CAREERS_PATH, rankCandidates, mark, seen, shouldStop, LIMITS, visionAction } from '../lib/careers-pass2.mjs';
 import { parseTsv } from './careers-review.mjs';
 import { visit, searchResults, hostOf, Halt, gov, sleep, setSessionContext } from './discover-careers.mjs';
 import { queryPair } from '../lib/careers-pipeline.mjs';
@@ -86,6 +86,7 @@ export async function testUrl(context, url, name, st, depth = 0) {
     }
   }
   const indiaMentions = (v.text.match(/\b(india|bengaluru|bangalore|hyderabad|pune|mumbai|delhi|gurgaon|gurugram|noida|chennai|kolkata|ahmedabad)\b/gi) || []).length;
+  if (cls.verdict === 'landing' && CAREERS_PATH.test(new URL(v.finalUrl).pathname + ' ' + v.title)) return done({ verdict: 'listings-unread', note: 'careers-looking page, listings not readable', snippet: v.text.slice(0, 600), indiaMentions: (v.text.match(/\b(india|bengaluru|bangalore|hyderabad|pune|mumbai|delhi|gurgaon|gurugram|noida|chennai)\b/gi) || []).length });
   return done({ verdict: cls.verdict, total: cls.count, sample: cls.sample || [], snippet: v.text.slice(0, 600), indiaMentions });
 }
 
@@ -112,7 +113,7 @@ async function processCompany2({ context, row, rejectedUrls, llm, vision }) {
       if (!res.length) { empties++; shot = shot || res.shot || ''; }
       pool.push(...res);
     }
-    let cands = rankCandidates(pool, st.tried, { limit: LIMITS.perRound, companyHost: hostOf(row.careers_url || row.domain || '') });
+    let cands = rankCandidates(pool, st.tried, { limit: LIMITS.perRound, companyHost: hostOf(row.careers_url || row.domain || ''), name });
     if (!cands.length && vision && llm && shot) {
       const v = await llm.seeScreenshot({ company: name, query: queries[0], imageB64: shot });
       if (v.model) st.models.add(v.model);
@@ -121,7 +122,7 @@ async function processCompany2({ context, row, rejectedUrls, llm, vision }) {
       if (action === 'search-blocked') { searchBlocked = true; break; }
       if (action === 'read-urls') {
         const urls = (v.value.visible_urls || []).map((u) => (/^https?:/.test(u) ? u : `https://${u}`)).map((url) => ({ url, title: '' }));
-        cands = rankCandidates(urls, st.tried, { limit: LIMITS.perRound });
+        cands = rankCandidates(urls, st.tried, { limit: LIMITS.perRound, name });
       }
     }
     if (shouldStop({ round: rounds, tests: st.tests, newCandidates: cands.length, passed: passed() }) && !cands.length) break;
