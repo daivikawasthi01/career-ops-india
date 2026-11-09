@@ -120,3 +120,14 @@ test('inputs combine the protected list, watch boards and check-by-hand, dedupli
 test('timing report extrapolates the first companies to the total', () => {
   assert.deepEqual(timingReport([10, 20, 30], 60), { n: 3, avg_seconds: 20, estimated_total_minutes: 20 });
 });
+
+test('a short block page counts as a captcha, a long ordinary page that mentions the words does not', () => {
+  assert.equal(captchaLikely({ status: 403, html: '<title>Access denied</title><p>blocked</p>' }), true);
+  assert.equal(captchaLikely({ status: 200, html: `<h1>Careers</h1>${'<p>Join our team of engineers building great things in India. </p>'.repeat(200)}<p>Access denied to nobody</p>` }), false);
+});
+
+test('a company site that blocks us is noted and the verdict stays needs-review', () => {
+  const v = classify({ domain: 'tide.com', domainVerified: false, domainSource: 'guess', ats: null, careersUrl: '', pagesLoaded: 1, blocked: ['tide.com'] });
+  assert.equal(v.confidence, 'needs-review');
+  assert.ok(v.notes.some((n) => /blocked automated access: tide.com/.test(n)));
+});

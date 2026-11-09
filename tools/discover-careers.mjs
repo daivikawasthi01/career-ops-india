@@ -106,11 +106,13 @@ async function ownSite(context, name, entry, overrides) {
   const cands = domainCandidates(name, { override: overrides.get(name.toLowerCase()), hint: hintUrl ? hostOf(hintUrl) : '' });
   const declared = overrides.has(name.toLowerCase()) ? 'override' : hintUrl ? 'portals' : 'guess';
   let pagesLoaded = 0;
+  const blocked = [];
   for (const host of cands.slice(0, 6)) {
     const home = await visit(context, `https://${host}/`);
     if (!home.ok) continue;
     pagesLoaded++;
-    if (captchaLikely(home)) throw new Halt(2, `captcha or block at ${host}`);
+    // A company site that blocks us is a note for that company, not a reason to stop the run. Only the search engine halts it.
+    if (captchaLikely(home)) { blocked.push(host); continue; }
     const verified = declared !== 'guess' || homepageMatchesCompany(home, name);
     if (!verified) continue;
     const realHost = hostOf(home.finalUrl) || host;
@@ -128,10 +130,10 @@ async function ownSite(context, name, entry, overrides) {
     const careersPage = pages.find((p) => p !== home && p.status < 400 && hostOf(p.finalUrl) === realHost && !/\/(404|not-found)/i.test(p.finalUrl));
     return {
       domain: realHost, domainVerified: true, domainSource: declared, pagesLoaded, ats,
-      campus: findCampusLink(links), careersUrl: ats.best?.url || careersPage?.finalUrl || '', atsOnOwnSite: Boolean(ats.best),
+      campus: findCampusLink(links), careersUrl: ats.best?.url || careersPage?.finalUrl || '', atsOnOwnSite: Boolean(ats.best), blocked,
     };
   }
-  return { domain: cands[0] || '', domainVerified: false, domainSource: declared, pagesLoaded, ats: { best: null, slugOk: false, others: [] }, campus: null, careersUrl: '', atsOnOwnSite: false };
+  return { domain: cands[0] || '', domainVerified: false, domainSource: declared, pagesLoaded, ats: { best: null, slugOk: false, others: [] }, campus: null, careersUrl: '', atsOnOwnSite: false, blocked };
 }
 
 let lastSearchAt = 0;
@@ -208,7 +210,7 @@ async function main() {
         const verdict = classify({
           domain: found.domain, domainVerified: found.domainVerified, domainSource: found.domainSource, ats: found.ats?.best || null,
           slugOk: found.ats?.slugOk, careersUrl: found.careersUrl, atsOnOwnSite: found.atsOnOwnSite, viaSearch, pagesLoaded: found.pagesLoaded,
-          atsOthers: found.ats?.others?.length || 0,
+          atsOthers: found.ats?.others?.length || 0, blocked: found.blocked || [],
         });
         r = {
           company: item.name, domain: found.domain, careers_url: found.careersUrl, ats: found.ats?.best?.ats || (found.careersUrl ? 'custom' : ''),
