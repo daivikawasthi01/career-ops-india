@@ -47,7 +47,7 @@ export function plan(rows, entries, hasProvider) {
     const name = r.Company; const url = r['Careers URL'];
     if (!name || !/^https?:\/\//.test(url || '')) { out.push({ name, kind: 'skip', why: 'no usable URL' }); continue; }
     const ex = byNorm.get(norm(name));
-    const watch = !hasProvider({ name, careers_url: url });
+    const watch = r.Mode === 'watch' || !hasProvider({ name, careers_url: url }); // Mode=watch: right portal, nothing in India now
     const same = ex && String(ex.careers_url || '').replace(/\/$/, '') === url.replace(/\/$/, '');
     out.push({ name, url, existing: ex?.name, old: ex?.careers_url, kind: !ex ? 'add' : same && ex.enabled !== false ? 'same' : 'replace', watch, hadApi: Boolean(ex?.api), wasOff: ex?.enabled === false });
   }
