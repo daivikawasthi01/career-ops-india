@@ -264,7 +264,7 @@ async function rssSearch(query) {
       const text = await res.text();
       const rows = res.ok ? parseBingRss(text) : [];
       if (rows.length && mentionsQueryName(query, rows)) return rows;
-      if (rows.length) { searchStats.decoy = (searchStats.decoy || 0) + 1; await sleep(6000); why = `decoy results (none mention the name): ${rows.slice(0, 2).map((r) => new URL(r.url).hostname).join(', ')}`; continue; }
+      if (rows.length) { searchStats.decoy = (searchStats.decoy || 0) + 1; return Object.assign([], { decoy: true }); } // junk for this query: no retry, no pause
       why = `HTTP ${res.status}, ${text.length} bytes, ${(text.match(/<item>/g) || []).length} items, starts "${text.replace(/\s+/g, ' ').slice(0, 80)}"`;
     } catch (err) { why = `fetch failed: ${err?.cause?.code || err?.message || err}`; }
     await sleep(2000);
@@ -281,6 +281,8 @@ async function searchResults(context, query, opts = {}) {
   // First choice: Bing RSS over plain HTTP (no browser session to get flagged). Only if it returns nothing do we open pages.
   const rss = await rssSearch(query);
   if (rss.length) { rss.engine = 'bing-rss'; gov.ok(); return rss; }
+  // Bing answered, but with pages that are not about this company (this query only). Not a block: no pause, the next query variant tries again.
+  if (rss.decoy) { const none = []; none.engine = 'decoy'; return none; }
   if (++searchesInSession > 40) await freshSearchSession();
   const sc = await searchCtx(context);
   for (const eng of ENGINES) {
