@@ -135,3 +135,25 @@ test('india filter links: query values, path segments, and short India link text
   ];
   assert.deepEqual(indiaFilterLinks(links, 'x.com').map((l) => l.href), ['https://jobs.x.com/search?location=India', 'https://jobs.x.com/en-in/search']);
 });
+
+import { indiaStatus, guessCareerUrls, isIndiaLoc } from '../lib/careers-pass2.mjs';
+
+test('listings with locations read and none in India are right-portal-no-india; without locations they are india-unknown', () => {
+  assert.equal(indiaStatus('jobs-found', { total: 80, india: 0 }), 'right-portal-no-india');
+  assert.equal(indiaStatus('jobs-found', { total: 80, india: 5 }), 'jobs-found');
+  assert.equal(indiaStatus('listings-on-page', { total: 14, located: 14, india: 0 }), 'right-portal-no-india');
+  assert.equal(indiaStatus('listings-on-page', { total: 14, located: 0, india: 0 }), 'india-unknown');
+  assert.equal(indiaStatus('listings-on-page', { total: 11 }), 'india-unknown');
+  assert.equal(indiaStatus('listings-on-page', { total: 9, located: 9, india: 2 }), 'listings-on-page');
+});
+
+test('India locations are recognised in odd spellings', () => {
+  for (const l of ['Bangalore', 'BLR', 'Gurgaon/Gurugram', 'Hybrid, IN', 'Delhi NCR', 'IN-KA', 'Kochi, Kerala']) assert.ok(isIndiaLoc(l), l);
+  for (const l of ['Berlin', 'Remote', 'Indianapolis', 'In person', 'Austin, TX']) assert.ok(!isIndiaLoc(l), l);
+});
+
+test('guessed careers URLs come only from a plausible host', () => {
+  assert.ok(guessCareerUrls('www.slice.bank.in').includes('https://careers.slice.bank.in'));
+  assert.deepEqual(guessCareerUrls(''), []);
+  assert.deepEqual(guessCareerUrls('not a host'), []);
+});

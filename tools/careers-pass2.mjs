@@ -24,7 +24,7 @@ import { atsFromUrl, findAtsLinks, pickAts, extractUrls } from '../lib/careers-d
 import { boardFingerprint, redact } from '../lib/careers-pipeline.mjs';
 import { makeLlm, loadGroqKeys, loadModels } from '../lib/careers-llm.mjs';
 import { slugMatchesName } from '../lib/board-audit.mjs';
-import { classifyPage, followLinks, best, PASSING, CAREERS_PATH, identityOk, keyOf, rankCandidates, mark, seen, shouldStop, LIMITS, visionAction } from '../lib/careers-pass2.mjs';
+import { classifyPage, followLinks, best, PASSING, CAREERS_PATH, identityOk, keyOf, rankCandidates, mark, seen, shouldStop, LIMITS, visionAction, INDIA_RE, indiaStatus, guessCareerUrls } from '../lib/careers-pass2.mjs';
 import { parseTsv } from './careers-review.mjs';
 import { visit, searchResults, hostOf, Halt, gov, sleep, setSessionContext } from './discover-careers.mjs';
 import { queryPair } from '../lib/careers-pipeline.mjs';
@@ -80,7 +80,7 @@ export async function testUrl(context, url, name, st, depth = 0) {
   if (!v.ok) return done({ verdict: 'unreachable', note: v.error });
   let cls = classifyPage({ status: v.status, text: v.text, links: v.links });
   if (cls.verdict === 'bot-blocked') return done({ verdict: 'bot-blocked' });
-  const fromJson = (page, how) => (page.jsonJobs ? { verdict: 'listings-on-page', total: page.jsonJobs.count, india: page.jsonJobs.india, sample: page.jsonJobs.sample, note: how } : null);
+  const fromJson = (page, how) => (page.jsonJobs ? { verdict: 'listings-on-page', total: page.jsonJobs.count, located: page.jsonJobs.located, india: page.jsonJobs.india, sample: page.jsonJobs.sample, note: how } : null);
   const quick = fromJson(v, 'jobs from page data');
   if (quick) return done(quick);
   const urls = [...v.links.map((l) => l.href), ...v.frames, ...v.requests, ...extractUrls(v.html)];
@@ -108,8 +108,8 @@ export async function testUrl(context, url, name, st, depth = 0) {
       if (c2.verdict === 'listings-on-page') return done({ verdict: 'listings-on-page', total: c2.count, sample: c2.sample, note: 'listings after typing in the portal search box' });
     }
   }
-  if ((cls.verdict === 'landing' || cls.verdict === 'not-careers') && looksOwn && CAREERS_PATH.test(new URL(v.finalUrl).pathname + ' ' + v.title)) return done({ verdict: 'listings-unread', note: 'careers-looking page, listings not readable', snippet: v.text.slice(0, 600), indiaMentions: (v.text.match(/\b(india|bengaluru|bangalore|hyderabad|pune|mumbai|delhi|gurgaon|gurugram|noida|chennai)\b/gi) || []).length });
-  const indiaMentions = (v.text.match(/\b(india|bengaluru|bangalore|hyderabad|pune|mumbai|delhi|gurgaon|gurugram|noida|chennai|kolkata|ahmedabad)\b/gi) || []).length;
+  if ((cls.verdict === 'landing' || cls.verdict === 'not-careers') && looksOwn && CAREERS_PATH.test(new URL(v.finalUrl).pathname + ' ' + v.title)) return done({ verdict: 'listings-unread', note: 'careers-looking page, listings not readable', snippet: v.text.slice(0, 600), indiaMentions: (v.text.match(new RegExp(INDIA_RE.source, 'gi')) || []).length });
+  const indiaMentions = (v.text.match(new RegExp(INDIA_RE.source, 'gi')) || []).length;
   return done({ verdict: cls.verdict, total: cls.count, sample: cls.sample || [], snippet: v.text.slice(0, 600), indiaMentions });
 }
 
@@ -137,6 +137,7 @@ async function processCompany2({ context, row, rejectedUrls, llm, vision }) {
       if (!res.length) { empties++; shot = shot || res.shot || ''; }
       pool.push(...res);
     }
+    if (!pool.length && rounds === 1) for (const h of [hostOf(row.careers_url || ''), hostOf(row.domain || '')].filter(Boolean)) pool.push(...guessCareerUrls(h).map((url) => ({ url, title: '' }))); // search gave nothing: try the usual spots on a known host
     let cands = rankCandidates(pool, st.tried, { limit: LIMITS.perRound, companyHost: hostOf(row.careers_url || row.domain || ''), name });
     if (!cands.length && vision && llm && shot) {
       const v = await llm.seeScreenshot({ company: name, query: queries[0], imageB64: shot });
@@ -156,7 +157,7 @@ async function processCompany2({ context, row, rejectedUrls, llm, vision }) {
   const top = best(verdicts);
   const win = st.results.find((r) => r.verdict === top && !r.via) || st.results.find((r) => r.verdict === top);
   let final = !verdicts.length ? (searchBlocked ? 'search-blocked' : 'no-candidate') : PASSING.has(top) || top === 'board-empty' ? top : top === 'bot-blocked' ? 'bot-blocked' : top === 'unverified-identity' ? 'needs-identity-check' : 'unresolved';
-  if (final === 'jobs-found' && win?.india === 0) final = 'right-portal-no-india'; // the portal is right; nothing in India right now
+  if (PASSING.has(final) && final !== 'listings-unread') final = indiaStatus(final, win); // right-portal-no-india only when locations were read; else india-unknown
   if (final === 'unresolved' && searchBlocked) final = 'search-blocked';
   return {
     company: name, final_status: final, careers_url: win && final !== 'no-candidate' ? win.url : '', ats: win?.ats || '',
