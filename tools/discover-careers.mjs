@@ -32,11 +32,12 @@ import {
   registrable, sameSite, isAggregator, checkDomain, checkL1, quoteInEvidence, compareAts, boardFingerprint, fingerprintFit, gate, queryVariants, redact, unwrapBingUrl,
 } from '../lib/careers-pipeline.mjs';
 
-const USAGE = `usage: discover-careers.mjs [--llm] [--limit N] [--only NAME,NAME] [--first FILE] [--list] [--slice1] [--golden FILE] [--out PATH]
+const USAGE = `usage: discover-careers.mjs [--llm] [--limit N] [--only NAME,NAME] [--first FILE] [--list] [--slice1] [--all] [--golden FILE] [--out PATH]
   Layered pipeline (see the header of this file). Output: data/careers-discovery.tsv (append-only; rerun to resume).
   Inputs: config/protected-boards.txt, portals.yml entries with watch: true, data/check-by-hand.txt.
   --llm          run the Groq layers (L1 domain, L4 verifier); GROQ_API_KEY in .env, models GROQ_MODEL / GROQ_FALLBACK_MODEL
   --first FILE   look at the names in FILE before everything else
+  --all          every enabled company in portals.yml, plus the protected, watch and check-by-hand lists
   --golden FILE  run only the cases in FILE and check them; a pass is required before a full run
   (debug) CAREER_OPS_UNVALIDATED=1 starts a full run without a passing golden check; every row is then stamped "unvalidated"
   --slice1       also every name in companies.txt slice 1
@@ -334,7 +335,7 @@ async function main() {
   const golden = arg('--golden') ? readGolden(arg('--golden')) : null;
   let inputs = golden
     ? golden.map((g) => ({ name: g.company, sources: [...(readText(PROTECTED).split('\n').some((l) => l.replace(/#.*/, '').trim().toLowerCase() === g.company.toLowerCase()) ? ['protected'] : []), 'golden'], entry: entries.find((e) => e.name?.toLowerCase() === g.company.toLowerCase()) || null }))
-    : buildInputs({ protectedText: readText(PROTECTED), portalsEntries: entries, checkByHandText: readText(CHECK_BY_HAND), extraNames: has('--slice1') ? slice1Names() : [], only: (arg('--only') || '').split(',').map((s) => s.trim()).filter(Boolean) });
+    : buildInputs({ protectedText: readText(PROTECTED), portalsEntries: entries, checkByHandText: readText(CHECK_BY_HAND), extraNames: [...(has('--slice1') ? slice1Names() : []), ...(has('--all') ? entries.filter((e) => e && typeof e.name === 'string' && e.enabled !== false).map((e) => e.name) : [])], only: (arg('--only') || '').split(',').map((s) => s.trim()).filter(Boolean) });
   if (arg('--first')) {
     const first = readText(arg('--first')).split('\n').map((l) => l.replace(/#.*/, '').split('\t')[0].trim()).filter(Boolean);
     const rank = new Map(first.map((n, i) => [n.toLowerCase(), i]));
