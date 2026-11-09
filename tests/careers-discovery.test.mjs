@@ -394,3 +394,13 @@ test('search governor: after a person clears a captcha the block is forgotten an
   assert.ok(g.extraMs <= 2000);
   assert.equal(g.shouldHalt(), false);
 });
+
+import { failureBackoff } from '../lib/careers-pipeline.mjs';
+test('five failures in a row pause the run (5, 10, 20, 20 minutes) and only repeated pauses halt it', () => {
+  assert.deepEqual(failureBackoff({ failures: 4, cooldowns: 0 }), { action: 'continue', minutes: 0 });
+  assert.deepEqual(failureBackoff({ failures: 5, cooldowns: 0 }), { action: 'pause', minutes: 5 });
+  assert.deepEqual(failureBackoff({ failures: 5, cooldowns: 1 }), { action: 'pause', minutes: 10 });
+  assert.deepEqual(failureBackoff({ failures: 5, cooldowns: 2 }), { action: 'pause', minutes: 20 });
+  assert.deepEqual(failureBackoff({ failures: 5, cooldowns: 3 }), { action: 'pause', minutes: 20 });
+  assert.equal(failureBackoff({ failures: 5, cooldowns: 4 }).action, 'halt');
+});

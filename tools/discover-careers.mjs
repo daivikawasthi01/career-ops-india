@@ -32,7 +32,7 @@ import {
 } from '../lib/careers-discovery.mjs';
 import { makeLlm, loadGroqKeys, loadModels, domainPrompt } from '../lib/careers-llm.mjs';
 import {
-  registrable, sameSite, isAggregator, checkDomain, checkL1, quoteInEvidence, compareAts, boardFingerprint, fingerprintFit, gate, queryPair, redact, unwrapBingUrl, SearchGovernor,
+  registrable, sameSite, isAggregator, checkDomain, checkL1, quoteInEvidence, compareAts, boardFingerprint, fingerprintFit, gate, queryPair, redact, unwrapBingUrl, SearchGovernor, failureBackoff,
 } from '../lib/careers-pipeline.mjs';
 
 const USAGE = `usage: discover-careers.mjs [--llm] [--limit N] [--only NAME,NAME] [--first FILE] [--list] [--slice1] [--workers N] [--search-lanes N] [--no-headed] [--all] [--companies FILE] [--golden FILE] [--out PATH]
@@ -518,7 +518,7 @@ async function main() {
   const overrides = loadDomainOverrides();
   const status = { state: 'running', started_at: new Date().toISOString(), total, done: done.size, accepted: 0, queued: 0, current: null, seconds_per_company: [], first10: null, halt_reason: null };
   writeStatus(status);
-  let failures = 0; let code = 0;
+  let failures = 0; let code = 0; let cooldowns = 0; let pausedUntil = 0;
   const rows = [];
   const pg = createProgress({ total: batch.length, label: 'pass 1', logFile: join(dirname(out), 'careers-run-pass1.log'), statusFile: join(dirname(out), 'careers-run-pass1.status.json') }); pg.start();
   try {
@@ -526,6 +526,7 @@ async function main() {
     const WORKERS = Math.max(1, Number(arg('--workers')) || 3);
     const worker = async () => {
       while (!stop && next < batch.length) {
+        while (!stop && Date.now() < pausedUntil) await sleep(5000); // a shared cooldown after a run of failures
         const item = batch[next++];
         const t0 = Date.now();
         status.current = item.name;
@@ -533,6 +534,7 @@ async function main() {
         try {
           r = await withDeadline(processCompany({ context, item, overrides, llm }), COMPANY_DEADLINE_MS, item.name);
           failures = r.pagesLoaded ? 0 : failures + 1;
+          if (r.pagesLoaded) cooldowns = 0;
         } catch (err) {
           if (err instanceof Halt) { stop = stop || err; return; }
           failures++;
@@ -552,7 +554,12 @@ async function main() {
         }
         if (llm) status.llm_usage = llm.usage;
         writeStatus(status);
-        if (failures >= 5) stop = stop || new Halt(3, `5 consecutive companies could not be loaded (last: ${item.name})`);
+        const fb = failureBackoff({ failures, cooldowns });
+        if (fb.action === 'halt') stop = stop || new Halt(3, `companies kept failing to load after ${cooldowns} pauses (last: ${item.name})`);
+        else if (fb.action === 'pause' && Date.now() >= pausedUntil) {
+          cooldowns++; failures = 0; pausedUntil = Date.now() + fb.minutes * 60000;
+          pg.log(`[run] ${5} companies in a row could not be loaded: pausing ${fb.minutes} min (pause ${cooldowns} of 4), then carrying on`);
+        }
       }
     };
     await Promise.all(Array.from({ length: WORKERS }, worker));
