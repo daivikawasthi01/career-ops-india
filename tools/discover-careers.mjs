@@ -407,6 +407,9 @@ async function pass({ context, item, profile, queries, overrides, llm, fp }) {
     model = a.model; raw = a.raw; fb.l1 = a.fallback; by.l1 = a.model;
     if (a.value == null) llmFail.n++; else llmFail.n = 0;
     l1 = checkL1(a.value, top, texts);
+    // A domain you declared (portals.yml or the overrides file) needs no search evidence: when the model finds nothing among decoy
+    // search results, use the declared one. The domain, page and identity checks below still have to agree.
+    if (!l1.ok && l1.none) { const decl = top.find((c) => (c.source === 'override' || c.source === 'portals') && c.loaded !== false); if (decl) l1 = { ok: true, domain: decl.domain, declared: true }; }
   } else {
     const pick = top.find((c) => c.source === 'override' || c.source === 'portals') || null;
     l1 = pick ? { ok: true, domain: pick.domain } : { ok: false, why: 'no LLM and no domain declared in portals.yml or data/company-domains.tsv' };
