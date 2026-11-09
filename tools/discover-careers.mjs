@@ -27,7 +27,7 @@ import {
   readDone, buildInputs, timingReport, domainCandidates, atsFromUrl, findAtsLinks, pickAts, findCampusLink, findCareersLinks,
   extractUrls, captchaLikely, homepageMatchesCompany, hostMatchesCompany,
 } from '../lib/careers-discovery.mjs';
-import { makeLlm, loadGroqKey, loadModels } from '../lib/careers-llm.mjs';
+import { makeLlm, loadGroqKey, loadModels, domainPrompt } from '../lib/careers-llm.mjs';
 import {
   registrable, sameSite, isAggregator, checkDomain, checkL1, quoteInEvidence, compareAts, boardFingerprint, fingerprintFit, gate, queryVariants, redact, unwrapBingUrl,
 } from '../lib/careers-pipeline.mjs';
@@ -211,11 +211,13 @@ async function pass({ context, item, profile, query, overrides, llm, fp }) {
   const top = cands.slice(0, 5);
   for (const c of top.slice(0, 3)) { const h = await visit(context, `https://${c.domain}/`); c.homeText = h.ok ? h.text.slice(0, 800) : ''; c.loaded = h.ok; }
   ev.candidates = top.map((c) => `${c.domain}[${c.source}${c.loaded === false ? ',unreachable' : ''}]`);
-  const texts = [...results.flatMap((r) => [r.title, r.snippet]), ...top.map((c) => c.homeText || '')];
+  const texts = [];
   // L1
   let l1; let model = ''; let raw = ''; const fb = {}; const by = {};
   if (llm) {
-    const a = await llm.chooseDomain({ company: item.name, hint: profile.hint, candidates: top.filter((c) => c.loaded !== false || c.source !== 'guess') });
+    const shown = { company: item.name, hint: profile.hint, candidates: top.filter((c) => c.loaded !== false || c.source !== 'guess') };
+    texts.push(domainPrompt(shown)); // the quote must occur in exactly what the model was shown
+    const a = await llm.chooseDomain(shown);
     model = a.model; raw = a.raw; fb.l1 = a.fallback; by.l1 = a.model;
     if (a.value == null) llmFail.n++; else llmFail.n = 0;
     l1 = checkL1(a.value, top, texts);
