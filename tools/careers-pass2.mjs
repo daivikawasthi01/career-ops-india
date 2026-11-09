@@ -128,6 +128,7 @@ async function processCompany2({ context, row, rejectedUrls, llm, vision }) {
   const known = env.known?.get(name.toLowerCase().replace(/[^a-z0-9]/g, '')); // a URL already in portals.yml (your verified list) is tried before any search
   if (known && !seen(st.tried, known) && known !== row.careers_url) { st.trusted.add(keyOf(known, atsFromUrl)); await testUrl(context, known, name, st); }
   for (const u of [row.careers_url].filter((u) => !passed() && /^https?:/.test(u || '') && !seen(st.tried, u))) await testUrl(context, u, name, st);
+  st.pending = new Map(); // eligible search candidates, kept so the ones never visited (the loop stops at the first pass) can still be offered
   let rounds = 0; let searchBlocked = false;
   while (!passed() && rounds < LIMITS.maxRounds && st.tests < LIMITS.maxTests) {
     rounds++;
@@ -158,6 +159,7 @@ async function processCompany2({ context, row, rejectedUrls, llm, vision }) {
         cands = rankCandidates(urls, st.tried, { limit: LIMITS.perRound, name });
       }
     }
+    for (const c of cands) st.pending.set(c.url, c);
     if (shouldStop({ round: rounds, tests: st.tests, newCandidates: cands.length, passed: passed() }) && !cands.length && (st.tests > 0 || rounds >= 2)) { if (empties === queries.slice(0, 4).length) st.notes.push('search-empty'); break; } // nothing tested yet: one more round with the other query pair
     for (const c of cands) { if (st.tests >= LIMITS.maxTests || passed()) break; await testUrl(context, c.url, name, st); }
   }
@@ -180,6 +182,8 @@ async function processCompany2({ context, row, rejectedUrls, llm, vision }) {
   if (final === 'unresolved' && searchBlocked) final = 'search-blocked';
   // Other pages that looked like this company's (a shared name, a second portal): shown in the dashboard so you can pick one.
   const alternatives = st.results.filter((r) => r.url !== win?.url && !['unreachable', 'not-careers', 'dead-board', 'rejected-by-user'].includes(r.verdict)).slice(0, 4).map((r) => ({ u: r.url, v: r.verdict, jobs: r.total ?? '', india: r.india ?? '' }));
+  const visited = new Set(st.results.map((r) => r.url));
+  for (const c of st.pending.values()) if (alternatives.length < 6 && c.url !== win?.url && !visited.has(c.url)) alternatives.push({ u: c.url, v: 'not-tested', jobs: '', india: '' });
   return {
     alternatives: JSON.stringify(alternatives),
     company: name, final_status: final, outcome: outcomeOf(final, win?.india), careers_url: win && final !== 'no-candidate' ? win.url : '', ats: win?.ats || '',
