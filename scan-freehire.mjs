@@ -25,8 +25,14 @@
 
 import { readFileSync, existsSync, writeFileSync } from 'fs';
 import { loadYaml } from './lib/yaml-document.mjs';
-import { appendToPipeline, appendToScanHistory, PORTALS_PATH } from './scan.mjs';
+import { appendToPipeline, appendToScanHistory, PORTALS_PATH, DATA_ROOT } from './scan.mjs';
+import { join } from 'path';
 import { buildTitleFilter } from './title-keywords.mjs';
+import { requirePipelineConfig } from './lib/pipeline-config.mjs';
+import { batchYears, yearOk } from './lib/batch-year.mjs';
+import { seniorityVerdict } from './lib/seniority.mjs';
+import { addFlag } from './lib/offer-flags.mjs';
+import { createRejectedLog } from './lib/rejected-log.mjs';
 import { createAdmissionGate, formatSkipCounts } from './lib/admission-gate.mjs';
 import { localToday } from './lib/local-today.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
@@ -42,7 +48,7 @@ const USAGE = `Usage:
   node scan-freehire.mjs                 # last 2 days, India, entry level
   node scan-freehire.mjs --days 7        # first scan or catching up
   node scan-freehire.mjs --dry-run       # print matches, write nothing
-  node scan-freehire.mjs --year 2027     # graduation batch to keep (default 2027)
+  node scan-freehire.mjs --year 2027     # graduation batch to keep (default: batch_years in config/pipeline.yml)
   node scan-freehire.mjs --max-pages 3   # pages of 100 per query (default 3)
 
 Queries the public freehire.me search API (no key) for India internships and
@@ -59,25 +65,10 @@ const DEFAULT_CATEGORIES = [
   'data_engineering', 'data_science', 'ml_ai', 'ai_engineering', 'security', 'embedded', 'qa',
 ];
 
-export const DEFAULT_POSITIVE = [
-  'software', 'sde', 'developer', 'engineer', 'backend', 'back end', 'back-end', 'frontend',
-  'front end', 'front-end', 'full stack', 'full-stack', 'fullstack', 'devops', 'sre', 'cloud',
-  'platform', 'ai', 'ml', 'machine learning', 'data engineer', 'data scientist', 'mobile',
-  'android', 'ios', 'react', 'node', 'java', 'python', 'golang', 'trainee', 'associate',
-  'programmer', 'member of technical staff', 'mts',
-].map((k) => (k.length <= 3 ? `word:${k}` : k));
-
-export const DEFAULT_NEGATIVE = [
-  'sales', 'marketing', 'business development', 'hr ', 'human resource', 'recruit',
-  'content writer', 'graphic', 'seo', 'telecaller', 'customer', 'accountant', 'finance',
-  'teacher', 'civil', 'mechanical', 'electrical engineer', 'senior', 'sr.', 'lead ',
-  'manager', 'head', 'director', 'principal', 'staff engineer',
-  'html/css', 'wordpress', 'data entry', 'support executive', 'bpo',
-  'vp', 'specialist', 'architect', 'consultant', 'volunteer', 'freelance', 'part time', 'part-time',
-  'walk-in', 'teaching', 'tender', 'backend executive', 'back end executive', 'non-voice',
-  'sap ', 'abap', 'servicenow', 'staff ', 'engineer ii', 'engineer iii', 'engineer 2', 'engineer 3',
-  'sde 2', 'sde-2', 'sde 3', 'sde-3',
-].map((k) => (['vp'].includes(k) ? `word:${k}` : k));
+// The title rules live in config/pipeline.yml, shared by every scanner.
+const PIPELINE = requirePipelineConfig();
+export const DEFAULT_POSITIVE = PIPELINE.title_filter.positive;
+export const DEFAULT_NEGATIVE = PIPELINE.title_filter.negative;
 
 // ── Config ──────────────────────────────────────────────────────────────
 
@@ -145,32 +136,7 @@ export function buildQueries({ days, categories, year }) {
   return q;
 }
 
-// ── Batch-year check ────────────────────────────────────────────────────
-
-const YEAR = '(20(?:2[3-9]|3[0-2]))';
-const CONTEXT = '(?:batch|pass(?:ed)?[\\s-]?outs?|passing\\s+out|graduat\\w*|class\\s+of|grads?|joining|b\\.?\\s?tech|be\\b|mca|bca)';
-const NEAR = new RegExp(`${CONTEXT}\\W+(?:\\w+\\W+){0,4}?${YEAR}|${YEAR}\\W+(?:\\w+\\W+){0,3}?${CONTEXT}`, 'gi');
-
-/**
- * Batch years a posting asks for, found only next to batch-like words so a
- * founding year or a copyright line is not read as a requirement.
- */
-export function batchYears(text) {
-  const years = new Set();
-  for (const m of String(text || '').matchAll(NEAR)) {
-    years.add(m[1] || m[2]);
-  }
-  return [...years];
-}
-
-/**
- * Keep when no batch year is named, or the target year is among them.
- * "2025 or 2026 or 2027 batch" is kept; "2025 batch only" is dropped.
- */
-export function yearOk(text, target) {
-  const years = batchYears(text);
-  return years.length === 0 || years.includes(String(target));
-}
+export { batchYears, yearOk };
 
 // ── Fetch ───────────────────────────────────────────────────────────────
 
@@ -230,7 +196,8 @@ export function toOffer(job) {
 async function main(args) {
   const o = loadOverrides();
   const days = Number(flagValue(args, '--days') ?? o.days ?? 2);
-  const year = String(flagValue(args, '--year') ?? o.target_year ?? 2027);
+  const years = flagValue(args, '--year') ? [String(flagValue(args, '--year'))] : PIPELINE.batch_years.map(String);
+  const year = years.join(' or ');
   const maxPages = Number(flagValue(args, '--max-pages') ?? o.max_pages ?? 3);
   const dryRun = hasFlag(args, '--dry-run');
   if (![days, maxPages].every((n) => Number.isInteger(n) && n > 0)) {
@@ -240,10 +207,7 @@ async function main(args) {
 
   const categories = list(o.categories, DEFAULT_CATEGORIES);
   const gate = createAdmissionGate({
-    titleFilter: buildTitleFilter({
-      positive: list(o.positive, DEFAULT_POSITIVE),
-      negative: list(o.negative, DEFAULT_NEGATIVE),
-    }),
+    titleFilter: buildTitleFilter(PIPELINE.title_filter),
     // The API already limited the country; city names alone would fail the
     // portals.yml location list for remote or multi-city rows.
     locationFilter: () => true,
@@ -274,13 +238,18 @@ async function main(args) {
   }
 
   let yearDropped = 0;
+  const rejected = createRejectedLog(join(DATA_ROOT, 'data', 'rejected.tsv'), { days: PIPELINE.rejected_log_days ?? 30 });
   const offers = [];
   for (const job of bySlug.values()) {
     const offer = toOffer(job);
     if (!offer.url || !offer.title) continue;
     const text = `${job.title}\n${String(job.description || '').slice(0, 4000)}`;
-    if (!yearOk(text, year)) { yearDropped++; continue; }
-    if (gate.check(offer)) continue;
+    if (!yearOk(text, years)) { yearDropped++; rejected.add(offer, 'batch_year'); continue; }
+    const reason = gate.check(offer);
+    if (reason) { if (reason !== 'seen') rejected.add(offer, reason); continue; }
+    const exp = seniorityVerdict(String(job.description || ''), PIPELINE.seniority_guard);
+    if (exp.action === 'drop') { rejected.add(offer, `experience_${exp.years}y`); continue; }
+    if (exp.action === 'flag') addFlag(offer, `asks ${exp.years}+ yrs`);
     offers.push(offer);
   }
 
@@ -299,6 +268,7 @@ async function main(args) {
   const jsonOut = flagValue(args, '--json');
   if (jsonOut) writeFileSync(jsonOut, JSON.stringify(offers));
   if (dryRun) { console.log('\n--dry-run: nothing written.'); return; }
+  rejected.flush();
   if (offers.length > 0) {
     await appendToPipeline(offers);
     await appendToScanHistory(offers, localToday(), 'added');

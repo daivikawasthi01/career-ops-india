@@ -21,7 +21,7 @@ import { spawn } from 'child_process';
 import { existsSync, writeFileSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { appendToPipeline, appendToScanHistory } from './scan.mjs';
+import { appendToPipeline, appendToScanHistory, DATA_ROOT } from './scan.mjs';
 import { buildTitleFilter } from './title-keywords.mjs';
 import { createAdmissionGate, formatSkipCounts } from './lib/admission-gate.mjs';
 import { localToday } from './lib/local-today.mjs';
@@ -29,7 +29,11 @@ import { isMainModule } from './lib/is-main-module.mjs';
 import { printScanSummaryHeader } from './lib/scan-summary-marker.mjs';
 import { validateFlags, flagValue, hasFlag } from './lib/cli-flags.mjs';
 import { progress, fail } from './lib/progress.mjs';
-import { DEFAULT_NEGATIVE } from './scan-freehire.mjs';
+import { requirePipelineConfig } from './lib/pipeline-config.mjs';
+
+import { createRejectedLog } from './lib/rejected-log.mjs';
+
+const PIPELINE = requirePipelineConfig();
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const API = (process.env.INTERNSHALA_API || 'http://localhost:8000').replace(/\/$/, '');
@@ -43,7 +47,7 @@ const USAGE = `Usage:
   node scan-internshala.mjs --max-pages 3      # result pages per category (default 2)
   node scan-internshala.mjs --no-serve         # do not start the local API, expect it on ${API}
   node scan-internshala.mjs --internships-only | --jobs-only
-  node scan-internshala.mjs --include-unpaid   # keep unpaid internships (dropped by default)
+  node scan-internshala.mjs --include-unpaid   # keep unpaid internships (kept and marked [unpaid] by default; set borderline.unpaid: drop in config/pipeline.yml)
 
 Needs the scraper set up once: clone omkarcloud/internshala-scraper next to
 career-ops, create its .venv and pip install -r requirements.txt.
@@ -176,19 +180,21 @@ async function main(args) {
 
     console.log(`Fetching Internshala (${kinds.join(' + ')}), last ${days}d...`);
     const found = [];
-    const includeUnpaid = hasFlag(args, '--include-unpaid');
+    const includeUnpaid = hasFlag(args, '--include-unpaid') || PIPELINE.borderline?.unpaid !== 'drop';
     for (const kind of kinds) found.push(...(await collect(kind, days, maxPages, warn, includeUnpaid)));
 
     const gate = createAdmissionGate({
-      titleFilter: buildTitleFilter({ positive: [], negative: DEFAULT_NEGATIVE }),
+      titleFilter: buildTitleFilter({ positive: [], negative: PIPELINE.title_filter.negative, protect: PIPELINE.title_filter.protect }),
       locationFilter: () => true,
     });
+    const rejected = createRejectedLog(join(DATA_ROOT, 'data', 'rejected.tsv'), { days: PIPELINE.rejected_log_days ?? 30 });
     const seenHere = new Set();
     const offers = [];
     for (const offer of found) {
       if (!offer.url || seenHere.has(offer.url)) continue;
       seenHere.add(offer.url);
-      if (gate.check(offer)) continue;
+      const reason = gate.check(offer);
+      if (reason) { if (reason !== 'seen') rejected.add(offer, reason); continue; }
       offers.push(offer);
     }
 
@@ -202,6 +208,7 @@ async function main(args) {
     if (jsonOut) writeFileSync(jsonOut, JSON.stringify(offers));
 
     if (dryRun) { console.log('\n--dry-run: nothing written.'); return; }
+    rejected.flush();
     if (offers.length > 0) {
       await appendToPipeline(offers);
       await appendToScanHistory(offers, localToday(), 'added');

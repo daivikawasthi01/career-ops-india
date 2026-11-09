@@ -74,6 +74,7 @@ import { workdayDedupKey, stripWorkdayRepostSuffix, isWorkdayJobUrl } from './pr
 import { normalizeCompany, appendLedgerRows, companiesMatchIgnoringCorporateForm, LEGAL_SUFFIXES } from './tracker-utils.mjs';
 import { normalizeCompanyName } from './invite-match.mjs';
 import { withPipelineLock } from './pipeline-lock.mjs';
+import { applyPipelineConfig } from './lib/pipeline-config.mjs';
 import { compileKeyword, compilePositiveKeyword, compileContentKeyword, buildTitleFilter, foldTitle, foldContentText, compileContentTraits } from './title-keywords.mjs';
 import { flagValue, hasFlag, validateFlags } from './lib/cli-flags.mjs';
 import { withPortalHealthLock } from './portal-health-lock.mjs';
@@ -4621,7 +4622,7 @@ async function main() {
     console.error(`Error: failed to parse ${PORTALS_PATH}: ${err.message}`);
     process.exit(1);
   }
-  const config = rawConfig && typeof rawConfig === 'object' ? rawConfig : {};
+  const config = applyPipelineConfig(rawConfig && typeof rawConfig === 'object' ? rawConfig : {});
   const typos = portalTopLevelTypos(config);
   if (typos.length > 0) {
     for (const typo of typos) {

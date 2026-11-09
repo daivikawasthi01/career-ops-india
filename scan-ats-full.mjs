@@ -71,6 +71,7 @@ import paylocity, { boardUrl as paylocityBoardUrl } from './providers/paylocity.
 import join, { parseCompanySitemap } from './providers/join.mjs';
 import { openProviderIdCache, PROVIDER_ID_CACHE_DIR } from './provider-id-cache.mjs';
 import { decodeEntities } from './providers/_html-entities.mjs';
+import { applyPipelineConfig } from './lib/pipeline-config.mjs';
 import { buildTitleFilter, buildTitleFilterOverrides, buildTitleFilterWithOverrides, buildLocationFilter, buildContentFilterOrExit, matchedTitleKeywords, loadSeenUrls, seenJobKey, appendToPipeline, appendToScanHistory, findBlacklistEntry, loadBlacklist, parseSinceDays, BROWSER_PROCESS_ENV, DATA_ROOT as SCAN_DATA_ROOT, PORTALS_PATH, PIPELINE_PATH, SCAN_HISTORY_PATH } from './scan.mjs';
 import { localToday } from './lib/local-today.mjs';
 import { printScanSummaryHeader } from './lib/scan-summary-marker.mjs';
@@ -1282,7 +1283,7 @@ async function main() {
     console.error('Error: portals.yml not found. Run onboarding first — the reverse scan reuses its title_filter/location_filter.');
     process.exit(1);
   }
-  const config = loadYaml(readFileSync(PORTALS_PATH, 'utf-8'));
+  const config = applyPipelineConfig(loadYaml(readFileSync(PORTALS_PATH, 'utf-8')));
   const fullTitleFilterConfig = resolveTitleFilterConfig(config);
   // title_filter_overrides is independent of title_filter_full: it broadens
   // the net for specific companies on top of whichever title filter config

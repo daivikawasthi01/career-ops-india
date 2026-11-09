@@ -31,6 +31,7 @@ import { loadYaml } from './lib/yaml-document.mjs';
 import { loadProviders, resolveProvider } from './providers/_registry.mjs';
 import { makeHttpCtx } from './providers/_http.mjs';
 import { buildTitleFilter, buildLocationFilter } from './scan.mjs';
+import { applyPipelineConfig } from './lib/pipeline-config.mjs';
 import { discoverIsRunning, backupFile, atomicWrite, setEnabledInText } from './lib/portals-edit.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -91,7 +92,7 @@ async function main() {
   if (!process.env.CAREER_OPS_HTTP_TIMEOUT_MS) process.env.CAREER_OPS_HTTP_TIMEOUT_MS = '30000';
 
   const portalsText = readFileSync(PORTALS_PATH, 'utf-8');
-  const config = loadYaml(portalsText) || {};
+  const config = applyPipelineConfig(loadYaml(portalsText) || {});
   const entries = (config.tracked_companies || []).filter((e) => e && typeof e.name === 'string');
   let selected = entries.filter((e) => {
     if (opts.company) return e.name.toLowerCase() === opts.company.toLowerCase();

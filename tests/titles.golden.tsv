@@ -1,0 +1,105 @@
+title	expect	reason
+Software Engineer I	keep	entry level numeral I
+Software Engineer 1	keep	entry level numeral 1
+SDE-1	keep	SDE level 1
+SDE 1	keep	SDE level 1
+SDE I	keep	SDE level I
+Software Development Engineer I	keep	entry level
+Associate Software Engineer	keep	entry level title
+Associate Engineer	keep	entry level title
+Graduate Engineer Trainee	keep	trainee is the fresher title, must not be read as trainer
+Graduate Engineer Trainee - Software	keep	same
+Trainee Software Engineer	keep	fresher title
+Software Engineer Trainee	keep	fresher title
+Associate Trainee Software Engineer	keep	fresher title
+Trainee Engineer - Data Platform	keep	fresher title
+Software Developer (Fresher)	keep	fresher marker
+Python Developer - Fresher	keep	fresher marker
+Java Developer Trainee	keep	java fresher role, the trailing-space Java negative must not drop it
+Junior Software Engineer	keep	junior
+Software Engineer (0-1 years)	keep	stated 0 years
+Backend Developer Intern	keep	software intern
+Frontend Developer Intern	keep	software intern
+Full Stack Developer Intern	keep	software intern
+Software Engineer Intern (Summer 2027)	keep	batch year matches
+Machine Learning Intern	keep	ML intern
+Data Engineer Intern	keep	data intern
+Data Scientist Intern	keep	data intern
+AI Engineer Intern	keep	AI intern
+DevOps Engineer Trainee	keep	devops trainee
+Cloud Engineer Fresher	keep	cloud fresher
+Site Reliability Engineer Intern	keep	SRE intern
+Security Engineer Intern	keep	security intern
+React Developer Intern	keep	framework intern
+Node.js Developer Intern	keep	framework intern
+Golang Developer Intern	keep	language intern
+Salesforce Developer Intern	keep	sales inside Salesforce must not block
+Internal Tools Engineer Intern	keep	Internal is not Intern-the-negative and is not the word internal blocking
+Graphics Engineer Intern	keep	graphics programming is software
+Headless CMS Developer Intern	keep	head inside Headless must not block
+Software Development Engineer in Test (Fresher)	keep	SDET fresher
+QA Trainee	keep	QA trainee in software
+QA Engineer Trainee	keep	QA trainee in software
+Campus Hire 2027	keep	campus hire for the target batch
+Campus Hire - Software Engineer	keep	campus hire no year
+Software Engineer - New Grad	keep	new grad
+Software Engineer, Early Career	keep	early career
+Engineering Intern	keep	engineering intern
+Member of Technical Staff (Fresher)	keep	MTS fresher
+Programmer Analyst Trainee	keep	common fresher title in IT services
+Software Engineer - 2027 Batch	keep	batch year matches
+2027 Batch Software Engineer	keep	batch year matches
+Software Engineer (2026 and 2027 Batch)	keep	target year among several
+Android Developer Intern	keep	mobile is in the freehire categories
+Software Engineer	keep	no level stated, kept and checked by the description guard
+Senior Software Engineer	drop	senior
+Sr. Software Engineer	drop	senior abbreviation
+Sr Software Developer	drop	senior abbreviation
+Software Engineer II	drop	level II
+Software Engineer III	drop	level III
+Software Engineer 2	drop	level 2
+SDE II	drop	level II
+SDE-2	drop	level 2
+SDE 3	drop	level 3
+Developer II	drop	level II
+Staff Software Engineer	drop	staff
+Principal Engineer	drop	principal
+Lead Software Engineer	drop	lead
+Tech Lead	drop	lead
+Engineering Manager	drop	manager
+Software Architect	drop	architect
+Director of Engineering	drop	director
+VP Engineering	drop	VP
+Software Engineer - 2025 Batch	drop	batch year not the target
+2025 Batch Software Engineer	drop	batch year not the target
+Sales Intern	drop	sales
+Sales Executive	drop	sales
+Sales Engineer	drop	sales
+Business Development Intern	drop	business development
+Marketing Intern	drop	marketing
+HR Intern	drop	HR
+Content Writer Intern	drop	content
+Graphic Designer Intern	drop	design
+Data Entry Operator	drop	data entry
+Backend Executive	drop	non-technical backend office role
+Telecaller	drop	telecalling
+Customer Support Associate	drop	support
+Accountant Trainee	drop	accounts
+Finance Intern	drop	finance
+Mechanical Engineer Trainee	drop	non-software engineering
+Civil Engineer	drop	non-software engineering
+Electrical Engineer	drop	non-software engineering
+Technical Trainer	drop	a trainer, not a trainee
+Corporate Trainer	drop	a trainer, not a trainee
+Teacher	drop	teaching
+Recruiter	drop	recruiting
+SAP ABAP Developer	drop	SAP
+ServiceNow Developer	drop	ServiceNow
+Process Associate	drop	operations
+Freelance Developer	drop	freelance
+Part-time Python Tutor	drop	part time
+Consultant - Software	drop	consulting
+Software Engineer 2027 Batch	keep	engineer 2 must not fire inside engineer 2027
+Python 3 Developer Intern	keep	a version number is not a level
+Technical Trainers	drop	plural trainers
+Training Coordinator	drop	training role, no software marker

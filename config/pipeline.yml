@@ -1,0 +1,182 @@
+# config/pipeline.yml: the one place the India entry-level filters live.
+#
+# Every scanner reads this file: scan-freehire, scan-internshala, scan-jobspy,
+# scan.mjs (portals), scan-ats-full. When this file exists, its title_filter
+# REPLACES the title_filter (and title_filter_full) in portals.yml.
+#
+# Matching (see title-keywords.mjs):
+#   plain      substring, so "engineer" also matches "Engineering"
+#   word:x     the whole word only: word:sales does not hit "Salesforce"
+#   stem:x     a word that STARTS with x: stem:senior hits "Seniors", not "Reseniority"
+# Short all-letter keywords (2-3 letters) are always whole-word.
+# Titles are lowercased and accent-folded first.
+
+title_filter:
+  positive:
+    - software
+    - sde
+    - sdet
+    - developer
+    - engineer
+    - programmer
+    - word:backend
+    - back end
+    - back-end
+    - word:frontend
+    - front end
+    - front-end
+    - full stack
+    - full-stack
+    - fullstack
+    - devops
+    - word:sre
+    - word:cloud
+    - word:platform
+    - word:ai
+    - word:ml
+    - machine learning
+    - data scientist
+    - data science
+    - mobile
+    - android
+    - word:ios
+    - react
+    - node
+    - java
+    - python
+    - golang
+    - word:qa
+    - quality assurance
+    - technical staff
+    - word:mts
+    - trainee
+    - associate
+    - fresher
+    - entry level
+    - early career
+    - new grad
+    - campus hire
+    - graduate engineer
+    - word:intern
+    - word:interns
+    - stem:internship
+
+  negative:
+    # Levels above entry. Numerals are whole-word so "Engineer 2027" is not "Engineer 2".
+    - word:senior
+    - word:sr
+    - word:ii
+    - word:iii
+    - word:iv
+    - word:engineer 2
+    - word:engineer 3
+    - word:engineer 4
+    - word:developer 2
+    - word:developer 3
+    - word:developer 4
+    - word:sde 2
+    - word:sde-2
+    - word:sde2
+    - word:sde 3
+    - word:sde-3
+    - word:sde3
+    - word:sde 4
+    - word:lead
+    - word:principal
+    - stem:staff
+    - word:head
+    - stem:director
+    - word:manager
+    - word:vp
+    - word:intermediate
+    - word:architect
+    - stem:consultant
+    - stem:specialist
+    # Other functions. "sales" does not reach "Salesforce"; "trainer" does not reach "trainee".
+    - word:sales
+    - stem:marketing
+    - business development
+    - word:hr
+    - human resource
+    - stem:recruit
+    - content writer
+    - word:writer
+    - word:graphic
+    - word:seo
+    - telecaller
+    - word:customer
+    - accountant
+    - word:finance
+    - stem:teach
+    - stem:trainer
+    - civil
+    - mechanical
+    - electrical engineer
+    - data entry
+    - back office
+    - backend executive
+    - back end executive
+    - back-end executive
+    - support executive
+    - non-voice
+    - word:bpo
+    - word:tender
+    - word:process
+    - service desk
+    - word:facility
+    - business analyst
+    - data analyst
+    - financial analyst
+    - word:documentation
+    - fellowship
+    # Not a fit: part time, volunteer, walk-in, unrelated stacks and hardware.
+    - stem:volunteer
+    - stem:freelance
+    - part time
+    - part-time
+    - walk-in
+    - html/css
+    - wordpress
+    - word:sap
+    - word:abap
+    - servicenow
+    - oracle ebs
+    - mainframe
+    - cobol
+    - word:embedded
+    - firmware
+    - fpga
+    - asic
+    - stem:blockchain
+    - word:web3
+    - stem:crypto
+    - salesforce admin
+
+  # Phrases that must survive the negatives above ("technical staff" is not "staff").
+  protect:
+    - member of technical staff
+
+# Graduation batches you accept. A posting that names a batch year next to
+# batch / passout / graduates must name one of these; postings naming no year stay.
+batch_years: [2027]
+
+# Naukri-style experience ranges ("0-2 Yrs"): keep when the MINIMUM is at most this.
+max_min_experience_years: 0
+
+# ATS boards carry no experience field, so the description is read for phrases like
+# "3+ years of experience". Applies where a description is available.
+#   flag_min_years  keep the posting but add a flag when the stated minimum is >= this
+#   drop_min_years  drop it when the stated minimum is >= this (null = never drop)
+# A description that says "freshers welcome" is never flagged or dropped.
+seniority_guard:
+  enabled: true
+  flag_min_years: 2
+  drop_min_years: 3
+
+# Borderline cases are kept and marked rather than dropped silently.
+#   unpaid: flag keeps unpaid Internshala internships marked [unpaid]; drop removes them.
+borderline:
+  unpaid: flag
+
+# Rejected rows are logged (title, company, source, url, reason) and kept this long.
+rejected_log_days: 30

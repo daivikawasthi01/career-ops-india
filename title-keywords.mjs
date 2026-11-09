@@ -403,6 +403,7 @@ export function buildTitleFilter(titleFilter) {
   // is a different and much easier thing to write as two entries.
   const positive = normalizeKeywords(titleFilter?.positive, compilePositiveKeyword);
   const negative = normalizeKeywords(titleFilter?.negative, compileKeyword);
+  const protect = (Array.isArray(titleFilter?.protect) ? titleFilter.protect : []).map(foldTitle).filter(Boolean);
 
   return (title) => {
     // String(), not `title || ''`: openrouter-runner used String(title ?? '')
@@ -411,11 +412,14 @@ export function buildTitleFilter(titleFilter) {
     // throw onto a path that never had it, where it aborts jobs.filter and
     // drops a whole company's results for one malformed title.
     const lower = foldTitle(title);
+    // `protect` phrases ("member of technical staff") are blanked before the negatives run,
+    // so a veto like `stem:staff` cannot fire inside them. Positives still see the full title.
+    const vetted = protect.length ? protect.reduce((t, p) => t.split(p).join(' '), lower) : lower;
     // An empty positive list is "no positive constraint", not "match nothing":
     // a negative-only title_filter is a legitimate config that rejects a few
     // roles and keeps the rest.
     const hasPositive = positive.length === 0 || positive.some(m => m(lower));
-    const hasNegative = negative.some(m => m(lower));
+    const hasNegative = negative.some(m => m(vetted));
     return hasPositive && !hasNegative;
   };
 }

@@ -25,7 +25,14 @@ import { localToday } from './lib/local-today.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { printScanSummaryHeader } from './lib/scan-summary-marker.mjs';
 import { validateFlags, flagValue, hasFlag } from './lib/cli-flags.mjs';
-import { DEFAULT_NEGATIVE, DEFAULT_POSITIVE, yearOk, cleanUrl } from './scan-freehire.mjs';
+import { yearOk, cleanUrl } from './scan-freehire.mjs';
+import { requirePipelineConfig } from './lib/pipeline-config.mjs';
+import { seniorityVerdict } from './lib/seniority.mjs';
+import { addFlag } from './lib/offer-flags.mjs';
+import { createRejectedLog } from './lib/rejected-log.mjs';
+import { DATA_ROOT } from './scan.mjs';
+
+const PIPELINE = requirePipelineConfig();
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PY = join(HERE, 'tools', '.venv-jobspy', 'bin', 'python');
@@ -43,7 +50,7 @@ One-time setup (Python 3.10 or newer):
   python3.13 -m venv tools/.venv-jobspy && tools/.venv-jobspy/bin/pip install python-jobspy
 
 Flags:
-  --days N, --results N (per search term, default 100), --sites a,b, --year YYYY (default 2027),
+  --days N, --results N (per search term, default 100), --sites a,b, --year YYYY (default: batch_years in config/pipeline.yml),
   --max-years N (default 0), --dry-run, --json PATH, --help, -h
 
 Sites seen working: naukri (can time out), indeed (few India results), linkedin (guest search,
@@ -102,8 +109,8 @@ function runHelper(request) {
 async function main(args) {
   const days = Number(flagValue(args, '--days') ?? 2);
   const results = Number(flagValue(args, '--results') ?? 100);
-  const maxYears = Number(flagValue(args, '--max-years') ?? 0);
-  const year = String(flagValue(args, '--year') ?? 2027);
+  const maxYears = Number(flagValue(args, '--max-years') ?? PIPELINE.max_min_experience_years ?? 0);
+  const years = flagValue(args, '--year') ? [String(flagValue(args, '--year'))] : PIPELINE.batch_years.map(String);
   const sites = String(flagValue(args, '--sites') ?? 'naukri').split(',').map((s) => s.trim()).filter(Boolean);
   const dryRun = hasFlag(args, '--dry-run');
   if (![days, results].every((n) => Number.isInteger(n) && n > 0) || !Number.isInteger(maxYears) || maxYears < 0) {
@@ -124,14 +131,10 @@ async function main(args) {
   });
 
   const gate = createAdmissionGate({
-    titleFilter: buildTitleFilter({
-      positive: DEFAULT_POSITIVE,
-      // Naukri's fresher listings carry a lot of ops and training roles that match "associate" or "ai".
-      negative: [...DEFAULT_NEGATIVE, 'trainer', 'writer', 'documentation', 'process', 'service desk', 'bms ',
-        'facility', 'analyst', 'fellowship', 'process associate'],
-    }),
+    titleFilter: buildTitleFilter(PIPELINE.title_filter),
     locationFilter: () => true,
   });
+  const rejected = createRejectedLog(join(DATA_ROOT, 'data', 'rejected.tsv'), { days: PIPELINE.rejected_log_days ?? 30 });
   let overExperience = 0;
   let unreadableExperience = 0;
   let yearDropped = 0;
@@ -140,11 +143,15 @@ async function main(args) {
     const min = minYears(row.experience_range);
     if (min === null) unreadableExperience++;
     // Unreadable experience is kept: a wrong drop costs a real job, a wrong keep costs one glance.
-    if (min !== null && min > maxYears) { overExperience++; continue; }
-    if (!yearOk(`${row.title}\n${String(row.description || '').slice(0, 4000)}`, year)) { yearDropped++; continue; }
+    if (min !== null && min > maxYears) { overExperience++; rejected.add(toOffer(row), `naukri_min_${min}y`); continue; }
+    if (!yearOk(`${row.title}\n${String(row.description || '').slice(0, 4000)}`, years)) { yearDropped++; rejected.add(toOffer(row), 'batch_year'); continue; }
     const offer = toOffer(row);
     if (!offer.url || !offer.title) continue;
-    if (gate.check(offer)) continue;
+    const reason = gate.check(offer);
+    if (reason) { if (reason !== 'seen') rejected.add(offer, reason); continue; }
+    const exp = seniorityVerdict(String(row.description || ''), PIPELINE.seniority_guard);
+    if (exp.action === 'drop') { rejected.add(offer, `experience_${exp.years}y`); continue; }
+    if (exp.action === 'flag') addFlag(offer, `asks ${exp.years}+ yrs`);
     offers.push(offer);
   }
 
@@ -165,6 +172,7 @@ async function main(args) {
   if (jsonOut) writeFileSync(jsonOut, JSON.stringify(offers));
 
   if (dryRun) { console.log('\n--dry-run: nothing written.'); return; }
+  rejected.flush();
   if (offers.length > 0) {
     await appendToPipeline(offers);
     await appendToScanHistory(offers, localToday(), 'added');
