@@ -249,6 +249,12 @@ export function parseBingRss(xml) {
   }
   return out.slice(0, 8);
 }
+/** Decoy check: does any result mention a word of the company name (from the query)? Bing hands out unrelated pages when it throttles. */
+export function mentionsQueryName(query, rows) {
+  const words = String(query).toLowerCase().replace(/"/g, ' ').split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !/^(careers?|india|sde|jobs?|the|and|group|limited|ltd|inc|corp)$/.test(w));
+  if (!words.length) return true;
+  return rows.some((r) => { const t = `${r.title} ${r.url} ${r.snippet}`.toLowerCase().replace(/[^a-z0-9]+/g, ''); return words.some((w) => t.includes(w)); });
+}
 let rssFailLogged = 0;
 async function rssSearch(query) {
   let why = '';
@@ -257,7 +263,8 @@ async function rssSearch(query) {
       const res = await fetch(`https://www.bing.com/search?q=${encodeURIComponent(query)}&format=rss&setmkt=en-IN&cc=IN`, { signal: AbortSignal.timeout(20000), headers: { 'accept-language': 'en-IN,en;q=0.9' } });
       const text = await res.text();
       const rows = res.ok ? parseBingRss(text) : [];
-      if (rows.length) return rows;
+      if (rows.length && mentionsQueryName(query, rows)) return rows;
+      if (rows.length) { searchStats.decoy = (searchStats.decoy || 0) + 1; await sleep(6000); why = `decoy results (none mention the name): ${rows.slice(0, 2).map((r) => new URL(r.url).hostname).join(', ')}`; continue; }
       why = `HTTP ${res.status}, ${text.length} bytes, ${(text.match(/<item>/g) || []).length} items, starts "${text.replace(/\s+/g, ' ').slice(0, 80)}"`;
     } catch (err) { why = `fetch failed: ${err?.cause?.code || err?.message || err}`; }
     await sleep(2000);
@@ -292,6 +299,7 @@ async function searchResults(context, query, opts = {}) {
         try { const t = new URL(r.href).searchParams.get('uddg'); if (t) url = decodeURIComponent(t); } catch { /* keep */ }
         return { title: r.title.trim(), url, snippet: r.snippet.trim() };
       }).filter((r) => /^https?:/.test(r.url) && !/(duckduckgo|bing)\.com/.test(new URL(r.url).hostname)).slice(0, 8);
+      if (out.length && !mentionsQueryName(query, out)) { reason = 'decoy results'; continue; }
       if (out.length) { out.engine = eng.name; gov.ok(); return out; }
       if (opts.shot && !shot) shot = (await page.screenshot({ type: 'jpeg', quality: 60 }).catch(() => Buffer.alloc(0))).toString('base64');
     } catch (err) {

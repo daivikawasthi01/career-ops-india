@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseBingRss } from '../tools/discover-careers.mjs';
+import { parseBingRss, mentionsQueryName } from '../tools/discover-careers.mjs';
 
 test('parseBingRss keeps result items, drops bing.com links, unescapes text', () => {
   const xml = `<rss><channel><link>https://www.bing.com/search?q=x</link><image><link>https://www.bing.com/</link></image>
@@ -13,3 +13,11 @@ test('parseBingRss keeps result items, drops bing.com links, unescapes text', ()
   assert.equal(r[1].title, 'Lever');
 });
 test('parseBingRss on empty or junk gives []', () => { assert.deepEqual(parseBingRss(''), []); assert.deepEqual(parseBingRss('<html>captcha</html>'), []); });
+
+test('mentionsQueryName spots decoy result sets', () => {
+  const decoy = [{ title: 'zhihu', url: 'https://www.zhihu.com/question/1', snippet: '' }];
+  const real = [{ title: 'Jobs', url: 'https://jobs.exxonmobil.com/', snippet: '' }];
+  assert.equal(mentionsQueryName('"Halliburton" careers', decoy), false);
+  assert.equal(mentionsQueryName('"ExxonMobil" careers', real), true);
+  assert.equal(mentionsQueryName('"Hero MotoCorp" careers india', [{ title: 'x', url: 'https://www.heromotocorp.com/', snippet: '' }]), true);
+});
