@@ -36,6 +36,7 @@ import { TokenAccumulator, formatBreakdown, normalizeOpenAIUsage } from './utils
 import { buildBudgetedPrompt } from './lib/context-budget.mjs';
 import { assertLlmRequestAllowed } from './lib/llm-outbound.mjs';
 import { installPiiInterceptor } from './lib/pii-interceptor.mjs';
+import { jobTextPromptBlock } from './lib/untrusted-jd.mjs';
 import {
   isPostingUrl, normalizedTrackerScore, parseScoreSummary, slugifyCompany, tsvSafe,
 } from './lib/tracker-addition.mjs';
@@ -325,7 +326,7 @@ try {
     model:    modelName,
     messages: [
       { role: 'system', content: systemPrompt },
-      { role: 'user',   content: `JOB DESCRIPTION TO EVALUATE:\n\n${jdText}` },
+      { role: 'user',   content: `JOB DESCRIPTION TO EVALUATE:\n\n${jobTextPromptBlock(jdText)}` },
     ],
     // stream:true so response headers arrive with the FIRST token. With stream:false
     // Ollama sends nothing until the whole report is generated, and Node's undici client

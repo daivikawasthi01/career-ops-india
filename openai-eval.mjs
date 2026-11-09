@@ -43,6 +43,7 @@ import { buildBudgetedPrompt } from './lib/context-budget.mjs';
 import { endpointHeaders } from './lib/endpoint-headers.mjs';
 import { assertLlmRequestAllowed } from './lib/llm-outbound.mjs';
 import { installPiiInterceptor } from './lib/pii-interceptor.mjs';
+import { jobTextPromptBlock } from './lib/untrusted-jd.mjs';
 import {
   isPostingUrl, normalizedTrackerScore, parseScoreSummary, slugifyCompany, tsvSafe,
 } from './lib/tracker-addition.mjs';
@@ -390,7 +391,7 @@ try {
       model:    modelName,
       messages: [
         buildSystemMessage(systemPrompt, endpointHost),
-        { role: 'user', content: `JOB DESCRIPTION TO EVALUATE:\n\n${jdText}` },
+        { role: 'user', content: `JOB DESCRIPTION TO EVALUATE:\n\n${jobTextPromptBlock(jdText)}` },
       ],
       stream:      true,
       ...(withUsage && { stream_options: { include_usage: true } }),

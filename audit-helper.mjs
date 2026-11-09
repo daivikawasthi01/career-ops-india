@@ -32,9 +32,15 @@ function tracked() {
     .map((e) => ({ name: e.name, url: e.careers_url || e.api || '' }));
 }
 
+const USAGE = `usage: audit-helper.mjs explain "<title>" | tracked
+  explain "<title>"   which title rule blocks it (config/pipeline.yml), as JSON
+  tracked             names and board URLs of enabled tracked_companies, as JSON
+  --help, -h          print this and exit`;
+
 if (isMainModule(import.meta.url)) {
   const [cmd, arg] = process.argv.slice(2);
-  if (cmd === 'explain') console.log(JSON.stringify(explainTitle(arg || '', requirePipelineConfig().title_filter)));
+  if (cmd === '--help' || cmd === '-h') console.log(USAGE);
+  else if (cmd === 'explain') console.log(JSON.stringify(explainTitle(arg || '', requirePipelineConfig().title_filter)));
   else if (cmd === 'tracked') console.log(JSON.stringify(tracked()));
-  else { console.error('usage: audit-helper.mjs explain "<title>" | tracked'); process.exit(1); }
+  else { console.error(USAGE); process.exit(1); }
 }

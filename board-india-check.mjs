@@ -83,10 +83,20 @@ function parseArgs(argv) {
   };
 }
 
+const USAGE = `usage: board-india-check.mjs (--source NAME | --company NAME | --disabled | --all) [--apply]
+  --source NAME     boards tagged with that source (for example jobradar)
+  --company NAME    one board
+  --disabled | --all  other selections
+  --apply           write portals.yml (backup first); without it this is a preview
+  --limit N  --concurrency N (default 6)  --force
+  --help, -h        print this and exit (fetches nothing, writes nothing)`;
+
 async function main() {
-  const opts = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  if (argv.includes('--help') || argv.includes('-h')) { console.log(USAGE); return; }
+  const opts = parseArgs(argv);
   if (!(opts.all || opts.disabled || opts.source || opts.company)) {
-    console.error('Pick a selection: --source jobradar | --company NAME | --disabled | --all');
+    console.error('Pick a selection: --source jobradar | --company NAME | --disabled | --all\n(see --help)');
     process.exit(1);
   }
   if (!existsSync(PORTALS_PATH)) { console.error(`Error: ${PORTALS_PATH} not found.`); process.exit(1); }

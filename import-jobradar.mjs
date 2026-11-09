@@ -121,8 +121,16 @@ export function renderTagged(match, { enabled = false } = {}) {
   return renderPortalEntry(match).replace('    enabled: true\n', `    enabled: ${enabled}\n    source: jobradar\n`);
 }
 
+const USAGE = `usage: import-jobradar.mjs [--list] [--write] [--enabled] [--csv PATH] [--force]
+  (no flags)   preview: counts only, writes nothing
+  --list       preview plus every entry that would be added
+  --write      back up portals.yml, then add the new entries (disabled unless --enabled)
+  --csv PATH   companies.csv to read (default: the sibling jobradar project)
+  --help, -h   print this and exit (reads nothing, writes nothing)`;
+
 function main() {
   const args = process.argv.slice(2);
+  if (args.includes('--help') || args.includes('-h')) { console.log(USAGE); return; }
   const write = args.includes('--write');
   const list = args.includes('--list');
   const force = args.includes('--force');

@@ -84,6 +84,7 @@ import { withJdArchiveSection } from './lib/jd-archive-section.mjs';
 import { TSV_ADDITION_HEADER } from './tracker-parse.mjs';
 import { assertGoogleRequestAllowed } from './lib/llm-outbound.mjs';
 import { installPiiInterceptor } from './lib/pii-interceptor.mjs';
+import { jobTextPromptBlock } from './lib/untrusted-jd.mjs';
 
 // The Google Generative AI SDK calls global fetch directly, so this ambient
 // install is what covers its requests with no SDK-specific code. The explicit
@@ -521,7 +522,7 @@ try {
   // payload and the transmitted one are the same request. The SDK issues its own
   // global fetch, so the ambient interceptor is the backstop for anything this
   // reconstruction misses.
-  const userTurn = `JOB DESCRIPTION TO EVALUATE:\n\n${jdText}`;
+  const userTurn = `JOB DESCRIPTION TO EVALUATE:\n\n${jobTextPromptBlock(jdText)}`;
   assertGoogleRequestAllowed({
     systemInstruction: systemPrompt,
     turns: [userTurn],

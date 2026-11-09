@@ -26,6 +26,7 @@ import { readLockedSections } from './theme-style.mjs';
 import { redactIfEnabled, restoreIfEnabled } from './utils/privacy-filter.mjs';
 import { assertLlmRequestAllowed } from './lib/llm-outbound.mjs';
 import { installPiiInterceptor } from './lib/pii-interceptor.mjs';
+import { jobTextPromptBlock } from './lib/untrusted-jd.mjs';
 
 // Ambient guard over global fetch (idempotent); the explicit gate below is the
 // primary layer.
@@ -284,7 +285,7 @@ try {
     model:    modelName,
     messages: [
       buildSystemMessage(systemPrompt, endpointHost),
-      { role: 'user',   content: `EVALUATION REPORT:\n\n${reportText}\n\nJOB DESCRIPTION:\n\n${jdText}\n\nNow, generate and output the fully filled HTML CV matching the rules above. Output ONLY raw HTML.` },
+      { role: 'user',   content: `EVALUATION REPORT:\n\n${reportText}\n\nJOB DESCRIPTION:\n\n${jobTextPromptBlock(jdText)}\n\nNow, generate and output the fully filled HTML CV matching the rules above. Output ONLY raw HTML.` },
     ],
     stream:      false,
     temperature: 0.2,

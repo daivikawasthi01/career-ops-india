@@ -49,6 +49,7 @@ import { HYDRATING_CODES, extractApplyControls, postingIdentity } from './livene
 import { installPiiInterceptor } from './lib/pii-interceptor.mjs';
 import { assertLlmRequestAllowed } from './lib/llm-outbound.mjs';
 import { browserLaunchOptions } from './lib/browser-launch.mjs';
+import { jobTextPromptBlock } from './lib/untrusted-jd.mjs';
 
 // Ambient privacy guard over global fetch. Installed explicitly here (rather
 // than relying on NODE_OPTIONS) so the OpenRouter path is guarded in a plain
@@ -1091,7 +1092,7 @@ async function cmdEvaluate(input, ctx) {
 
   let resultObj;
   try {
-    resultObj = await callOpenRouter(systemPrompt, `Evaluate this job listing:\n\n${jdText}`);
+    resultObj = await callOpenRouter(systemPrompt, `Evaluate this job listing:\n\n${jobTextPromptBlock(jdText)}`);
   } catch (e) {
     if (e.name === 'QuotaExhaustedError' || e instanceof QuotaExhaustedError) {
       throw e;
