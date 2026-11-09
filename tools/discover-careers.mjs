@@ -21,6 +21,7 @@ import { isMainModule } from '../lib/is-main-module.mjs';
 import { existsSync, readFileSync, appendFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync } from 'fs';
 import { dirname, join } from 'path';
 import { getCareerOpsRoot } from '../path-resolver.mjs';
+import { execFileSync } from 'child_process';
 import { loadYaml } from '../lib/yaml-document.mjs';
 import { browserLaunchOptions } from '../lib/browser-launch.mjs';
 import {
@@ -32,7 +33,7 @@ import {
   registrable, sameSite, isAggregator, checkDomain, checkL1, quoteInEvidence, compareAts, boardFingerprint, fingerprintFit, gate, queryPair, redact, unwrapBingUrl, SearchGovernor,
 } from '../lib/careers-pipeline.mjs';
 
-const USAGE = `usage: discover-careers.mjs [--llm] [--limit N] [--only NAME,NAME] [--first FILE] [--list] [--slice1] [--workers N] [--search-lanes N] [--all] [--companies FILE] [--golden FILE] [--out PATH]
+const USAGE = `usage: discover-careers.mjs [--llm] [--limit N] [--only NAME,NAME] [--first FILE] [--list] [--slice1] [--workers N] [--search-lanes N] [--no-headed] [--all] [--companies FILE] [--golden FILE] [--out PATH]
   Layered pipeline (see the header of this file). Output: data/careers-discovery.tsv (append-only; rerun to resume).
   Inputs: config/protected-boards.txt, portals.yml entries with watch: true, data/check-by-hand.txt.
   --llm          run the Groq layers (L1 domain, L4 verifier); GROQ_API_KEY in .env, models GROQ_MODEL / GROQ_FALLBACK_MODEL
@@ -130,7 +131,28 @@ const LANES = Math.max(1, Number(arg('--search-lanes')) || 3);
 const gov = new SearchGovernor({ lanes: LANES });
 const lanes = Array.from({ length: LANES }, () => ({ chain: Promise.resolve(), last: 0 }));
 let laneTurn = 0;
+let solving = null; // a promise while a human is solving a captcha
+let sessionContext = null; // the headless context, set in main
+const notify = (msg) => { try { if (process.platform === 'darwin') execFileSync('osascript', ['-e', `display notification ${JSON.stringify(msg)} with title "Careers discovery"`]); } catch { /* no notification */ } };
+/** Step 2: a visible browser window; the person solves the captcha; the cookies move to the headless session. */
+async function solveByHand() {
+  const { chromium: pw } = await import('playwright');
+  notify('Search captcha: solve it in the Chrome window (waiting up to 10 minutes)');
+  console.error('[search] opening a visible browser: solve the captcha there (waiting up to 10 minutes)');
+  const b = await pw.launch({ headless: false });
+  try {
+    const ctx = await b.newContext(); const page = await ctx.newPage();
+    await page.goto('https://www.bing.com/search?q=careers', { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT }).catch(() => {});
+    for (let i = 0; i < 200; i++) {
+      const n = await page.evaluate(() => document.querySelectorAll('li.b_algo').length).catch(() => 0);
+      if (n > 0) { await sessionContext.addCookies(await ctx.cookies()); return true; }
+      await sleep(3000);
+    }
+    return false;
+  } finally { await b.close().catch(() => {}); }
+}
 const searchTurn = async () => {
+  if (solving) await solving;
   const pause = gov.pauseMs();
   if (pause) await sleep(pause);
   const lane = lanes[laneTurn++ % gov.active];
@@ -163,6 +185,11 @@ async function searchResults(context, query) {
   }
   searchStats.empty++;
   gov.blocked();
+  if (gov.blocksInRow === 1) await context.clearCookies().catch(() => {}); // step 1: a fresh session
+  else if (!solving && !has('--no-headed')) { // step 2: a person solves it
+    solving = solveByHand().finally(() => { solving = null; });
+    if (await solving) { gov.reset(); console.error('[search] captcha solved by hand; carrying on gently'); }
+  }
   console.error(`[search] blocked or empty: ${gov.active}/${gov.maxLanes} lanes, +${gov.extraMs} ms spacing, pause ${Math.round(gov.pauseMs() / 1000)} s (${gov.blocksInRow} in a row)`);
   if (gov.shouldHalt()) throw new Halt(2, `search engines returned nothing ${gov.blocksInRow} times in a row, even after cooling down`);
   const none = []; none.engine = 'none';
@@ -421,7 +448,7 @@ async function main() {
 
   const { chromium } = await import('playwright');
   mkdirSync(PROFILE_DIR, { recursive: true });
-  const context = await chromium.launchPersistentContext(PROFILE_DIR, browserLaunchOptions({ headless: true, viewport: { width: 1280, height: 900 } }));
+  const context = sessionContext = await chromium.launchPersistentContext(PROFILE_DIR, browserLaunchOptions({ headless: true, viewport: { width: 1280, height: 900 } }));
   await context.route('**/*', (route) => (['image', 'font', 'media'].includes(route.request().resourceType()) ? route.abort() : route.continue()));
   const overrides = loadDomainOverrides();
   const status = { state: 'running', started_at: new Date().toISOString(), total, done: done.size, accepted: 0, queued: 0, current: null, seconds_per_company: [], first10: null, halt_reason: null };

@@ -381,3 +381,16 @@ test('search governor: blocks halve lanes and pause, good searches recover slowl
   g.blocked(); g.blocked(); g.blocked();
   assert.equal(g.shouldHalt(), true);
 });
+
+test('search governor: after a person clears a captcha the block is forgotten and pacing restarts gently', async () => {
+  const { SearchGovernor } = await import('../lib/careers-pipeline.mjs');
+  let t = 0;
+  const g = new SearchGovernor({ lanes: 3, now: () => t });
+  g.blocked(); g.blocked(); g.blocked();
+  g.reset();
+  assert.equal(g.blocksInRow, 0);
+  assert.equal(g.pauseMs(), 0);
+  assert.equal(g.active, 1);
+  assert.ok(g.extraMs <= 2000);
+  assert.equal(g.shouldHalt(), false);
+});
