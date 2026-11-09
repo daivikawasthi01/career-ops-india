@@ -282,7 +282,9 @@ async function searchResults(context, query, opts = {}) {
   const rss = await rssSearch(query);
   if (rss.length) { rss.engine = 'bing-rss'; gov.ok(); return rss; }
   // Bing answered, but with pages that are not about this company (this query only). Not a block: no pause, the next query variant tries again.
-  if (rss.decoy) reason = 'decoy results'; // not a block by itself: the browser pages get a try below
+  // Bing answered with pages that are not about this company (this query only). Its browser page is hollow in that mood and every hollow page
+  // slows all searches, so do not open it: no pause, the next query variant or a guessed domain tries again.
+  if (rss.decoy) { const none = []; none.engine = 'decoy'; return none; }
   if (++searchesInSession > 40) await freshSearchSession();
   const sc = await searchCtx(context);
   for (const eng of ENGINES) {
