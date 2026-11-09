@@ -18,7 +18,7 @@
  */
 
 import { spawn } from 'child_process';
-import { existsSync, writeFileSync } from 'fs';
+import { existsSync, writeFileSync, readFileSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { appendToPipeline, appendToScanHistory, DATA_ROOT } from './scan.mjs';
@@ -32,6 +32,10 @@ import { progress, fail } from './lib/progress.mjs';
 import { requirePipelineConfig } from './lib/pipeline-config.mjs';
 
 import { createRejectedLog } from './lib/rejected-log.mjs';
+import { scamFlags } from './lib/scam-flags.mjs';
+import { addFlag } from './lib/offer-flags.mjs';
+import { writeStats } from './lib/json-out.mjs';
+import { isLoopback, portFree, onShutdown, gitHead } from './lib/local-service.mjs';
 
 const PIPELINE = requirePipelineConfig();
 
@@ -73,15 +77,45 @@ async function apiUp() {
   }
 }
 
+/** A real request, not just "something answers": one category page must come back as JSON with a list. */
+export async function apiHealthy() {
+  try {
+    const res = await fetch(`${API}/internships/search?category=${encodeURIComponent('Software Development')}&page=1`, { signal: AbortSignal.timeout(45_000) });
+    const body = await res.json();
+    return res.ok && Array.isArray(body.internships);
+  } catch {
+    return false;
+  }
+}
+
+/** The scraper clone must still be at the commit we reviewed (tools/internshala-pin.txt). */
+function checkPin() {
+  const pinFile = join(HERE, 'tools', 'internshala-pin.txt');
+  if (!existsSync(pinFile) || process.env.INTERNSHALA_ALLOW_UNPINNED === '1') return;
+  const want = readFileSync(pinFile, 'utf-8').trim();
+  const have = gitHead(SCRAPER_DIR);
+  if (have && want && have !== want) {
+    throw new Error(`internshala-scraper is at ${have.slice(0, 10)} but ${want.slice(0, 10)} was reviewed. Review the change, update tools/internshala-pin.txt, or set INTERNSHALA_ALLOW_UNPINNED=1.`);
+  }
+}
+
 async function startApi() {
   const py = join(SCRAPER_DIR, '.venv', 'bin', 'python');
+  const wrapper = join(HERE, 'tools', 'internshala_serve.py');
   if (!existsSync(py) || !existsSync(join(SCRAPER_DIR, 'run.py'))) {
     throw new Error(`internshala-scraper not set up at ${SCRAPER_DIR} (need .venv and run.py). See --help.`);
   }
+  if (!isLoopback(API)) throw new Error(`INTERNSHALA_API ${API} is not a local address; refusing to start a scraper for it.`);
+  checkPin();
   const port = new URL(API).port || '8000';
-  const child = spawn(py, ['run.py'], { cwd: SCRAPER_DIR, env: { ...process.env, PORT: port }, stdio: 'ignore' });
+  if (!(await portFree(Number(port)))) {
+    throw new Error(`port ${port} is in use by something that does not answer as the scraper. Free it or set INTERNSHALA_API to another port.`);
+  }
+  // The wrapper listens on 127.0.0.1 only; upstream run.py listens on 0.0.0.0.
+  const child = spawn(py, [wrapper], { cwd: SCRAPER_DIR, env: { ...process.env, PORT: port }, stdio: 'ignore' });
   for (let i = 0; i < 30; i++) {
     if (await apiUp()) return child;
+    if (child.exitCode !== null) throw new Error(`internshala-scraper exited with ${child.exitCode} while starting`);
     await new Promise((r) => setTimeout(r, 500));
   }
   child.kill();
@@ -168,8 +202,14 @@ async function main(args) {
   let child = null;
   if (!(await apiUp())) {
     if (hasFlag(args, '--no-serve')) throw new Error(`Nothing answering on ${API}`);
-    console.log('Starting local internshala-scraper...');
+    console.log('Starting local internshala-scraper (127.0.0.1 only)...');
     child = await startApi();
+  }
+  // Stops the scraper on normal exit, Ctrl-C, SIGTERM and crashes.
+  const stopHooks = onShutdown(() => { if (child && child.exitCode === null) child.kill(); });
+  if (!(await apiHealthy())) {
+    stopHooks();
+    throw new Error('internshala-scraper answered but a test search failed; not scanning. Check it by hand.');
   }
 
   try {
@@ -195,6 +235,7 @@ async function main(args) {
       seenHere.add(offer.url);
       const reason = gate.check(offer);
       if (reason) { if (reason !== 'seen') rejected.add(offer, reason); continue; }
+      for (const why of scamFlags(offer, '', PIPELINE.scam)) addFlag(offer, why);
       offers.push(offer);
     }
 
@@ -206,6 +247,7 @@ async function main(args) {
     for (const o of offers) console.log(`  + ${o.company || '?'} | ${o.title} | ${o.location} | ${o.source}`);
     const jsonOut = flagValue(args, '--json');
     if (jsonOut) writeFileSync(jsonOut, JSON.stringify(offers));
+    writeStats(jsonOut, { fetched: seenHere.size, kept: offers.length, errors: process.exitCode ? 1 : 0 });
 
     if (dryRun) { console.log('\n--dry-run: nothing written.'); return; }
     rejected.flush();
@@ -215,7 +257,7 @@ async function main(args) {
       console.log(`\n${offers.length} offers added to the pipeline.`);
     }
   } finally {
-    if (child) child.kill();
+    stopHooks();
   }
 }
 

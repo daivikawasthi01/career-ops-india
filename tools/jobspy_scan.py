@@ -17,6 +17,7 @@ final pass after "final_pass_wait" seconds. When MINE_PROGRESS=1 it also prints 
 """
 import json
 import os
+import random
 import sys
 import threading
 import time
@@ -80,10 +81,29 @@ def attempt(site, term, req, timeout):
     return df, None
 
 
+SPENT = {}  # scrape calls made per site this run, retries included
+
+
+def budget_left(site, req):
+    cap = (req.get("budget") or {}).get(site)
+    return cap is None or SPENT.get(site, 0) < cap
+
+
+def jitter(site, req):
+    """A random pause before every call to a site that has a jitter range, so calls are not evenly spaced."""
+    lo_hi = (req.get("jitter") or {}).get(site)
+    if lo_hi and SPENT.get(site, 0) > 0:
+        time.sleep(random.uniform(lo_hi[0], lo_hi[1]))
+
+
 def scrape_with_retries(site, term, req, timeout, retries, backoff):
     label = f"{site}: {term}"
     err = None
     for n in range(retries + 1):
+        if not budget_left(site, req):
+            return None, "BUDGET"
+        jitter(site, req)
+        SPENT[site] = SPENT.get(site, 0) + 1
         df, err = attempt(site, term, req, timeout)
         if df is not None:
             return df, None
@@ -122,9 +142,12 @@ def main():
     breaker = req.get("breaker", 5)
     final_wait = req.get("final_pass_wait", 180)
 
+    rotate = int(req.get("rotate", 0)) % max(len(terms), 1)
+    terms = terms[rotate:] + terms[:rotate]  # start where the last budget-limited run stopped
     plan = [(site, term) for term in terms for site in sites if terms.index(term) < caps.get(site, len(terms))]
     total = len(plan)
     errors, seen = {}, set()
+    term_fetched, budget_skipped = {}, []
     streak = {s: 0 for s in sites}
     tripped, deferred = set(), []
     done = 0
@@ -136,12 +159,17 @@ def main():
         started = time.time()
         df, err = scrape_with_retries(site, term, req, timeout, tries, backoff)
         done += 1
+        if df is None and err == "BUDGET":
+            budget_skipped.append([site, term])
+            emit("SKIP", label, f"{site} request budget used up for this run")
+            return True
         if df is None:
             errors[label] = err
             emit("FAIL", label, err)
             emit("PROGRESS", f"{done}/{total}", f"{label} -> failed in {time.time() - started:.0f}s")
             return False
         errors.pop(label, None)
+        term_fetched[f"{site}|{term}"] = len(df)
         added = write_rows(df, term, seen)
         emit("PROGRESS", f"{done}/{total}", f"{label} -> {added} new in {time.time() - started:.0f}s")
         return True
@@ -178,6 +206,7 @@ def main():
                 if final_streak[site] >= 2:
                     alive.discard(site)
 
+    print(json.dumps({"_terms": term_fetched, "_budget_skipped": budget_skipped, "_spent": SPENT}), flush=True)
     if errors:
         print(json.dumps({"_errors": errors}), flush=True)
     sys.stdout.flush()

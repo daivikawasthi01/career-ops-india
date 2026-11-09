@@ -29,6 +29,10 @@ from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import dedup  # noqa: E402
+from canonical import canonical_url  # noqa: E402
+import health  # noqa: E402
+import pipeline_cfg  # noqa: E402
+import store  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "output"
@@ -119,14 +123,15 @@ def receipt_coverage(receipt):
     return None if scanned <= 0 else max(0.0, min(1.0, 1 - unreachable / scanned))
 
 
-def build_steps(args):
+def build_steps(args, windows=None):
     flags = ["--dry-run"] if args.dry_run else []
+    w = {k: (windows or {}).get(k, args.days or 3) for k in ("freehire", "internshala", "jobspy", "portals")}
     steps = [
-        {"id": "freehire", "file": "scan-freehire.mjs", "args": ["--days", str(args.days), "--max-pages", str(args.freehire_pages), *flags]},
-        {"id": "internshala", "file": "scan-internshala.mjs", "args": ["--days", str(args.days + 1), "--max-pages", str(args.internshala_pages), *flags]},
-        {"id": "jobspy", "file": "scan-jobspy.mjs", "args": ["--days", str(args.days), "--sites", args.sites, *flags]},
+        {"id": "freehire", "file": "scan-freehire.mjs", "args": ["--days", str(w["freehire"]), "--max-pages", str(args.freehire_pages), *flags]},
+        {"id": "internshala", "file": "scan-internshala.mjs", "args": ["--days", str(w["internshala"] + 1), "--max-pages", str(args.internshala_pages), *flags]},
+        {"id": "jobspy", "file": "scan-jobspy.mjs", "args": ["--days", str(w["jobspy"]), "--sites", args.sites, *flags]},
         # scan.mjs and scan-ats-full.mjs take a bare --json (receipt on stdout, no file path)
-        {"id": "portals", "file": "scan.mjs", "bare_json": True, "args": ["--since", str(args.days), *flags]},
+        {"id": "portals", "file": "scan.mjs", "bare_json": True, "args": ["--since", str(w["portals"]), *flags]},
         {"id": "ats", "file": "scan-ats-full.mjs", "bare_json": True,
          "args": ["--since", str(args.ats_days), "--ats", args.ats_sources, *(["--limit", str(args.ats_limit)] if args.ats_limit else []), *flags]},
     ]
@@ -183,15 +188,31 @@ def dedup_report(per_step, path, sample=30):
     return stats, len(merged)
 
 
-def write_excel(path, per_step, runs, failures, started):
+def db_rows(conn, run_id):
+    """Jobs seen in this run, read back from the database (what the final workbook is generated from)."""
+    out = []
+    for r in conn.execute("SELECT * FROM jobs WHERE last_run_id=? ORDER BY company, title", (run_id,)):
+        d = dict(r)
+        d["found_by"] = json.loads(d["found_by"] or "[]")
+        d["is_new"] = d["first_run_id"] == run_id
+        d["site"] = site_of(d)
+        d["source"] = ""
+        out.append(d)
+    return out
+
+
+def write_excel(path, rows, runs, failures, started):
     wb = Workbook()
     ws = wb.active
     ws.title = "Offers"
-    ws.append(["Company", "Title", "Location", "Site", "Source", "Found by", "Link", "Confidence"])
-    for o in sorted(merge(per_step), key=lambda x: (x["site"], str(x.get("company") or ""))):
-        ws.append([o.get("company") or "", o.get("title") or "", o.get("location") or "",
-                   o["site"], o.get("source") or "", ", ".join(o["found_by"]), o.get("url") or "", o.get("confidence") or ""])
-        cell = ws.cell(row=ws.max_row, column=7)  # Link
+    ws.append(["Company", "Title", "Location", "Site", "Found by", "Link", "Confidence", "Flags", "Status", "New"])
+    for o in sorted(rows, key=lambda x: (x.get("site", ""), str(x.get("company") or ""))):
+        flags = o.get("flags") or ""
+        ws.append([o.get("company") or "", o.get("title") or "", o.get("location") or "", o.get("site", ""),
+                   ", ".join(o.get("found_by") or []), o.get("url") or "", o.get("confidence") or "",
+                   "; ".join(flags) if isinstance(flags, list) else flags, o.get("status") or "new",
+                   "yes" if o.get("is_new", True) else ""])
+        cell = ws.cell(row=ws.max_row, column=6)  # Link
         if cell.value:
             cell.hyperlink = cell.value
             cell.font = Font(color="0563C1", underline="single")
@@ -199,16 +220,19 @@ def write_excel(path, per_step, runs, failures, started):
     ws.auto_filter.ref = ws.dimensions
 
     wr = wb.create_sheet("Runs")
-    wr.append(["Step", "Status", "Seconds", "New offers", "Note"])
+    wr.append(["Step", "Status", "Health", "Seconds", "Fetched", "Kept", "New", "Duplicates", "Errors", "Window days", "Note"])
     for r in runs:
-        wr.append([r["id"], r["status"], r["secs"], r["count"], r["note"]])
+        wr.append([r["id"], r["status"], r.get("health", ""), r["secs"], r.get("fetched", ""), r.get("kept", r["count"]),
+                   r.get("new", ""), r.get("duplicates", ""), r.get("errors", ""), r.get("window_days", ""),
+                   "; ".join(x for x in (r["note"], r.get("health_note", "")) if x)])
 
     wf = wb.create_sheet("Failures")
-    wf.append(["Step", "Kind", "What", "Message"])
+    wf.append(["Step", "Kind", "Class", "What", "Message"])
     for f in failures:
-        wf.append([f["step"], f["kind"], f["label"], f["message"]])
+        wf.append([f["step"], f["kind"], f.get("class") or health.classify_failure(f["message"]), f["label"], f["message"]])
 
-    for sheet, widths in ((ws, (28, 50, 28, 12, 18, 16, 60)), (wr, (14, 10, 10, 12, 60)), (wf, (14, 10, 40, 90))):
+    for sheet, widths in ((ws, (28, 50, 28, 12, 22, 60, 18, 28, 12, 6)), (wr, (14, 10, 10, 9, 9, 7, 7, 11, 8, 12, 60)),
+                          (wf, (14, 8, 14, 40, 90))):
         for i, w in enumerate(widths):
             sheet.column_dimensions[chr(65 + i)].width = w
         for c in sheet[1]:
@@ -243,6 +267,18 @@ def parse_bare_line(step_id, line, bar):
             bar.total, bar.n = int(t.group(2)), min(int(t.group(1)), int(t.group(2)))
             bar.refresh()
     return None
+
+
+def receipt_fetched(step_id, receipt, stats, kept):
+    """How many postings the scanner read before its own filters. Each scanner reports this differently."""
+    if stats.get("fetched") is not None:
+        return stats["fetched"]
+    r = receipt or {}
+    if step_id == "portals" and r.get("found") is not None:
+        return r["found"]
+    if step_id == "ats" and "postingsKept" in r:
+        return sum(int(r.get(k) or 0) for k in ("postingsKept", "postingsDroppedNoDate", "postingsDroppedContent", "postingsFilteredBlacklist"))
+    return kept
 
 
 def run_step(step, log, failures, position):
@@ -296,6 +332,13 @@ def run_step(step, log, failures, position):
             offers_ok = False
     else:
         offers_ok = False
+    stats = {}
+    stats_path = Path(str(json_path) + ".stats.json")
+    if stats_path.exists():
+        try:
+            stats = json.loads(stats_path.read_text())
+        except json.JSONDecodeError:
+            pass
     shutil.rmtree(json_path.parent, ignore_errors=True)
     board_errors = (receipt or {}).get("errors") or []
     for e in board_errors:
@@ -317,12 +360,14 @@ def run_step(step, log, failures, position):
     coverage = receipt_coverage(receipt) if step.get("bare_json") and step["id"] == "ats" else None
     if coverage is not None:
         note = (note + "; " if note else "") + f"{coverage:.0%} of boards read"
-    return offers, {"id": step["id"], "status": status, "secs": secs, "count": len(offers), "note": note, "coverage": coverage}
+    fetched = receipt_fetched(step["id"], receipt, stats, len(offers))
+    return offers, {"id": step["id"], "status": status, "secs": secs, "count": len(offers), "note": note, "coverage": coverage,
+                    "fetched": fetched, "kept": len(offers), "errors": fails, "stats": stats}
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--days", type=int, default=3)
+    ap.add_argument("--days", type=int, default=None, help="override the scan window; default is since each step's last success plus a day of overlap (config window:)")
     ap.add_argument("--sites", default="naukri,indeed,linkedin")
     ap.add_argument("--steps", default="freehire,internshala,jobspy,portals,ats", help="comma list of steps to run")
     ap.add_argument("--ats-sources", default="greenhouse,lever,ashby", help="ATS directories for the reverse sweep")
@@ -340,32 +385,99 @@ def main():
     xlsx_path = OUT / f"mine-{started:%Y-%m-%d-%H%M%S}.xlsx"
 
     per_step, runs, failures = {}, [], []
-    steps = build_steps(args)
     state = load_state()
-    steps, notes = select_steps(steps, state, steps_given(sys.argv[1:]), args.ats_every)
-    for note in notes:
+    explicit = steps_given(sys.argv[1:])
+    windows = {sid: health.window_days((_entry(state, sid)[0]), args.days, started) for sid in ("freehire", "internshala", "jobspy", "portals")}
+    args.sites, site_notes = select_sites(args.sites, state, explicit, started)
+    steps = [x for x in build_steps(args, windows) if not (x["id"] == "jobspy" and not args.sites)]
+    steps, notes = select_steps(steps, state, explicit, args.ats_every)
+    for note in notes + site_notes:
         print(note)
-    print(f"mine: {len(steps)} step(s), log {log_path.relative_to(ROOT)}, excel {xlsx_path.relative_to(ROOT)}")
-    write_excel(xlsx_path, per_step, runs, failures, started)
+    print(f"mine: {len(steps)} step(s), windows {windows if not args.days else f'{args.days}d (override)'}, "
+          f"log {log_path.relative_to(ROOT)}, excel {xlsx_path.relative_to(ROOT)}")
+    write_excel(xlsx_path, [], [], [], started)
     with log_path.open("w") as log:
         log.write(f"mine run {started.isoformat()} args={vars(args)}\n")
         for i, step in enumerate(steps):
             offers, status = run_step(step, log, failures, i)
+            status["window_days"] = windows.get(step["id"])
             per_step[step["id"]] = offers
             runs.append(status)
             if record_run(state, status, args.dry_run):
+                if step["id"] == "jobspy" and "linkedin" in args.sites.split(","):
+                    state["linkedin"] = state[step["id"]]
                 save_state(state)
-            write_excel(xlsx_path, per_step, runs, failures, started)
-    total = len(merge(per_step))
+            write_excel(xlsx_path, merge(per_step), runs, failures, started)
+
+    # ---- store, health, summary ----
+    run_id = store.start_run(None)
+    if args.dry_run:
+        conn = store.dry_run_connection()  # 'new' is computed against a copy; data/jobs.db is neither created nor changed
+    else:
+        store.backup_db()
+        conn = store.connect()
+    history_note = None
+    if conn.execute("SELECT COUNT(*) FROM seen").fetchone()[0] == 0 and (ROOT / "data" / "scan-history.tsv").exists():
+        rep = store.migrate_scan_history(conn, ROOT / "data" / "scan-history.tsv")
+        history_note = f"imported scan-history.tsv: {rep['total']} rows"
+    merged = merge(per_step)
+    new_rows, known = store.ingest(conn, merged, run_id)
+    new_keys = {r["canonical_url"] for r in new_rows}
+    new_urls = {u for r in new_rows for u in r["urls"]}
+    store.ingest_rejected_tsv(conn, ROOT / "data" / "rejected.tsv")
+    store.prune_rejected(conn, pipeline_cfg.load().get("rejected_log_days", 30))
+    for r in runs:
+        r["new"] = sum(1 for row in merged if r["id"] in row["steps"] and row["canonical_url"] in new_keys)
+        r["duplicates"] = max(r["kept"] - r["new"], 0)
+        r["health"], r["health_note"] = health.assess(r["fetched"], r["status"], store.history(conn, r["id"]))
+        for f in failures:
+            f.setdefault("class", health.classify_failure(f["message"]))
+        store.record_source_run(conn, run_id, r["id"], started=started.isoformat(timespec="seconds"),
+                                ended=datetime.now().isoformat(timespec="seconds"), status=r["status"], fetched=r["fetched"],
+                                kept=r["kept"], new=r["new"], duplicates=r["duplicates"], errors=r["errors"],
+                                error=r["note"] if r["status"] == "failed" else "", seconds=r["secs"], health=r["health"],
+                                window_days=r.get("window_days"), dry_run=int(args.dry_run))
+    store.record_failures(conn, run_id, failures)
+    jobspy_stats = next((r["stats"] for r in runs if r["id"] == "jobspy"), {})
+    if jobspy_stats.get("terms"):
+        by_term = {}
+        for o in per_step.get("jobspy", []):
+            if canonical_url(o.get("url")) in new_urls and o.get("term"):
+                by_term[o["term"]] = by_term.get(o["term"], 0) + 1
+        for key, fetched in jobspy_stats["terms"].items():
+            site, _, term = key.partition("|")
+            conn.execute("INSERT INTO term_yield VALUES (?,?,?,?,?,?)", (run_id, term, site, fetched, 0, started.date().isoformat()))
+        for term, n in by_term.items():
+            conn.execute("UPDATE term_yield SET new_rows=? WHERE run_id=? AND term=? AND rowid=(SELECT MIN(rowid) FROM term_yield WHERE run_id=? AND term=?)", (n, run_id, term, run_id, term))
+        conn.commit()
+    write_excel(xlsx_path, db_rows(conn, run_id), runs, failures, started)
     dedup_path = OUT / "logs" / f"dedup-{started:%Y%m%d-%H%M%S}.md"
     stats, multi = dedup_report(per_step, dedup_path)
-    print(f"\n{total} unique offers from {len(steps)} step(s); {len(failures)} failure/retry events")
+
+    print(f"\n{len(merged)} unique offers ({len(new_rows)} new, {known} already known) from {len(steps)} step(s); "
+          f"{len(failures)} failure/retry events")
+    if history_note:
+        print(history_note)
+    print(health.summary_table([{"source": r["id"], "fetched": r["fetched"], "kept": r["kept"], "new": r["new"],
+                                 "duplicates": r["duplicates"], "errors": r["errors"], "health": r["health"],
+                                 "seconds": r["secs"]} for r in runs]))
     for r in runs:
-        print(f"  {r['id']:<12} {r['status']:<8} {r['count']:>4} offers  {r['secs']}s  {r['note']}")
+        if r["health"] != health.OK or r["note"]:
+            print(f"  {r['id']}: {r['status']} {r['health']} {r['health_note']} {r['note']}".rstrip())
     print(f"{multi} jobs were found by more than one source; collapsed per pair: "
           + (", ".join(f"{a}+{b} {n}" for (a, b), n in sorted(stats.items(), key=lambda kv: -kv[1])) or "none"))
-    print(f"Excel: {xlsx_path}\nLog:   {log_path}\nDedup: {dedup_path}")
-    return 0 if all(r["status"] != "failed" for r in runs) else 1
+    print(f"Excel: {xlsx_path}\nLog:   {log_path}\nDedup: {dedup_path}" + ("\n(dry run: data/jobs.db not changed)" if args.dry_run else f"\nDB:    {store.DB_PATH}"))
+    return health.exit_code(runs)
+
+
+def select_sites(sites, state, explicit, now=None):
+    """Drop LinkedIn from a default jobspy run when it is not due (config jobspy.run_every_days.linkedin)."""
+    every = (pipeline_cfg.section("jobspy").get("run_every_days") or {}).get("linkedin")
+    names = [x.strip() for x in sites.split(",") if x.strip()]
+    if explicit or not every or "linkedin" not in names or step_due(state, "linkedin", every, now):
+        return sites, []
+    kept = [x for x in names if x != "linkedin"]
+    return ",".join(kept), [f"mine: linkedin not due (runs every {every} days); pass --steps to force it"]
 
 
 if __name__ == "__main__":

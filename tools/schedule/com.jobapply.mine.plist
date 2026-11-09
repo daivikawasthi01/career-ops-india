@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd job for tools/schedule/run_mine.sh. NOT installed. To install yourself:
+    1. Replace /Users/daivikawasthi/TechnicalProjects/JobApply/career-ops below if the repo lives elsewhere.
+    2. cp tools/schedule/com.jobapply.mine.plist ~/Library/LaunchAgents/
+    3. launchctl load ~/Library/LaunchAgents/com.jobapply.mine.plist
+  Remove: launchctl unload ~/Library/LaunchAgents/com.jobapply.mine.plist
+  StartCalendarInterval fires at 09:30 daily. If the Mac is asleep then, launchd runs it once on wake.
+  The default run skips ats (weekly) and LinkedIn (every other day) by itself.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.jobapply.mine</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/daivikawasthi/TechnicalProjects/JobApply/career-ops/tools/schedule/run_mine.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>30</integer></dict>
+  <key>WorkingDirectory</key><string>/Users/daivikawasthi/TechnicalProjects/JobApply/career-ops</string>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+  <key>StandardOutPath</key><string>/Users/daivikawasthi/TechnicalProjects/JobApply/career-ops/output/logs/launchd.out.log</string>
+  <key>StandardErrorPath</key><string>/Users/daivikawasthi/TechnicalProjects/JobApply/career-ops/output/logs/launchd.err.log</string>
+  <key>RunAtLoad</key><false/>
+</dict>
+</plist>

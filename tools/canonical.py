@@ -4,21 +4,15 @@ canonical_url(url) is an identity: two URLs for the same posting give the same s
 For LinkedIn, Indeed and Greenhouse-style ATS URLs it is also a working link. For Naukri it
 is an identity only (the id), so the stored link stays the original URL.
 """
-import json
 import re
 import unicodedata
-from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse
 
-CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "dedup.json"
-_cfg = None
+import pipeline_cfg
 
 
 def config():
-    global _cfg
-    if _cfg is None:
-        _cfg = json.loads(CONFIG_PATH.read_text())
-    return _cfg
+    return pipeline_cfg.section("dedup")
 
 
 def host_of(url):

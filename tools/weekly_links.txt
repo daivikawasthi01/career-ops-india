@@ -1,0 +1,17 @@
+# Weekly links for tools/launcher.py --profile weekly. One per line: `label | url` or just `url`.
+# Lines starting with # are ignored. Nothing here is verified: open each, confirm it is the right page, then
+# uncomment it. Remove what you do not want.
+#
+# Fixed-window programmes (check the application window dates when you open them):
+# Google Summer of Code | https://summerofcode.withgoogle.com/
+# MLH Fellowship | https://fellowship.mlh.io/
+# Outreachy | https://www.outreachy.org/apply/
+#
+# Big-tech internship pages and IT-services fresher drives (add the real career URLs you trust):
+# <company> internships | https://<company careers page>
+# <services firm> fresher drive | https://<their drive page>
+#
+# Boards that need a manual look:
+# Cutshort | https://cutshort.io/jobs
+# Instahyre | https://www.instahyre.com/
+# YC Work at a Startup | https://www.workatastartup.com/jobs

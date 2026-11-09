@@ -120,5 +120,32 @@ class BareLines(unittest.TestCase):
         self.assertEqual((bar.n, bar.total), (5, 20))
 
 
+class SitesAndWindows(unittest.TestCase):
+    def test_linkedin_dropped_when_not_due(self):
+        state = {"linkedin": {"at": ago(1), "coverage": None}}
+        sites, notes = mine.select_sites("naukri,indeed,linkedin", state, False, NOW)
+        self.assertEqual(sites, "naukri,indeed")
+        self.assertTrue(notes)
+
+    def test_linkedin_kept_when_due_or_forced_or_never_run(self):
+        self.assertEqual(mine.select_sites("naukri,linkedin", {"linkedin": {"at": ago(3)}}, False, NOW)[0], "naukri,linkedin")
+        self.assertEqual(mine.select_sites("naukri,linkedin", {"linkedin": {"at": ago(1)}}, True, NOW)[0], "naukri,linkedin")
+        self.assertEqual(mine.select_sites("naukri,linkedin", {}, False, NOW)[0], "naukri,linkedin")
+
+    def test_merge_collapses_across_steps_and_keeps_found_by(self):
+        rows = mine.merge({"jobspy": [{"company": "Acme", "title": "SDE Intern", "location": "Pune", "source": "jobspy:linkedin",
+                                      "url": "https://www.linkedin.com/jobs/view/3912345678"}],
+                           "ats": [{"company": "Acme", "title": "SDE Intern", "location": "Pune", "source": "greenhouse",
+                                    "url": "https://boards.greenhouse.io/acme/jobs/1"}]})
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["found_by"], ["greenhouse", "linkedin"])
+
+    def test_fetched_count_per_scanner(self):
+        self.assertEqual(mine.receipt_fetched("freehire", None, {"fetched": 40}, 3), 40)
+        self.assertEqual(mine.receipt_fetched("portals", {"found": 120}, {}, 3), 120)
+        self.assertEqual(mine.receipt_fetched("ats", {"postingsKept": 5, "postingsDroppedNoDate": 7}, {}, 5), 12)
+        self.assertEqual(mine.receipt_fetched("internshala", None, {}, 9), 9)
+
+
 if __name__ == "__main__":
     unittest.main()

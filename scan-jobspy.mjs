@@ -15,7 +15,7 @@
  */
 
 import { spawn } from 'child_process';
-import { existsSync, writeFileSync } from 'fs';
+import { existsSync, writeFileSync, readFileSync, mkdirSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { appendToPipeline, appendToScanHistory } from './scan.mjs';
@@ -29,6 +29,8 @@ import { yearOk, cleanUrl } from './scan-freehire.mjs';
 import { requirePipelineConfig } from './lib/pipeline-config.mjs';
 import { seniorityVerdict } from './lib/seniority.mjs';
 import { addFlag } from './lib/offer-flags.mjs';
+import { scamFlags } from './lib/scam-flags.mjs';
+import { writeStats } from './lib/json-out.mjs';
 import { createRejectedLog } from './lib/rejected-log.mjs';
 import { DATA_ROOT } from './scan.mjs';
 
@@ -56,14 +58,8 @@ Flags:
 Sites seen working: naukri (can time out), indeed (few India results), linkedin (guest search,
 no account used). google returned nothing in testing.`;
 
-export const TERMS = [
-  'software engineer fresher', 'software developer fresher', 'sde 1', 'associate software engineer',
-  'graduate engineer trainee', 'backend developer fresher', 'full stack developer fresher',
-  'python developer fresher', 'java developer fresher', 'data engineer fresher',
-  'machine learning engineer fresher', 'software engineer intern',
-  'frontend developer fresher', 'web developer fresher', 'devops engineer fresher', 'cloud engineer fresher',
-  'junior software engineer', 'software engineer trainee', 'sde intern', 'ai engineer fresher',
-];
+// The search terms live in config/pipeline.yml (jobspy.terms). All of them stay available.
+export const TERMS = PIPELINE.jobspy?.terms ?? [];
 
 /** Minimum years from Naukri-style ranges: "0 Yrs" -> 0, "2-4 Yrs" -> 2, "Fresher" -> 0. null if unreadable. */
 export function minYears(range) {
@@ -85,6 +81,24 @@ export function toOffer(row) {
   };
 }
 
+function readRotation(path) {
+  try { return Number(JSON.parse(readFileSync(path, 'utf-8')).offset) || 0; } catch { return 0; }
+}
+
+/** After a budget-limited run, start next time at the first term that was skipped. */
+export function nextRotation(current, skipped, terms) {
+  if (!skipped.length) return 0;
+  const i = terms.indexOf(skipped[0][1]); // skipped is in plan order, so the first is the next one due
+  return i >= 0 ? i : current;
+}
+
+function saveRotation(path, current, skipped, terms) {
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify({ offset: nextRotation(current, skipped, terms) }));
+  } catch { /* rotation is a convenience */ }
+}
+
 function runHelper(request) {
   return new Promise((resolve, reject) => {
     const child = spawn(PY, [HELPER], { stdio: ['pipe', 'pipe', 'inherit'] });
@@ -95,12 +109,13 @@ function runHelper(request) {
       if (code !== 0) return reject(new Error(`jobspy helper exited ${code}`));
       const rows = [];
       let errors = {};
+      let meta = {};
       for (const line of out.split('\n')) {
         if (!line.trim()) continue;
         const obj = JSON.parse(line);
-        if (obj._errors) errors = obj._errors; else rows.push(obj);
+        if (obj._errors) errors = obj._errors; else if (obj._terms) meta = obj; else rows.push(obj);
       }
-      resolve({ rows, errors });
+      resolve({ rows, errors, meta });
     });
     child.stdin.end(JSON.stringify(request));
   });
@@ -125,8 +140,11 @@ async function main(args) {
   console.log(`Fetching ${sites.join(', ')} via JobSpy: ${TERMS.length} searches, last ${days}d...`);
   // Coverage and reliability over speed: every term runs on every site, and failed calls
   // retry with long backoff (see tools/jobspy_scan.py).
-  const { rows, errors } = await runHelper({
-    sites, terms: TERMS, location: 'India', hours_old: days * 24, results_wanted: results,
+  const rotationPath = join(DATA_ROOT, 'data', 'cache', 'jobspy-rotation.json');
+  const rotate = readRotation(rotationPath);
+  const { rows, errors, meta } = await runHelper({
+    sites, terms: TERMS, rotate,
+    budget: PIPELINE.jobspy?.request_budget, jitter: PIPELINE.jobspy?.jitter_seconds, location: 'India', hours_old: days * 24, results_wanted: results,
     call_timeout: 60, retries: 2, backoff: [10, 30], breaker: 3, final_pass_wait: 90,
   });
 
@@ -152,6 +170,8 @@ async function main(args) {
     const exp = seniorityVerdict(String(row.description || ''), PIPELINE.seniority_guard);
     if (exp.action === 'drop') { rejected.add(offer, `experience_${exp.years}y`); continue; }
     if (exp.action === 'flag') addFlag(offer, `asks ${exp.years}+ yrs`);
+    for (const why of scamFlags(offer, String(row.description || ''), PIPELINE.scam)) addFlag(offer, why);
+    offer.term = row.term;
     offers.push(offer);
   }
 
@@ -170,6 +190,10 @@ async function main(args) {
   for (const o of offers) console.log(`  + ${o.company || '?'} | ${o.title} | ${o.location} | ${o.source}`);
   const jsonOut = flagValue(args, '--json');
   if (jsonOut) writeFileSync(jsonOut, JSON.stringify(offers));
+  const skipped2 = meta?._budget_skipped || [];
+  if (skipped2.length) console.log(`Request budget:     ${skipped2.length} search(es) left for the next run (rotation keeps them first in line)`);
+  writeStats(jsonOut, { fetched: rows.length, kept: offers.length, errors: Object.keys(errors).length, terms: meta?._terms || {}, budgetSkipped: skipped2, spent: meta?._spent || {} });
+  if (!dryRun) saveRotation(rotationPath, rotate, skipped2, TERMS);
 
   if (dryRun) { console.log('\n--dry-run: nothing written.'); return; }
   rejected.flush();

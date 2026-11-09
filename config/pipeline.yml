@@ -180,3 +180,72 @@ borderline:
 
 # Rejected rows are logged (title, company, source, url, reason) and kept this long.
 rejected_log_days: 30
+
+# ---- Phase 3: cross-source dedup (tools/canonical.py, tools/dedup.py) ----
+dedup: {"tracking_params": ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "gclid", "fbclid", "msclkid", "ref", "referrer", "refid", "trk", "trackingid", "tracking_id", "src", "source", "lever-source", "lever-origin", "gh_src", "ccuid", "vjs", "from", "campaign", "sid", "ebp", "ebp_src", "eml", "cid", "mc_cid", "mc_eid", "_ga", "_gl"], "company_suffixes": ["pvt", "private", "ltd", "limited", "inc", "incorporated", "llc", "llp", "corp", "corporation", "co", "company", "gmbh", "plc", "pte", "india", "opc", "technologies", "technology", "tech", "solutions", "software", "systems", "labs", "services", "softwares"], "title_noise": ["urgent", "hiring", "opening", "openings", "immediate", "joiner", "joiners", "fresher", "freshers", "wanted", "required", "remote", "hybrid", "onsite", "wfo", "wfh"], "city_aliases": {"bangalore": "bengaluru", "bengaluru": "bengaluru", "gurgaon": "gurugram", "gurugram": "gurugram", "bombay": "mumbai", "navi mumbai": "mumbai", "madras": "chennai", "calcutta": "kolkata", "new delhi": "delhi", "noida": "noida", "greater noida": "noida"}, "generic_locations": ["india", "remote", "anywhere", "work from home", "wfh", "pan india", "multiple locations", "hybrid", "onsite"], "employer_hosts": ["greenhouse.io", "lever.co", "ashbyhq.com", "myworkdayjobs.com", "smartrecruiters.com", "icims.com", "bamboohr.com", "paylocity.com", "workable.com", "recruitee.com", "jobvite.com", "teamtailor.com", "breezy.hr", "keka.com", "zohorecruit.com", "darwinbox.in", "freshteam.com"], "aggregator_hosts": ["linkedin.com", "naukri.com", "indeed.com", "internshala.com", "glassdoor.com", "foundit.in", "monster.com", "shine.com", "wellfound.com", "angel.co", "instahyre.com", "cutshort.io", "ziprecruiter.com", "simplyhired.com", "jooble.org", "adzuna.in", "unstop.com", "freshersworld.com", "apna.co", "hirist.tech", "iimjobs.com", "t.me", "telegram.me"], "similar_title_overlap": 0.6}
+
+# ---- Phase 5: health, windows ----
+# A source is DEGRADED when a run fetches under degraded_ratio of its median over the last history_runs
+# successful runs (needs min_history runs first), and DEAD when it fetches nothing.
+health:
+  history_runs: 14
+  degraded_ratio: 0.4
+  min_history: 3
+
+# Fetch "since last success minus overlap_days" instead of a fixed --days. --days on the command line overrides.
+window:
+  overlap_days: 1
+  default_days: 3
+  max_days: 14
+
+# ---- Phase 6: JobSpy (LinkedIn guest search etc.) ----
+# All terms stay available. request_budget caps scrape calls per site per run (retries count) so a long
+# term list cannot hammer one site; terms rotate so the ones skipped today go first next time.
+jobspy:
+  terms: ["software engineer fresher", "software developer fresher", "sde 1", "associate software engineer", "graduate engineer trainee", "backend developer fresher", "full stack developer fresher", "python developer fresher", "java developer fresher", "data engineer fresher", "machine learning engineer fresher", "software engineer intern", "frontend developer fresher", "web developer fresher", "devops engineer fresher", "cloud engineer fresher", "junior software engineer", "software engineer trainee", "sde intern", "ai engineer fresher"]
+  request_budget: {linkedin: 40, indeed: 60, naukri: 60}
+  jitter_seconds: {linkedin: [6, 15], indeed: [2, 6], naukri: [1, 4]}
+  run_every_days: {linkedin: 2}
+term_report_days: 14
+
+# ---- Phase 7: quality and safety ----
+liveness:
+  concurrency: 2
+  host_delay_seconds: 2
+  timeout_seconds: 15
+  stale_after_days: 21
+  # A final URL whose path is one of these (or has no more than one segment) is a generic listing, not the posting.
+  generic_paths: ["/jobs", "/careers", "/careers/", "/jobs/", "/search", "/openings", "/open-positions", "/"]
+  gone_markers: ["no longer available", "position has been filled", "job is closed", "no longer accepting", "this job has expired", "page not found"]
+
+# Regexes (case-insensitive) matched against title + description. A hit flags the row, it never drops it.
+scam:
+  fee_patterns: ["registration\\s+fee", "security\\s+deposit", "refundable\\s+deposit", "training\\s+fee", "pay\\s+(?:rs\\.?|inr|₹)\\s*[\\d,]+", "processing\\s+fee", "kit\\s+charges?", "laptop\\s+deposit"]
+  contact_patterns: ["whatsapp\\s+(?:me|us|only|on|at|\\+?\\d)", "contact\\s+(?:only\\s+)?(?:on|via)\\s+whatsapp", "@(?:gmail|yahoo|outlook|hotmail|rediffmail)\\.com", "telegram\\s+(?:me|us|only)"]
+  telegram_sources: ["telegram", "t.me"]
+  min_company_chars: 2
+
+jd_hygiene:
+  max_chars: 12000
+
+# ---- Phase 8: manual-tab launcher ----
+launcher:
+  batch: 10
+  pause_seconds: 0.4
+  weekly_links: tools/weekly_links.txt
+
+# ---- Phase 9: feedback ----
+ranker:
+  min_labels: 100
+
+# freehire.io is a free third-party API: log what it says, retry once, never crash the run when it is down.
+freehire:
+  retries: 1
+  backoff_seconds: 4
+  max_retry_after_seconds: 30
+
+# Phase 7.3: a role on an aggregator counts as confirmed when the company's own board lists a similar title in the same city.
+confirm:
+  title_overlap: 0.7
+  max_companies: 60
+  fetch_timeout_seconds: 240

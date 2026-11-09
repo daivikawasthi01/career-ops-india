@@ -32,6 +32,8 @@ import { requirePipelineConfig } from './lib/pipeline-config.mjs';
 import { batchYears, yearOk } from './lib/batch-year.mjs';
 import { seniorityVerdict } from './lib/seniority.mjs';
 import { addFlag } from './lib/offer-flags.mjs';
+import { scamFlags } from './lib/scam-flags.mjs';
+import { jsonPathArg, writeStats } from './lib/json-out.mjs';
 import { createRejectedLog } from './lib/rejected-log.mjs';
 import { createAdmissionGate, formatSkipCounts } from './lib/admission-gate.mjs';
 import { localToday } from './lib/local-today.mjs';
@@ -140,12 +142,36 @@ export { batchYears, yearOk };
 
 // ── Fetch ───────────────────────────────────────────────────────────────
 
-async function fetchJson(url, attempt = 0) {
-  const res = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'career-ops-scan-freehire' } });
+const RATE_HEADERS = ['retry-after', 'x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset', 'ratelimit-remaining'];
+
+/** What freehire said about its limits, e.g. "x-ratelimit-remaining=41". Empty when it sent none. */
+export function rateLimitNote(headers) {
+  return RATE_HEADERS.map((h) => [h, headers.get(h)]).filter(([, v]) => v != null).map(([h, v]) => `${h}=${v}`).join(' ');
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** GET with the status and rate-limit headers logged. Retries (config freehire.retries, default 1) on 429, 5xx and network errors. */
+export async function fetchJson(url, attempt = 0, cfg = PIPELINE.freehire || {}) {
+  const retries = cfg.retries ?? 1;
+  const backoff = (cfg.backoff_seconds ?? 4) * 1000;
+  let res;
+  try {
+    res = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'career-ops-scan-freehire' }, signal: AbortSignal.timeout(30_000) });
+  } catch (err) {
+    console.warn(`  freehire network error: ${err.message}`);
+    if (attempt >= retries) throw new Error(`freehire unreachable: ${err.message}`);
+    await sleep(backoff * 2 ** attempt);
+    return fetchJson(url, attempt + 1, cfg);
+  }
+  const note = rateLimitNote(res.headers);
+  if (!res.ok || note) console.log(`  freehire ${res.status}${note ? ` ${note}` : ''}`);
   if (res.status === 429 || res.status >= 500) {
-    if (attempt >= 3) throw new Error(`freehire ${res.status} after retries`);
-    await new Promise((r) => setTimeout(r, 1500 * 2 ** attempt));
-    return fetchJson(url, attempt + 1);
+    if (attempt >= retries) throw new Error(`freehire ${res.status} after ${attempt} retr${attempt === 1 ? 'y' : 'ies'}`);
+    const asked = Number(res.headers.get('retry-after'));
+    const wait = Number.isFinite(asked) && asked > 0 ? Math.min(asked, cfg.max_retry_after_seconds ?? 30) * 1000 : backoff * 2 ** attempt;
+    await sleep(wait);
+    return fetchJson(url, attempt + 1, cfg);
   }
   if (!res.ok) throw new Error(`freehire ${res.status} for ${url}`);
   return res.json();
@@ -250,6 +276,7 @@ async function main(args) {
     const exp = seniorityVerdict(String(job.description || ''), PIPELINE.seniority_guard);
     if (exp.action === 'drop') { rejected.add(offer, `experience_${exp.years}y`); continue; }
     if (exp.action === 'flag') addFlag(offer, `asks ${exp.years}+ yrs`);
+    for (const reason of scamFlags(offer, String(job.description || ''), PIPELINE.scam)) addFlag(offer, reason);
     offers.push(offer);
   }
 
@@ -267,6 +294,12 @@ async function main(args) {
   for (const o2 of offers) console.log(`  + ${o2.company || '?'} | ${o2.title} | ${o2.location} | ${o2.source}`);
   const jsonOut = flagValue(args, '--json');
   if (jsonOut) writeFileSync(jsonOut, JSON.stringify(offers));
+  const queriesFailed = queries.length - results.length;
+  writeStats(jsonOut, { fetched: bySlug.size, kept: offers.length, errors: queriesFailed, queries: queries.length });
+  if (results.length === 0 && queries.length > 0) {
+    console.error('freehire answered none of its queries. It may be down; nothing was added. Other scanners are unaffected.');
+    process.exitCode = 1;
+  }
   if (dryRun) { console.log('\n--dry-run: nothing written.'); return; }
   rejected.flush();
   if (offers.length > 0) {
