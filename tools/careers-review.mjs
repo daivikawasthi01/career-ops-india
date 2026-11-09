@@ -14,9 +14,11 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { dirname, join } from 'node:path';
 import { isMainModule } from '../lib/is-main-module.mjs';
 import { getCareerOpsRoot } from '../path-resolver.mjs';
+import { outcomeOf } from '../lib/careers-pass2.mjs';
 
 const ROOT = getCareerOpsRoot();
 const TSV = process.env.CAREER_OPS_DISCOVERY || join(ROOT, 'data', 'careers-discovery.tsv');
+const PASS2 = process.env.CAREER_OPS_PASS2 || join(ROOT, 'data', 'careers-pass2.tsv');
 const REVIEW = process.env.CAREER_OPS_REVIEW || join(ROOT, 'data', 'careers-review.json');
 const PORT = Number(process.env.PORT) || 8787;
 
@@ -39,6 +41,17 @@ export function parseTsv(text) {
   return lines.map((l) => { const c = l.split('\t'); const r = Object.fromEntries(cols.map((k, i) => [k, c[i] ?? ''])); r.flag = flagOf(r); return r; });
 }
 
+/** Pass 2 result per company (when there is one) replaces the pass 1 flag: its outcome, the careers page it kept, and the jobs it read. */
+export function mergePass2(rows, p2rows) {
+  const by = new Map(p2rows.map((r) => [String(r.company).toLowerCase(), r]));
+  return rows.map((r) => {
+    const p = by.get(String(r.company).toLowerCase());
+    if (!p) return r;
+    const outcome = p.outcome || outcomeOf(p.final_status, p.jobs_india);
+    return { ...r, p1_flag: r.flag, flag: outcome, p1_url: r.careers_url, careers_url: p.careers_url || r.careers_url, jobs_total: p.jobs_total, jobs_india: p.jobs_india, sample: p.sample_titles, why: `${p.final_status}${p.notes ? ' | ' + p.notes : ''}` };
+  });
+}
+
 const readReview = () => { try { return JSON.parse(readFileSync(REVIEW, 'utf8')); } catch { return {}; } };
 function saveReview(obj) {
   mkdirSync(dirname(REVIEW), { recursive: true });
@@ -54,7 +67,7 @@ header{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--
 button,select,input{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:4px 8px}
 table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);vertical-align:top}
 td.u input{width:100%;min-width:220px}.mut{color:var(--mut);font-size:12px}
-.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}.act button{cursor:pointer;font-size:16px}
+.ok,.pass{color:var(--ok)}.bad,.not-found{color:var(--bad)}.warn{color:var(--warn)}.no-india-jobs{color:#b7791f}.india-unknown{color:#a8a000}.no-jobs-read{color:#d9730d}.blocked{color:var(--mut)}.check-identity{color:#8250df}.act button{cursor:pointer;font-size:16px}
 tr.done{opacity:.55}
 @media(max-width:700px){td.hide{display:none}th.hide{display:none}}
 </style></head><body>
@@ -62,11 +75,12 @@ tr.done{opacity:.55}
 <select id="flag"><option value="">all flags</option></select>
 <select id="dec"><option value="">any decision</option><option value="todo">not reviewed</option><option value="ok">ticked</option><option value="bad">crossed</option></select>
 <input id="q" placeholder="search company"></header>
-<table><thead><tr><th>Company</th><th>Flag</th><th>Domain</th><th>Careers URL (editable)</th><th class="hide">ATS / board</th><th class="hide">Why</th><th>Review</th></tr></thead><tbody id="rows"></tbody></table>
+<table><thead><tr><th>Company</th><th>Flag</th><th>Domain</th><th>Careers URL (editable)</th><th class="hide">Jobs / India</th><th class="hide">Why</th><th>Review</th></tr></thead><tbody id="rows"></tbody></table>
 <script>
 let rows=[],rev={};
 const $=id=>document.getElementById(id);
-const cls=f=>f==='ok'?'ok':(f==='bot-blocked'||f==='review'?'warn':'bad');
+const OUT=['pass','no-india-jobs','india-unknown','no-jobs-read','blocked','check-identity','not-found'];
+const cls=f=>OUT.includes(f)?f:f==='ok'?'ok':(f==='bot-blocked'||f==='review'?'warn':'bad');
 async function load(){const[a,b]=await Promise.all([fetch('/api/rows').then(r=>r.json()),fetch('/api/review').then(r=>r.json())]);rows=a;rev=b;
  const fl=[...new Set(rows.map(r=>r.flag))].sort();const cur=$('flag').value;$('flag').innerHTML='<option value="">all flags</option>'+fl.map(f=>'<option'+(f===cur?' selected':'')+'>'+f+'</option>').join('');draw();}
 function draw(){const f=$('flag').value,d=$('dec').value,q=$('q').value.toLowerCase();
@@ -79,7 +93,7 @@ function draw(){const f=$('flag').value,d=$('dec').value,q=$('q').value.toLowerC
   const c=tr.children;c[0].firstChild.textContent=r.company;c[1].textContent=r.flag;c[2].textContent=r.domain||'-';
   const inp=c[3].firstChild;inp.value=url;inp.onchange=()=>save(r.company,{careers_url:inp.value});
   if(url){const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';a.textContent=' open';c[3].append(a);}
-  c[4].textContent=(r.ats||'-')+' / '+(r.board_match||'-');c[5].textContent=(r.reason||'').slice(0,140);
+  c[4].textContent=r.jobs_total!==undefined?((r.jobs_total||'-')+' / '+(r.jobs_india||'-')+(r.sample?' | '+r.sample.slice(0,60):'')):((r.ats||'-')+' / '+(r.board_match||'-'));c[5].textContent=(r.why||r.reason||'').slice(0,140);
   for(const[k,t]of[['ok','\\u2714'],['bad','\\u2718']]){const b=document.createElement('button');b.textContent=t;b.title=k==='ok'?'correct':'wrong';if(v.decision===k)b.style.borderColor='currentColor';b.onclick=()=>save(r.company,{decision:v.decision===k?null:k});c[6].append(b);}
   $('rows').append(tr);}}
 async function save(company,patch){rev[company]={...(rev[company]||{}),...patch};await fetch('/api/review',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({company,patch})});draw();}
@@ -91,7 +105,7 @@ export function makeServer() {
   return createServer((req, res) => {
     const send = (code, type, body) => { res.writeHead(code, { 'content-type': type, 'cache-control': 'no-store' }); res.end(body); };
     if (req.method === 'GET' && req.url === '/') return send(200, 'text/html; charset=utf-8', PAGE);
-    if (req.method === 'GET' && req.url === '/api/rows') return send(200, 'application/json', JSON.stringify(existsSync(TSV) ? parseTsv(readFileSync(TSV, 'utf8')) : []));
+    if (req.method === 'GET' && req.url === '/api/rows') return send(200, 'application/json', JSON.stringify(existsSync(TSV) ? mergePass2(parseTsv(readFileSync(TSV, 'utf8')), existsSync(PASS2) ? parseTsv(readFileSync(PASS2, 'utf8')) : []) : []));
     if (req.method === 'GET' && req.url === '/api/review') return send(200, 'application/json', JSON.stringify(readReview()));
     if (req.method === 'POST' && req.url === '/api/review') {
       let body = ''; req.on('data', (c) => { body += c; if (body.length > 20000) req.destroy(); });

@@ -24,7 +24,7 @@ import { atsFromUrl, findAtsLinks, pickAts, extractUrls } from '../lib/careers-d
 import { boardFingerprint, redact } from '../lib/careers-pipeline.mjs';
 import { makeLlm, loadGroqKeys, loadModels } from '../lib/careers-llm.mjs';
 import { slugMatchesName } from '../lib/board-audit.mjs';
-import { classifyPage, followLinks, best, PASSING, CAREERS_PATH, identityOk, keyOf, rankCandidates, mark, seen, shouldStop, LIMITS, visionAction, INDIA_RE, indiaStatus, guessCareerUrls, HIRING_SIGNAL, visionListingsOk } from '../lib/careers-pass2.mjs';
+import { classifyPage, followLinks, best, PASSING, CAREERS_PATH, identityOk, keyOf, rankCandidates, mark, seen, shouldStop, LIMITS, visionAction, INDIA_RE, indiaStatus, guessCareerUrls, HIRING_SIGNAL, visionListingsOk, indiaPass, outcomeOf } from '../lib/careers-pass2.mjs';
 import { parseTsv } from './careers-review.mjs';
 import { visit, searchResults, hostOf, Halt, gov, sleep, setSessionContext } from './discover-careers.mjs';
 import { queryPair } from '../lib/careers-pipeline.mjs';
@@ -41,7 +41,7 @@ const PORTALS = process.env.CAREER_OPS_PORTALS || join(ROOT, 'portals.yml');
 const ENV_DIRS = [process.env.CAREER_OPS_ENV_DIR, ROOT].filter(Boolean);
 const REPO = join(dirname(new URL(import.meta.url).pathname), '..');
 const COMPANY_DEADLINE_MS = Number(process.env.CAREER_OPS_COMPANY_DEADLINE_MS || 300000);
-const COLS = ['company', 'final_status', 'careers_url', 'ats', 'jobs_total', 'jobs_india', 'sample_titles', 'rounds', 'tests', 'via', 'tried', 'queries', 'models', 'notes'];
+const COLS = ['company', 'final_status', 'outcome', 'careers_url', 'ats', 'jobs_total', 'jobs_india', 'sample_titles', 'rounds', 'tests', 'via', 'tried', 'queries', 'models', 'notes'];
 const rowLine = (r) => COLS.map((c) => redact(String(r[c] ?? '')).replace(/[\t\r\n]+/g, ' ').trim()).join('\t');
 export const readDone2 = (text) => new Set(text.split('\n').slice(1).map((l) => l.split('\t')[0].trim().toLowerCase()).filter(Boolean));
 
@@ -124,7 +124,7 @@ async function processCompany2({ context, row, rejectedUrls, llm, vision }) {
   const st = { tried: new Map(), tests: 0, queries: [], results: [], models: new Set(), notes: [] };
   for (const u of rejectedUrls) mark(st.tried, u, 'rejected-by-user');
   st.trusted = new Set(row.status === 'accepted' && row.careers_url ? [keyOf(row.careers_url, atsFromUrl)] : []);
-  const passed = () => st.results.some((r) => PASSING.has(r.verdict));
+  const passed = () => st.results.some(indiaPass); // the only pass: India jobs fetched
   const known = env.known?.get(name.toLowerCase().replace(/[^a-z0-9]/g, '')); // a URL already in portals.yml (your verified list) is tried before any search
   if (known && !seen(st.tried, known) && known !== row.careers_url) { st.trusted.add(keyOf(known, atsFromUrl)); await testUrl(context, known, name, st); }
   for (const u of [row.careers_url].filter((u) => !passed() && /^https?:/.test(u || '') && !seen(st.tried, u))) await testUrl(context, u, name, st);
@@ -161,14 +161,25 @@ async function processCompany2({ context, row, rejectedUrls, llm, vision }) {
     if (shouldStop({ round: rounds, tests: st.tests, newCandidates: cands.length, passed: passed() }) && !cands.length && (st.tests > 0 || rounds >= 2)) { if (empties === queries.slice(0, 4).length) st.notes.push('search-empty'); break; } // nothing tested yet: one more round with the other query pair
     for (const c of cands) { if (st.tests >= LIMITS.maxTests || passed()) break; await testUrl(context, c.url, name, st); }
   }
+  // Right page, jobs read, none in India: pass 3 looks for the India version of the portal inside the same loop.
+  const noIndia = st.results.find((r) => PASSING.has(r.verdict) && Number(r.india) === 0 && (r.located ?? r.total) > 0);
+  if (!passed() && noIndia && !searchBlocked) {
+    try {
+      const { processCompany3 } = await import('./careers-pass3.mjs');
+      const r3 = await processCompany3({ context, row: { company: name, careers_url: noIndia.url, jobs_india: '0', ats: noIndia.ats || '' } });
+      st.notes.push(`pass3:${r3.decision}`); st.tests += Number(r3.tests) || 0;
+      if (r3.decision === 'switch' && r3.new_url) st.results.push({ url: r3.new_url, verdict: 'jobs-found', ats: r3.ats, total: Number(r3.new_total) || 0, located: Number(r3.new_total) || 0, india: Number(r3.new_india) || 0, sample: [], note: 'India version found by pass 3' });
+    } catch (err) { st.notes.push(`pass3-error:${String(err?.message || err).slice(0, 40)}`); }
+  }
   const verdicts = st.results.map((r) => r.verdict);
-  const top = best(verdicts);
-  const win = st.results.find((r) => r.verdict === top && !r.via) || st.results.find((r) => r.verdict === top);
+  const indiaWin = [...st.results].filter(indiaPass).sort((a, b) => b.india - a.india)[0];
+  const top = indiaWin ? indiaWin.verdict : best(verdicts);
+  const win = indiaWin || st.results.find((r) => r.verdict === top && !r.via) || st.results.find((r) => r.verdict === top);
   let final = !verdicts.length ? (searchBlocked ? 'search-blocked' : 'no-candidate') : PASSING.has(top) || top === 'board-empty' || top === 'listings-unread' ? top : top === 'bot-blocked' ? 'bot-blocked' : top === 'unverified-identity' ? 'needs-identity-check' : 'unresolved';
   if (PASSING.has(final) && final !== 'listings-unread') final = indiaStatus(final, win); // right-portal-no-india only when locations were read; else india-unknown
   if (final === 'unresolved' && searchBlocked) final = 'search-blocked';
   return {
-    company: name, final_status: final, careers_url: win && final !== 'no-candidate' ? win.url : '', ats: win?.ats || '',
+    company: name, final_status: final, outcome: outcomeOf(final, win?.india), careers_url: win && final !== 'no-candidate' ? win.url : '', ats: win?.ats || '',
     jobs_total: win?.total ?? '', jobs_india: win?.india ?? '', sample_titles: (win?.sample || []).slice(0, 5).join(' | '), rounds, tests: st.tests, via: '',
     tried: JSON.stringify(st.results.slice(0, 12).map((r) => ({ u: r.url, v: r.verdict }))), queries: st.queries.join(' | '), models: [...st.models].join(','), notes: [...st.notes, win?.indiaMentions !== undefined ? `india-mentions:${win.indiaMentions}` : ''].filter(Boolean).join(','),
   };

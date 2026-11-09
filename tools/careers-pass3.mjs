@@ -29,7 +29,7 @@ const COLS = ['company', 'decision', 'old_url', 'new_url', 'ats', 'old_india', '
 const line = (r) => COLS.map((c) => redact(String(r[c] ?? '')).replace(/[\t\r\n]+/g, ' ').trim()).join('\t');
 const parse = (text) => { const [h, ...ls] = text.split('\n').filter(Boolean); const cols = h.split('\t'); return ls.map((l) => { const c = l.split('\t'); return Object.fromEntries(cols.map((k, i) => [k, c[i] ?? ''])); }); };
 
-async function processCompany3({ context, row }) {
+export async function processCompany3({ context, row }) {
   const name = row.company; const old = row.careers_url;
   const st = { tried: new Map(), tests: 0, results: [], queries: [], models: new Set(), notes: [] };
   mark(st.tried, old, 'current');
