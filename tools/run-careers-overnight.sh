@@ -7,8 +7,8 @@
 #
 # Differences from tools/run-careers.sh:
 #   - never opens a captcha window (--no-headed): a search block only slows the run down;
-#   - when a phase halts (search blocked, companies failing to load, the LLM out of quota) it waits 45 minutes and resumes it,
-#     up to 8 times per phase, then moves on or stops with a note;
+#   - when a phase halts (search blocked, companies failing to load) it waits 45 minutes and resumes it, up to 8 times per phase;
+#     when the Groq daily limit stops it, it sleeps until the reset time the API reported (retry-after), at most 8 hours, then resumes;
 #   - keeps the Mac awake (display may still sleep) and sends a notification at the end.
 # Keep the laptop plugged in and the lid open (a closed lid sleeps the Mac whatever caffeinate says), or use an external display.
 # Watch it from the dashboard (run panel at the top) or: tail -f <data>/careers-run-pass1.log
@@ -24,6 +24,7 @@ export CAREER_OPS_CHECK_BY_HAND=${CAREER_OPS_CHECK_BY_HAND:-$REPO/data/check-by-
 export CAREER_OPS_UNVALIDATED=1 CAREER_OPS_NO_HEADED=1
 COMPANIES=${COMPANIES:-/Users/daivikawasthi/TechnicalProjects/JobApply/companies.txt}
 WAIT_SECS=${WAIT_SECS:-2700}
+RESUME_FILE=$DATA_ROOT/data/careers-llm-resume.txt
 MAX_RETRIES=${MAX_RETRIES:-8}
 PHASES=${1:-1,2,export}
 want() { [[ ",$PHASES," == *",$1,"* ]]; }
@@ -41,8 +42,14 @@ run_phase() {
       2|3|4)
         tries=$((tries + 1))
         if [ $tries -gt $MAX_RETRIES ]; then echo "[$(stamp)] $name: still halting after $MAX_RETRIES waits (exit $code). Giving up on this phase."; return $code; fi
-        echo "[$(stamp)] $name: halted (exit $code). Waiting $((WAIT_SECS / 60)) min, then resuming ($tries of $MAX_RETRIES)."
-        sleep $WAIT_SECS ;;
+        wait=$WAIT_SECS
+        # Exit 4 with a reset time from the Groq daily limit (its retry-after header): sleep until then, at most 8 hours.
+        if [ $code -eq 4 ] && [ -f "$RESUME_FILE" ]; then
+          reset=$(cat "$RESUME_FILE" 2>/dev/null); rm -f "$RESUME_FILE"
+          if [[ "$reset" == <-> ]]; then wait=$(( reset - $(date +%s) + 60 )); [ $wait -gt 28800 ] && wait=28800; [ $wait -lt 60 ] && wait=60; fi
+        fi
+        echo "[$(stamp)] $name: halted (exit $code). Waiting $((wait / 60)) min, then resuming ($tries of $MAX_RETRIES)."
+        sleep $wait ;;
       *) echo "[$(stamp)] $name: stopped with exit code $code."; return $code ;;
     esac
   done

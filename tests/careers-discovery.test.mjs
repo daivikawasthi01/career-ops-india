@@ -344,7 +344,9 @@ test('query pairs: pass 1 merges the sde and official-website forms, the retry m
 test('llm: retry-after is honoured and capped', async () => {
   const { retryAfterSeconds } = await import('../lib/careers-llm.mjs');
   assert.equal(retryAfterSeconds({ headers: { 'retry-after': '7' } }), 7);
-  assert.equal(retryAfterSeconds({ headers: new Map([['retry-after', '500']]) }), 90);
+  assert.equal(retryAfterSeconds({ headers: new Map([['retry-after', '500']]) }), 500);
+  assert.equal(retryAfterSeconds({ headers: { 'retry-after': '40000' } }), 40000, 'a daily limit is waited out, not retried every 90 s');
+  assert.equal(retryAfterSeconds({ headers: { 'retry-after': '999999' } }), 86400);
   assert.equal(retryAfterSeconds({}), 20);
 });
 
@@ -403,4 +405,10 @@ test('five failures in a row pause the run (5, 10, 20, 20 minutes) and only repe
   assert.deepEqual(failureBackoff({ failures: 5, cooldowns: 2 }), { action: 'pause', minutes: 20 });
   assert.deepEqual(failureBackoff({ failures: 5, cooldowns: 3 }), { action: 'pause', minutes: 20 });
   assert.equal(failureBackoff({ failures: 5, cooldowns: 4 }).action, 'halt');
+});
+
+test('limitedUntil is 0 while a key can answer', async () => {
+  const { makeLlm } = await import('../lib/careers-llm.mjs');
+  const llm = await makeLlm({ keys: ['k1', 'k2'], model: 'groq:openai/gpt-oss-120b', fallback: 'groq:openai/gpt-oss-20b' });
+  assert.equal(llm.limitedUntil(), 0);
 });

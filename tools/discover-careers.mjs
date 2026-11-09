@@ -527,6 +527,11 @@ async function main() {
     const worker = async () => {
       while (!stop && next < batch.length) {
         while (!stop && Date.now() < pausedUntil) await sleep(5000); // a shared cooldown after a run of failures
+        if (llm) { // every key limited on both models: a short wait is slept through, a daily limit stops the run with the reset time
+          const until = llm.limitedUntil();
+          if (until - Date.now() > 300000) { try { writeFileSync(join(dirname(out), 'careers-llm-resume.txt'), String(Math.ceil(until / 1000))); } catch { /* ignore */ } stop = stop || new Halt(4, `LLM limits reached on every key; they reset at ${new Date(until).toLocaleTimeString()}`); return; }
+          if (until > Date.now()) await sleep(until - Date.now() + 1000);
+        }
         const item = batch[next++];
         const t0 = Date.now();
         status.current = item.name;
