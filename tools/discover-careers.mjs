@@ -22,6 +22,7 @@ import { existsSync, readFileSync, appendFileSync, writeFileSync, mkdirSync, ren
 import { dirname, join } from 'path';
 import { getCareerOpsRoot } from '../path-resolver.mjs';
 import { execFileSync } from 'child_process';
+import { jobsFromJson, bestJsonJobs } from '../lib/careers-pass2.mjs';
 import { loadYaml } from '../lib/yaml-document.mjs';
 import { browserLaunchOptions } from '../lib/browser-launch.mjs';
 import {
@@ -93,14 +94,55 @@ function llmConfig() {
   return loadModels([...ENV_DIRS, REPO], c && typeof c === 'object' ? c : {});
 }
 
+const CONSENT_SELECTORS = ['#onetrust-accept-btn-handler', '#accept-recommended-btn-handler', '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll', '#truste-consent-button', '.cc-allow', '.cc-dismiss', 'button[id*="accept" i][id*="cookie" i]', '[class*="cookie" i] button[class*="accept" i]', '[aria-label*="accept all" i]'];
+const CONSENT_TEXT = /^(accept( all)?( cookies)?|allow( all)?( cookies)?|i agree|agree|got it|ok(ay)?|accept (and|&) close|yes,? i agree|continue)$/i;
+/** Click a cookie or consent banner away so the page behind it can be read. Short, best effort, never throws. Returns true if something was clicked. */
+export async function dismissConsent(page) {
+  const deadline = Date.now() + 3000;
+  const targets = [page, ...page.frames().filter((f) => f !== page.mainFrame()).slice(0, 4)];
+  for (const target of targets) {
+    for (const sel of CONSENT_SELECTORS) {
+      if (Date.now() > deadline) return false;
+      try { const el = target.locator(sel).first(); if (await el.isVisible({ timeout: 150 })) { await el.click({ timeout: 800 }); return true; } } catch { /* next */ }
+    }
+    try { const b = target.getByRole('button', { name: CONSENT_TEXT }).first(); if (await b.isVisible({ timeout: 200 })) { await b.click({ timeout: 800 }); return true; } } catch { /* none */ }
+  }
+  return false;
+}
+/** Type a query into the page's own search box and press Enter (portals that show roles only after a search). */
+async function searchInPage(page, query) {
+  const inputs = ['input[type="search"]', '[role="searchbox"]', 'input[placeholder*="search" i]', 'input[aria-label*="search" i]', 'input[name*="keyword" i]', 'input[name="q"]', 'input[id*="search" i]', 'input[placeholder*="job title" i]', 'input[placeholder*="keyword" i]'];
+  for (const sel of inputs) {
+    try {
+      const el = page.locator(sel).first();
+      if (!(await el.isVisible({ timeout: 200 }))) continue;
+      await el.fill(query, { timeout: 1500 }); await el.press('Enter', { timeout: 1000 });
+      await page.waitForTimeout(3500);
+      return true;
+    } catch { /* next input */ }
+  }
+  return false;
+}
+
 /** Load one page. Never throws: a failed load is {ok:false}. Collects links, iframes and every request URL. */
-async function visit(context, url) {
+async function visit(context, url, opts = {}) {
   const page = await context.newPage();
   const requests = [];
+  const json = [];
   page.on('request', (r) => { if (requests.length < 600) requests.push(r.url()); });
+  page.on('response', async (resp) => { // job lists often arrive as JSON after the page loads
+    try {
+      if (json.length >= 12 || !/json/i.test(resp.headers()['content-type'] || '')) return;
+      const body = await resp.text(); if (body.length > 3_000_000) return;
+      const jobs = jobsFromJson(JSON.parse(body)); if (jobs) json.push(jobs);
+    } catch { /* not json, or gone */ }
+  });
   try {
     const resp = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT });
     await page.waitForTimeout(2000);
+    if (await dismissConsent(page)) await page.waitForTimeout(800);
+    let interacted = false;
+    if (opts.search) { interacted = await searchInPage(page, opts.search); }
     const info = await page.evaluate(() => ({
       title: document.title || '',
       siteName: document.querySelector('meta[property="og:site_name"]')?.content || '',
@@ -109,7 +151,7 @@ async function visit(context, url) {
       frames: [...document.querySelectorAll('iframe[src]')].map((f) => f.src),
     }));
     const html = (await page.content()).slice(0, 600000);
-    return { ok: true, status: resp?.status() ?? 0, finalUrl: page.url(), html, requests, ...info };
+    return { ok: true, status: resp?.status() ?? 0, finalUrl: page.url(), html, requests, jsonJobs: bestJsonJobs(json), interacted, ...info };
   } catch (err) {
     return { ok: false, error: String(err?.message || err).split('\n')[0].slice(0, 80) };
   } finally {

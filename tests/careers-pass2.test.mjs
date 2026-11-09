@@ -97,3 +97,41 @@ test('pass 3 switches only for India postings the old page lacks', () => {
   assert.equal(pass3Decision({ oldIndia: 0, candidate: { verdict: 'listings-on-page', indiaMentions: 4 } }), 'switch');
   assert.equal(pass3Decision({ oldIndia: 0, candidate: null }), 'none-found');
 });
+
+import { slugMatchesName } from '../lib/board-audit.mjs';
+import { jobsFromJson, bestJsonJobs, nameInHost, identityOk, indiaFilterLinks } from '../lib/careers-pass2.mjs';
+
+test('jobsFromJson finds job arrays in common API shapes and counts India', () => {
+  const gh = { jobs: [{ id: 1, title: 'Software Engineer', location: { name: 'Bengaluru, India' } }, { id: 2, title: 'Data Analyst', location: { name: 'Berlin' } }, { id: 3, title: 'DevOps Engineer', location: { name: 'Pune' } }] };
+  const r = jobsFromJson(gh);
+  assert.equal(r.count, 3);
+  assert.equal(r.india, 2);
+  assert.deepEqual(r.sample.slice(0, 1), ['Software Engineer']);
+  assert.equal(jobsFromJson({ items: [{ name: 'a' }, { name: 'b' }] }), null, 'not job-like');
+  assert.equal(jobsFromJson({ jobs: [{ title: 'Software Engineer', id: 1 }, { title: 'QA Engineer', id: 2 }] }), null, 'fewer than three');
+  assert.equal(bestJsonJobs([null, { count: 2 }, { count: 9 }]).count, 9);
+});
+
+test('identity: the company name in the host, a trusted site, or a matching ATS slug; a lookalike does not pass', () => {
+  const atsOf = (u) => (/greenhouse\.io\/([a-z0-9-]+)/.exec(u) ? { ats: 'greenhouse', tenant: /greenhouse\.io\/([a-z0-9-]+)/.exec(u)[1] } : null);
+  const slugOk = slugMatchesName;
+  const none = new Set();
+  assert.equal(identityOk('https://www.hirezapp.com/careers/zepto/jobs', 'Zepto', none, atsOf, slugOk), false);
+  assert.equal(identityOk('https://www.zepto.com/s/careers', 'Zepto', none, atsOf, slugOk), true);
+  assert.equal(identityOk('https://job-boards.greenhouse.io/tide', 'TIDE', none, atsOf, slugOk), true);
+  assert.equal(identityOk('https://job-boards.greenhouse.io/swiggytech', 'Swiggy', none, atsOf, slugOk), true, 'a longer name may match by prefix');
+  assert.equal(identityOk('https://job-boards.greenhouse.io/arcgames', 'Arc', none, atsOf, slugOk), false);
+  assert.equal(identityOk('https://careers.example.org/', 'Acme', new Set(['example.org']), atsOf, slugOk), true, 'a trusted site');
+  assert.ok(nameInHost('https://careers.wipro.com', 'Wipro'));
+});
+
+test('india filter links: query values, path segments, and short India link texts on the same site', () => {
+  const links = [
+    { href: 'https://jobs.x.com/search?location=India', text: 'India' },
+    { href: 'https://jobs.x.com/en-in/search', text: 'Search jobs' },
+    { href: 'https://jobs.x.com/search?country=US', text: 'United States' },
+    { href: 'https://other.com/jobs?location=India', text: 'India' },
+    { href: 'https://jobs.x.com/about', text: 'About' },
+  ];
+  assert.deepEqual(indiaFilterLinks(links, 'x.com').map((l) => l.href), ['https://jobs.x.com/search?location=India', 'https://jobs.x.com/en-in/search']);
+});

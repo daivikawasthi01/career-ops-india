@@ -23,11 +23,12 @@ import { browserLaunchOptions } from '../lib/browser-launch.mjs';
 import { atsFromUrl, findAtsLinks, pickAts, extractUrls } from '../lib/careers-discovery.mjs';
 import { boardFingerprint, redact } from '../lib/careers-pipeline.mjs';
 import { makeLlm, loadGroqKeys, loadModels } from '../lib/careers-llm.mjs';
-import { classifyPage, followLinks, best, PASSING, CAREERS_PATH, rankCandidates, mark, seen, shouldStop, LIMITS, visionAction } from '../lib/careers-pass2.mjs';
+import { slugMatchesName } from '../lib/board-audit.mjs';
+import { classifyPage, followLinks, best, PASSING, CAREERS_PATH, identityOk, keyOf, rankCandidates, mark, seen, shouldStop, LIMITS, visionAction } from '../lib/careers-pass2.mjs';
 import { parseTsv } from './careers-review.mjs';
 import { visit, searchResults, hostOf, Halt, gov, sleep, setSessionContext } from './discover-careers.mjs';
 import { queryPair } from '../lib/careers-pipeline.mjs';
-const nameInHost = (url, name) => { const h = hostOf(url).replace(/[^a-z0-9]/g, ''); return String(name).toLowerCase().split(/[^a-z0-9]+/).filter((x) => x.length >= 3).some((x) => h.includes(x)); };
+import { nameInHost } from '../lib/careers-pass2.mjs';
 
 const ROOT = getCareerOpsRoot();
 const arg = (n) => { const i = process.argv.indexOf(n); return i >= 0 ? process.argv[i + 1] : undefined; };
@@ -61,7 +62,13 @@ async function fetchBoard(url, name) {
 /** One URL, one verdict. Follows an ATS found on the page and "view jobs" style links, depth-limited. */
 export async function testUrl(context, url, name, st, depth = 0) {
   mark(st.tried, url, 'testing'); st.tests++;
-  const done = (rec) => { mark(st.tried, url, rec.verdict); st.results.push({ url, ...rec }); return { url, ...rec }; };
+  st.trusted ??= new Set();
+  const idOk = () => identityOk(url, name, st.trusted, atsFromUrl, slugMatchesName);
+  // A pass counts only when the page is the company's: a lookalike with real jobs is recorded as unverified-identity.
+  const done = (rec) => {
+    if (PASSING.has(rec.verdict) || rec.verdict === 'board-empty') { if (!idOk()) rec = { ...rec, verdict: 'unverified-identity', note: `${rec.verdict}; ${rec.note || ''} identity not confirmed` }; else st.trusted.add(keyOf(url, atsFromUrl)); }
+    mark(st.tried, url, rec.verdict); st.results.push({ url, ...rec }); return { url, ...rec };
+  };
   const ats = atsFromUrl(url);
   if (ats) {
     const b = await fetchBoard(url, name);
@@ -69,13 +76,17 @@ export async function testUrl(context, url, name, st, depth = 0) {
     if (b.ok) return done({ verdict: 'board-empty', ats: ats.ats, total: 0, india: 0, sample: [] });
     if (b.status === 404) return done({ verdict: 'dead-board', ats: ats.ats });
   }
-  const v = await visit(context, url);
+  let v = await visit(context, url);
   if (!v.ok) return done({ verdict: 'unreachable', note: v.error });
-  const cls = classifyPage({ status: v.status, text: v.text, links: v.links });
+  let cls = classifyPage({ status: v.status, text: v.text, links: v.links });
   if (cls.verdict === 'bot-blocked') return done({ verdict: 'bot-blocked' });
+  const fromJson = (page, how) => (page.jsonJobs ? { verdict: 'listings-on-page', total: page.jsonJobs.count, india: page.jsonJobs.india, sample: page.jsonJobs.sample, note: how } : null);
+  const quick = fromJson(v, 'jobs from page data');
+  if (quick) return done(quick);
   const urls = [...v.links.map((l) => l.href), ...v.frames, ...v.requests, ...extractUrls(v.html)];
   const found = pickAts(findAtsLinks(urls), name)?.best;
   if (found?.url && !seen(st.tried, found.url) && depth < 2 && st.tests < LIMITS.maxTests) {
+    if (idOk()) st.trusted.add(keyOf(found.url, atsFromUrl)); // linked from the company's own page
     const sub = await testUrl(context, found.url, name, st, depth + 1);
     if (sub.verdict === 'jobs-found' || sub.verdict === 'board-empty') { st.results.push({ url, verdict: sub.verdict, via: true }); return { ...sub, via: url }; }
   }
@@ -86,9 +97,19 @@ export async function testUrl(context, url, name, st, depth = 0) {
       if (PASSING.has(sub.verdict) || sub.verdict === 'board-empty') return { ...sub, via: url };
     }
   }
+  const looksOwn = ats || nameInHost(v.finalUrl, name);
+  if ((cls.verdict === 'landing' || cls.verdict === 'not-careers') && looksOwn && depth < 2) {
+    // Some portals show roles only after a search: type into their search box and read the page data again.
+    const v2 = await visit(context, url, { search: 'engineer' });
+    if (v2.ok && v2.interacted) {
+      const viaSearch = fromJson(v2, 'jobs after typing in the portal search box');
+      if (viaSearch) return done(viaSearch);
+      const c2 = classifyPage({ status: v2.status, text: v2.text, links: v2.links });
+      if (c2.verdict === 'listings-on-page') return done({ verdict: 'listings-on-page', total: c2.count, sample: c2.sample, note: 'listings after typing in the portal search box' });
+    }
+  }
+  if ((cls.verdict === 'landing' || cls.verdict === 'not-careers') && looksOwn && CAREERS_PATH.test(new URL(v.finalUrl).pathname + ' ' + v.title)) return done({ verdict: 'listings-unread', note: 'careers-looking page, listings not readable', snippet: v.text.slice(0, 600), indiaMentions: (v.text.match(/\b(india|bengaluru|bangalore|hyderabad|pune|mumbai|delhi|gurgaon|gurugram|noida|chennai)\b/gi) || []).length });
   const indiaMentions = (v.text.match(/\b(india|bengaluru|bangalore|hyderabad|pune|mumbai|delhi|gurgaon|gurugram|noida|chennai|kolkata|ahmedabad)\b/gi) || []).length;
-  const ownHostLooksRight = ats || nameInHost(v.finalUrl, name); // a third-party site named in a search result is not enough
-  if ((cls.verdict === 'landing' || cls.verdict === 'not-careers') && ownHostLooksRight && CAREERS_PATH.test(new URL(v.finalUrl).pathname + ' ' + v.title)) return done({ verdict: 'listings-unread', note: 'careers-looking page, listings not readable', snippet: v.text.slice(0, 600), indiaMentions: (v.text.match(/\b(india|bengaluru|bangalore|hyderabad|pune|mumbai|delhi|gurgaon|gurugram|noida|chennai)\b/gi) || []).length });
   return done({ verdict: cls.verdict, total: cls.count, sample: cls.sample || [], snippet: v.text.slice(0, 600), indiaMentions });
 }
 
@@ -96,6 +117,7 @@ async function processCompany2({ context, row, rejectedUrls, llm, vision }) {
   const name = row.company;
   const st = { tried: new Map(), tests: 0, queries: [], results: [], models: new Set(), notes: [] };
   for (const u of rejectedUrls) mark(st.tried, u, 'rejected-by-user');
+  st.trusted = new Set(row.status === 'accepted' && row.careers_url ? [keyOf(row.careers_url, atsFromUrl)] : []);
   const passed = () => st.results.some((r) => PASSING.has(r.verdict));
   for (const u of [row.careers_url].filter((u) => /^https?:/.test(u || '') && !seen(st.tried, u))) await testUrl(context, u, name, st);
   let rounds = 0; let searchBlocked = false;
@@ -133,7 +155,7 @@ async function processCompany2({ context, row, rejectedUrls, llm, vision }) {
   const verdicts = st.results.map((r) => r.verdict);
   const top = best(verdicts);
   const win = st.results.find((r) => r.verdict === top && !r.via) || st.results.find((r) => r.verdict === top);
-  let final = !verdicts.length ? (searchBlocked ? 'search-blocked' : 'no-candidate') : PASSING.has(top) || top === 'board-empty' ? top : top === 'bot-blocked' ? 'bot-blocked' : 'unresolved';
+  let final = !verdicts.length ? (searchBlocked ? 'search-blocked' : 'no-candidate') : PASSING.has(top) || top === 'board-empty' ? top : top === 'bot-blocked' ? 'bot-blocked' : top === 'unverified-identity' ? 'needs-identity-check' : 'unresolved';
   if (final === 'jobs-found' && win?.india === 0) final = 'right-portal-no-india'; // the portal is right; nothing in India right now
   if (final === 'unresolved' && searchBlocked) final = 'search-blocked';
   return {

@@ -16,9 +16,9 @@ import { getCareerOpsRoot } from '../path-resolver.mjs';
 import { browserLaunchOptions } from '../lib/browser-launch.mjs';
 import { atsFromUrl } from '../lib/careers-discovery.mjs';
 import { redact, queryPair } from '../lib/careers-pipeline.mjs';
-import { indiaVariants, sameOwner, pass3Decision, mark, seen, rankCandidates, PASSING, LIMITS } from '../lib/careers-pass2.mjs';
+import { indiaVariants, indiaFilterLinks, keyOf, sameOwner, pass3Decision, mark, seen, rankCandidates, PASSING, LIMITS } from '../lib/careers-pass2.mjs';
 import { testUrl, initEnv, readDone2 } from './careers-pass2.mjs';
-import { searchResults, hostOf, Halt, sleep, setSessionContext } from './discover-careers.mjs';
+import { searchResults, hostOf, Halt, sleep, setSessionContext, visit } from './discover-careers.mjs';
 
 const ROOT = getCareerOpsRoot();
 const arg = (n) => { const i = process.argv.indexOf(n); return i >= 0 ? process.argv[i + 1] : undefined; };
@@ -33,9 +33,14 @@ async function processCompany3({ context, row }) {
   const name = row.company; const old = row.careers_url;
   const st = { tried: new Map(), tests: 0, results: [], queries: [], models: new Set(), notes: [] };
   mark(st.tried, old, 'current');
+  st.trusted = new Set([keyOf(old, atsFromUrl)]); // pass 2 already settled that this portal is the company's
   const cands = []; // verdict records for tested candidates that belong to the same owner
   const test = async (url) => { if (seen(st.tried, url) || st.tests >= LIMITS.maxTests || !sameOwner(old, url, atsFromUrl)) return; const r = await testUrl(context, url, name, st); if (PASSING.has(r.verdict) || r.verdict === 'board-empty') cands.push(r); };
   for (const v of indiaVariants(old)) await test(v);
+  if (!cands.some((c) => (c.india || 0) > 0)) { // a location filter link on the page itself (Apple, Google style global portals)
+    const page = await visit(context, old);
+    if (page.ok) for (const l of indiaFilterLinks(page.links, hostOf(page.finalUrl))) await test(l.href);
+  }
   if (!cands.some((c) => (c.india || 0) > 0)) {
     for (const q of queryPair(name, {}, 0).slice(0, 2)) {
       const res = await searchResults(context, q);
