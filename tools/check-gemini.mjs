@@ -7,16 +7,16 @@
 import { join, dirname } from 'node:path';
 import { z } from 'zod';
 import { getCareerOpsRoot } from '../path-resolver.mjs';
-import { loadGeminiKeys, loadGeminiModel, makeGeminiClient } from '../lib/careers-gemini.mjs';
+import { loadGeminiKeyEntries, loadGeminiModel, makeGeminiClient } from '../lib/careers-gemini.mjs';
 
 const REPO = join(dirname(new URL(import.meta.url).pathname), '..');
 const dirs = [process.env.CAREER_OPS_ENV_DIR, getCareerOpsRoot(), REPO].filter(Boolean);
-const keys = loadGeminiKeys(dirs); const model = loadGeminiModel(dirs);
-if (!keys.length) { console.log('No Gemini keys found. Add GEMINI_API_KEY, GEMINI_API_KEY_2 ... GEMINI_API_KEY_9 (or GEMINI_API_KEYS=a,b,c) to the .env file.'); process.exit(1); }
+const keys = loadGeminiKeyEntries(dirs); const model = loadGeminiModel(dirs);
+if (!keys.length) { console.log('No Gemini keys found. Add GEMINI_API_KEY_1 ... GEMINI_API_KEY_9 (or GEMINI_API_KEYS=a,b,c) to the .env file.'); process.exit(1); }
 console.log(`model: ${model}, ${keys.length} key(s)`);
 let bad = 0;
-for (const [i, key] of keys.entries()) {
-  let line = `key ${i + 1}: `;
+for (const { name, key } of keys) {
+  let line = `${name}: `;
   try {
     const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': key } });
     if (!r.ok) { line += `cannot list models (HTTP ${r.status})`; bad++; console.log(line); continue; }

@@ -9,10 +9,10 @@ import { makeLlm } from '../lib/careers-llm.mjs';
 
 test('Gemini keys and model come from the same style of .env variables as the Groq ones, deduplicated', () => {
   const d = mkdtempSync(join(tmpdir(), 'gem-'));
-  writeFileSync(join(d, '.env'), 'GEMINI_API_KEY=k1\nGEMINI_API_KEY_2=k2\nGEMINI_API_KEY_3="k3"\nGEMINI_API_KEYS=k1,k4\nGEMINI_MODEL=gemini-x\n');
+  writeFileSync(join(d, '.env'), 'GEMINI_API_KEY=k1\nGEMINI_API_KEY_1=k5\nGEMINI_API_KEY_12=k6\nGEMINI_API_KEY_2=k2\nGEMINI_API_KEY_3="k3"\nGEMINI_API_KEYS=k1,k4\nGEMINI_MODEL=gemini-x\n');
   const saved = { a: process.env.GEMINI_API_KEY, m: process.env.GEMINI_MODEL }; delete process.env.GEMINI_API_KEY; delete process.env.GEMINI_MODEL;
   try {
-    assert.deepEqual(loadGeminiKeys([d]).sort(), ['k1', 'k2', 'k3', 'k4']);
+    assert.deepEqual(loadGeminiKeys([d]).sort(), ['k1', 'k2', 'k3', 'k4', 'k5', 'k6']);
     assert.equal(loadGeminiModel([d]), 'gemini-x');
     assert.equal(loadGeminiModel([mkdtempSync(join(tmpdir(), 'gem-'))]), DEFAULT_GEMINI_MODEL);
   } finally { if (saved.a) process.env.GEMINI_API_KEY = saved.a; if (saved.m) process.env.GEMINI_MODEL = saved.m; }
@@ -65,4 +65,37 @@ test('when every key on every text tier is limited, limitedUntil is the first re
   assert.equal(llm.limitedUntil(), t0 + 40000);
   const v = await llm.seeScreenshot({ company: 'X', query: 'q', imageB64: 'AAAA' });
   assert.equal(v.value, null, 'vision tried Groq only and is limited');
+});
+
+import { makeClaudeClient } from '../lib/careers-claude.mjs';
+const claudeJson = (o) => JSON.stringify(o);
+test('claude -p client: parses the result, reports tokens, runs with no tools and from a plain prompt on stdin', async () => {
+  let seen;
+  const c = makeClaudeClient({ model: 'haiku', schema, runImpl: async (args, input) => { seen = { args, input }; return { code: 0, stdout: claudeJson({ result: '{"ok": true}', is_error: false, usage: { input_tokens: 2, cache_creation_input_tokens: 900, output_tokens: 9 }, modelUsage: { 'claude-haiku-5-5': {} } }) }; } });
+  const r = await c.invoke([['system', 's'], ['human', 'hello']]);
+  assert.deepEqual(r.parsed, { ok: true });
+  assert.equal(r.raw.usage_metadata.input_tokens, 902);
+  assert.equal(r.raw.response_metadata.model_name, 'claude-haiku-5-5');
+  assert.equal(seen.input, 'hello');
+  assert.ok(seen.args.includes('--tools') && seen.args[seen.args.indexOf('--tools') + 1] === '');
+  assert.ok(seen.args.includes('--no-session-persistence'));
+});
+
+test('claude -p client: a plan limit becomes a 429 that rests for an hour, a timeout a 504, garbage a 502', async () => {
+  const mk = (res) => makeClaudeClient({ model: 'haiku', schema, runImpl: async () => res });
+  await assert.rejects(() => mk({ code: 1, stdout: claudeJson({ is_error: true, result: 'You have reached your usage limit. It resets at 5pm.' }) }).invoke([['human', 'h']]), (e) => e.status === 429 && e.headers['retry-after'] === '3600');
+  await assert.rejects(() => mk({ code: null, stdout: '', timedOut: true }).invoke([['human', 'h']]), (e) => e.status === 504);
+  await assert.rejects(() => mk({ code: 0, stdout: 'not json' }).invoke([['human', 'h']]), (e) => e.status === 502);
+});
+
+test('the claude tier is the very last: used only when Groq and Gemini are all limited, and counts toward limitedUntil', async () => {
+  const t0 = 5_000_000;
+  const mkc = ({ provider, key }) => ({ invoke: async () => { if (provider === 'claude') return { parsed: { ok: true }, raw: { response_metadata: { model_name: 'claude-haiku-5-5' } } }; throw e429(10000); } });
+  const llm = await makeLlm({ keys: ['g1'], model: 'groq:p', fallback: 'groq:f', geminiKeys: ['m1'], geminiModel: 'gem', claudeModel: 'haiku', now: () => t0, makeClient: mkc });
+  const r = await llm.chooseDomain({ profile: { name: 'X' }, candidates: [] });
+  assert.equal(r.model, 'claude:claude-haiku-5-5'); assert.equal(r.fallback, true);
+  assert.equal(llm.limitedUntil(), 0, 'claude can still answer');
+  const off = await makeLlm({ keys: ['g1'], model: 'groq:p', fallback: 'groq:f', now: () => t0, makeClient: mkc });
+  assert.equal((await off.chooseDomain({ profile: { name: 'X' }, candidates: [] })).value, null);
+  assert.ok(off.limitedUntil() > t0);
 });

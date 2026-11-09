@@ -22,6 +22,7 @@ export CAREER_OPS_PORTALS=${CAREER_OPS_PORTALS:-$DATA_ROOT/portals.yml}
 export CAREER_OPS_CHECK_BY_HAND=${CAREER_OPS_CHECK_BY_HAND:-$REPO/data/check-by-hand.txt}
 [ -f "$REPO/config/protected-boards.txt" ] && export CAREER_OPS_PROTECTED=${CAREER_OPS_PROTECTED:-$REPO/config/protected-boards.txt}
 export CAREER_OPS_UNVALIDATED=1 CAREER_OPS_NO_HEADED=1
+export CAREER_OPS_CLAUDE_FALLBACK=${CAREER_OPS_CLAUDE_FALLBACK:-1}   # last-resort tier: claude -p on your plan when Groq and Gemini are out. Set to 0 to turn off.
 COMPANIES=${COMPANIES:-/Users/daivikawasthi/TechnicalProjects/JobApply/companies.txt}
 WAIT_SECS=${WAIT_SECS:-2700}
 RESUME_FILE=$DATA_ROOT/data/careers-llm-resume.txt

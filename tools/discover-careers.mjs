@@ -32,6 +32,7 @@ import {
 } from '../lib/careers-discovery.mjs';
 import { makeLlm, loadGroqKeys, loadModels, domainPrompt } from '../lib/careers-llm.mjs';
 import { loadGeminiKeys, loadGeminiModel } from '../lib/careers-gemini.mjs';
+import { claudeEnabled, claudeModel } from '../lib/careers-claude.mjs';
 import {
   registrable, sameSite, isAggregator, checkDomain, checkL1, quoteInEvidence, compareAts, boardFingerprint, fingerprintFit, gate, queryPair, redact, unwrapBingUrl, SearchGovernor, failureBackoff,
 } from '../lib/careers-pipeline.mjs';
@@ -478,8 +479,8 @@ async function main() {
     if (!keys.length) { console.error('--llm needs GROQ_API_KEY (or GROQ_API_KEYS, GROQ_API_KEY_2 ...) in the environment or in .env'); return 1; }
     const m = llmConfig();
     const gk = loadGeminiKeys([...ENV_DIRS, REPO]); const gm = loadGeminiModel([...ENV_DIRS, REPO]);
-    llm = await makeLlm({ keys, geminiKeys: gk, geminiModel: gm, ...m });
-    console.log(`LLM: ${m.model}, then ${gk.length ? `gemini:${gm} (${gk.length} key(s)), then ` : ''}fallback ${m.fallback}, ${keys.length} Groq key(s)`);
+    llm = await makeLlm({ keys, geminiKeys: gk, geminiModel: gm, claudeModel: claudeEnabled() ? claudeModel() : '', ...m });
+    console.log(`LLM: ${m.model}, then ${gk.length ? `gemini:${gm} (${gk.length} key(s)), then ` : ''}fallback ${m.fallback}${claudeEnabled() ? `, last resort claude -p (${claudeModel()})` : ''}, ${keys.length} Groq key(s)`);
   }
 
   const out = golden ? OUT.replace(/\.tsv$/, '.golden.tsv') : OUT;
