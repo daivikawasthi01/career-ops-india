@@ -164,6 +164,15 @@ function writeStatus(s) {
   renameSync(tmp, STATUS);
 }
 
+const COMPANY_DEADLINE_MS = Number(process.env.CAREER_OPS_COMPANY_DEADLINE_MS || 60000);
+/** A page that never settles must not stall the whole run: give up on this step, record it, move on. */
+function withDeadline(promise, ms, label) {
+  let timer;
+  const limit = new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`timeout ${ms / 1000}s (${label})`)), ms); });
+  promise.catch(() => {});
+  return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
+}
+
 async function main() {
   if (has('--help') || has('-h')) { console.log(USAGE); return 0; }
   const portals = existsSync(PORTALS) ? (loadYaml(readText(PORTALS)) || {}) : {};
@@ -199,11 +208,11 @@ async function main() {
       writeStatus(status);
       let r;
       try {
-        const s1 = await ownSite(context, item.name, item.entry, overrides);
+        const s1 = await withDeadline(ownSite(context, item.name, item.entry, overrides), COMPANY_DEADLINE_MS, `${item.name}: own-site step`);
         let found = s1;
         let viaSearch = false;
         if (!s1.atsOnOwnSite && !s1.careersUrl && !has('--no-search')) {
-          const s2 = await search(context, item.name, s1.domainVerified ? s1.domain : '');
+          const s2 = await withDeadline(search(context, item.name, s1.domainVerified ? s1.domain : ''), COMPANY_DEADLINE_MS, `${item.name}: search step`);
           if (s2.careersUrl) { found = { ...s1, ...s2, domain: s1.domainVerified ? s1.domain : s2.domain, campus: s1.campus, atsOnOwnSite: false }; viaSearch = true; }
           found.pagesLoaded = (s1.pagesLoaded || 0) + (s2.pagesLoaded || 0);
         }
