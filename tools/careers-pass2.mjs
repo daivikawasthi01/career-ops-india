@@ -181,7 +181,7 @@ async function processCompany2({ context, row, rejectedUrls, llm, vision }) {
   return {
     company: name, final_status: final, outcome: outcomeOf(final, win?.india), careers_url: win && final !== 'no-candidate' ? win.url : '', ats: win?.ats || '',
     jobs_total: win?.total ?? '', jobs_india: win?.india ?? '', sample_titles: (win?.sample || []).slice(0, 5).join(' | '), rounds, tests: st.tests, via: '',
-    tried: JSON.stringify(st.results.slice(0, 12).map((r) => ({ u: r.url, v: r.verdict }))), queries: st.queries.join(' | '), models: [...st.models].join(','), notes: [...st.notes, win?.indiaMentions !== undefined ? `india-mentions:${win.indiaMentions}` : ''].filter(Boolean).join(','),
+    tried: JSON.stringify(st.results.slice(0, 12).map((r) => ({ u: r.url, v: r.verdict }))), queries: st.queries.join(' | '), models: [...st.models].join(','), notes: [...st.notes, win?.note ? `how:${String(win.note).slice(0, 60)}` : '', win?.indiaMentions !== undefined ? `india-mentions:${win.indiaMentions}` : ''].filter(Boolean).join(','),
   };
 }
 
