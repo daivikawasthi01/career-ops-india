@@ -18,7 +18,7 @@
  */
 
 import { isMainModule } from '../lib/is-main-module.mjs';
-import { existsSync, readFileSync, appendFileSync, writeFileSync, mkdirSync, renameSync } from 'fs';
+import { existsSync, readFileSync, appendFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync } from 'fs';
 import { dirname, join } from 'path';
 import { getCareerOpsRoot } from '../path-resolver.mjs';
 import { loadYaml } from '../lib/yaml-document.mjs';
@@ -391,6 +391,17 @@ async function main() {
   if (!batch.length) { console.log(`Nothing to do: ${done.size} companies already in ${out}.`); return 0; }
   mkdirSync(dirname(out), { recursive: true });
   if (!existsSync(out)) writeFileSync(out, COLUMNS.join('\t') + '\n');
+  // One run per output file: a second process would process the same companies again.
+  const lock = `${out}.lock`;
+  if (existsSync(lock)) {
+    const pid = Number(readText(lock).trim());
+    let alive = false; try { process.kill(pid, 0); alive = pid > 0; } catch { /* stale lock */ }
+    if (alive) { console.error(`Another discovery run (pid ${pid}) is writing ${out}. Stop it first.`); return 1; }
+  }
+  writeFileSync(lock, String(process.pid));
+  const unlock = () => { try { if (readText(lock).trim() === String(process.pid)) unlinkSync(lock); } catch { /* gone */ } };
+  process.on('exit', unlock);
+  for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { unlock(); process.exit(130); });
 
   // portals.yml board fingerprints
   const { applyPipelineConfig } = await import('../lib/pipeline-config.mjs');
