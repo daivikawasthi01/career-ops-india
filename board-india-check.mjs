@@ -248,5 +248,7 @@ async function main() {
 }
 
 if (isMainModule(import.meta.url)) {
-  main().catch((err) => { console.error(err?.stack || err); process.exit(1); });
+  // Exit explicitly: one board whose connection never closes would otherwise keep the process alive long after
+  // the report is printed and written (a finished run was seen hanging for 30+ minutes).
+  main().then(() => process.exit(process.exitCode ?? 0)).catch((err) => { console.error(err?.stack || err); process.exit(1); });
 }
