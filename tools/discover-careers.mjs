@@ -109,6 +109,18 @@ export async function dismissConsent(page) {
   }
   return false;
 }
+/** Button or link text that reveals the job list: "Show open roles", "View all jobs", "Explore openings". */
+export const OPEN_ROLES_RE = /^(?:(?:show|view|see|explore|browse|check|find)\s+(?:all\s+|our\s+|the\s+)*(?:open|current|available)?\s*(?:roles?|jobs?|positions?|openings?|vacancies)|open\s+(?:roles?|positions?|jobs?|openings?|vacancies))\s*(?:→|>|»)?$/i;
+async function clickOpenRoles(page) {
+  try {
+    const els = await page.$$('button, a, [role="button"]');
+    for (const el of els.slice(0, 120)) {
+      const t = ((await el.innerText().catch(() => '')) || '').trim().replace(/\s+/g, ' ');
+      if (t && t.length < 40 && OPEN_ROLES_RE.test(t) && await el.isVisible().catch(() => false)) { await el.click({ timeout: 2000 }); await page.waitForTimeout(3500); return true; }
+    }
+  } catch { /* none */ }
+  return false;
+}
 /** Type a query into the page's own search box and press Enter (portals that show roles only after a search). */
 async function searchInPage(page, query) {
   const inputs = ['input[type="search"]', '[role="searchbox"]', 'input[placeholder*="search" i]', 'input[aria-label*="search" i]', 'input[name*="keyword" i]', 'input[name="q"]', 'input[id*="search" i]', 'input[placeholder*="job title" i]', 'input[placeholder*="keyword" i]'];
@@ -142,7 +154,8 @@ async function visit(context, url, opts = {}) {
     await page.waitForTimeout(2000);
     if (await dismissConsent(page)) await page.waitForTimeout(800);
     let interacted = false;
-    if (opts.search) { interacted = await searchInPage(page, opts.search); }
+    if (opts.openRoles) interacted = (await clickOpenRoles(page)) || interacted;
+    if (opts.search) interacted = (await searchInPage(page, opts.search)) || interacted;
     const info = await page.evaluate(() => ({
       title: document.title || '',
       siteName: document.querySelector('meta[property="og:site_name"]')?.content || '',

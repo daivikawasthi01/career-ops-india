@@ -152,6 +152,23 @@ test('India locations are recognised in odd spellings', () => {
   for (const l of ['Berlin', 'Remote', 'Indianapolis', 'In person', 'Austin, TX']) assert.ok(!isIndiaLoc(l), l);
 });
 
+import { OPEN_ROLES_RE } from '../tools/discover-careers.mjs';
+test('open-roles button text is recognised, apply-style buttons are not', () => {
+  for (const t of ['Show open roles', 'View all jobs', 'See open positions', 'Explore openings', 'Open Roles', 'View current openings →']) assert.ok(OPEN_ROLES_RE.test(t), t);
+  for (const t of ['Apply now', 'Open menu', 'Show more', 'Jobs', 'Sign in']) assert.ok(!OPEN_ROLES_RE.test(t), t);
+});
+
+import { indiaTenantVariants, siblingTenant } from '../lib/careers-pass2.mjs';
+import { atsFromUrl as atsFromUrl3 } from '../lib/careers-discovery.mjs';
+test('ats sibling India boards: tenant gets an india suffix, nothing else changes', () => {
+  assert.deepEqual(indiaTenantVariants('https://job-boards.greenhouse.io/razorpay', atsFromUrl3), ['https://job-boards.greenhouse.io/razorpayindia', 'https://job-boards.greenhouse.io/razorpay-india', 'https://job-boards.greenhouse.io/razorpayin']);
+  assert.equal(indiaTenantVariants('https://jobs.lever.co/eternal', atsFromUrl3)[1], 'https://jobs.lever.co/eternal-india');
+  assert.deepEqual(indiaTenantVariants('https://example.com/careers', atsFromUrl3), []);
+  assert.ok(siblingTenant('https://job-boards.greenhouse.io/blenheimchalcot', 'https://job-boards.greenhouse.io/blenheimchalcotindia', atsFromUrl3));
+  assert.ok(!siblingTenant('https://job-boards.greenhouse.io/razorpay', 'https://job-boards.greenhouse.io/razorpayx', atsFromUrl3));
+  assert.ok(!siblingTenant('https://job-boards.greenhouse.io/a', 'https://jobs.lever.co/aindia', atsFromUrl3));
+});
+
 test('guessed careers URLs come only from a plausible host', () => {
   assert.ok(guessCareerUrls('www.slice.bank.in').includes('https://careers.slice.bank.in'));
   assert.deepEqual(guessCareerUrls(''), []);

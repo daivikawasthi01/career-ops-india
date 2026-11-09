@@ -16,7 +16,7 @@ import { getCareerOpsRoot } from '../path-resolver.mjs';
 import { browserLaunchOptions } from '../lib/browser-launch.mjs';
 import { atsFromUrl } from '../lib/careers-discovery.mjs';
 import { redact, queryPair } from '../lib/careers-pipeline.mjs';
-import { indiaVariants, indiaFilterLinks, keyOf, sameOwner, pass3Decision, mark, seen, rankCandidates, PASSING, LIMITS } from '../lib/careers-pass2.mjs';
+import { indiaVariants, indiaTenantVariants, siblingTenant, indiaFilterLinks, keyOf, sameOwner, pass3Decision, mark, seen, rankCandidates, PASSING, LIMITS } from '../lib/careers-pass2.mjs';
 import { testUrl, initEnv, readDone2 } from './careers-pass2.mjs';
 import { searchResults, hostOf, Halt, sleep, setSessionContext, visit } from './discover-careers.mjs';
 
@@ -35,8 +35,14 @@ async function processCompany3({ context, row }) {
   mark(st.tried, old, 'current');
   st.trusted = new Set([keyOf(old, atsFromUrl)]); // pass 2 already settled that this portal is the company's
   const cands = []; // verdict records for tested candidates that belong to the same owner
-  const test = async (url) => { if (seen(st.tried, url) || st.tests >= LIMITS.maxTests || !sameOwner(old, url, atsFromUrl)) return; const r = await testUrl(context, url, name, st); if (PASSING.has(r.verdict) || r.verdict === 'board-empty') cands.push(r); };
+  const test = async (url) => {
+    const sibling = siblingTenant(old, url, atsFromUrl);
+    if (seen(st.tried, url) || st.tests >= LIMITS.maxTests || !(sameOwner(old, url, atsFromUrl) || sibling)) return;
+    if (sibling) st.trusted.add(keyOf(url, atsFromUrl)); // an India-suffixed tenant on the same ATS as a board pass 2 settled
+    const r = await testUrl(context, url, name, st); if (PASSING.has(r.verdict) || r.verdict === 'board-empty') cands.push(r);
+  };
   for (const v of indiaVariants(old)) await test(v);
+  for (const v of indiaTenantVariants(old, atsFromUrl)) await test(v);
   if (!cands.some((c) => (c.india || 0) > 0)) { // a location filter link on the page itself (Apple, Google style global portals)
     const page = await visit(context, old);
     if (page.ok) for (const l of indiaFilterLinks(page.links, hostOf(page.finalUrl))) await test(l.href);

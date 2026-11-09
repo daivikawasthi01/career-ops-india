@@ -100,7 +100,7 @@ export async function testUrl(context, url, name, st, depth = 0) {
   const looksOwn = ats || nameInHost(v.finalUrl, name);
   if ((cls.verdict === 'landing' || cls.verdict === 'not-careers') && looksOwn && depth < 2) {
     // Some portals show roles only after a search: type into their search box and read the page data again.
-    const v2 = await visit(context, url, { search: 'engineer' });
+    const v2 = await visit(context, url, { search: 'engineer', openRoles: true });
     if (v2.ok && v2.interacted) {
       const viaSearch = fromJson(v2, 'jobs after typing in the portal search box');
       if (viaSearch) return done(viaSearch);
