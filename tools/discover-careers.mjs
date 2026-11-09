@@ -66,7 +66,7 @@ const DOMAINS_FILE = join(ROOT, 'data', 'company-domains.tsv');
 const ENV_DIRS = [process.env.CAREER_OPS_ENV_DIR, ROOT].filter(Boolean); // a worktree or scratch root has no .env: point CAREER_OPS_ENV_DIR at the folder that has it
 const REPO = join(dirname(new URL(import.meta.url).pathname), '..');
 const NAV_TIMEOUT = 20000;
-const COMPANY_DEADLINE_MS = Number(process.env.CAREER_OPS_COMPANY_DEADLINE_MS || 120000);
+const COMPANY_DEADLINE_MS = Number(process.env.CAREER_OPS_COMPANY_DEADLINE_MS || 300000);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const readText = (p) => (existsSync(p) ? readFileSync(p, 'utf-8') : '');
 const hostOf = (u) => { try { return new URL(u).hostname.toLowerCase().replace(/^www\./, ''); } catch { return ''; } };
