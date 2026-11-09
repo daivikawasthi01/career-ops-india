@@ -233,15 +233,27 @@ test('llm: key and model ids come from the environment, then .env', () => {
   } finally { for (const [k, n] of [['k', 'GROQ_API_KEY'], ['m', 'GROQ_MODEL']]) { if (saved[k] === undefined) delete process.env[n]; else process.env[n] = saved[k]; } rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('golden: a wrong accepted domain fails, an unexpected accept fails, a queued row passes when allowed', () => {
+test('golden: unconfirmed expectations must be queued; confirmed ones are checked as allowed sets', () => {
   const cases = readGolden(new URL('./discover-golden.tsv', import.meta.url).pathname);
   assert.ok(cases.length >= 12 && ['TIDE', 'Zepto', 'TCS', 'Wipro', 'Slice', 'Apna', 'Cred', 'Sagent', 'Groww', 'Paytm', 'Glance', 'Unacademy'].every((n) => cases.some((c) => c.company === n)));
-  const rows = cases.map((c) => ({ company: c.company, status: 'queued', domain: '', ats: '', reason: 'x' }));
-  const withAccept = (name, over) => rows.map((r) => (r.company === name ? { ...r, status: 'accepted', ...over } : r));
-  assert.ok(checkGolden(cases, rows).every((f) => /expected accepted/.test(f)), 'only the must-accept cases fail when everything is queued');
-  assert.ok(checkGolden(cases, withAccept('Zepto', { domain: 'planet1.co' })).some((f) => /WRONG domain/.test(f)));
-  assert.ok(checkGolden(cases, withAccept('Unacademy', { domain: 'unacademy.com' })).some((f) => /expected queued/.test(f)));
-  assert.ok(checkGolden(cases, withAccept('Cred', { domain: 'cred.club' })).every((f) => !/Cred/.test(f)));
+  assert.ok(cases.every((c) => c.expect === 'unknown' && c.domains.length === 0), 'nothing is confirmed until the user supplies it');
+  const queued = cases.map((c) => ({ company: c.company, status: 'queued', domain: '', ats: '', reason: 'x' }));
+  assert.deepEqual(checkGolden(cases, queued), []);
+  const accepted = queued.map((r) => (r.company === 'Zepto' ? { ...r, status: 'accepted', domain: 'zeptonow.com' } : r));
+  assert.ok(checkGolden(cases, accepted).some((f) => /Zepto.*must be queued/.test(f)), 'even a correct-looking accept fails while the expectation is unconfirmed');
+  const confirmed = [{ company: 'Cred', domains: ['cred.club'], expect: 'any', ats: '' }];
+  assert.ok(checkGolden(confirmed, [{ company: 'Cred', status: 'accepted', domain: 'cred.co.in', ats: '' }]).some((f) => /WRONG domain/.test(f)));
+  assert.deepEqual(checkGolden(confirmed, [{ company: 'Cred', status: 'accepted', domain: 'www.cred.club', ats: '' }]), []);
+  assert.ok(checkGolden([{ company: 'X', domains: [], expect: 'accept', ats: '' }], [{ company: 'X', status: 'accepted', domain: 'x.com' }]).some((f) => /no confirmed domain/.test(f)));
+});
+
+test('gate: a row decided only by the fallback model at both LLM layers is queued', () => {
+  const good = { l1: { ok: true }, l2: { class: 'ok' }, l3: { careersUrl: 'https://x' }, l4: { ok: true } };
+  assert.equal(gate({ ...good, fb: { l1: true, l4: false } }).accepted, true);
+  assert.equal(gate({ ...good, fb: { l1: false, l4: true } }).accepted, true);
+  const both = gate({ ...good, fb: { l1: true, l4: true } });
+  assert.equal(both.accepted, false);
+  assert.match(both.failed[0], /primary_model/);
 });
 
 test('classify: a custom careers page on a domain we only guessed goes to review', () => {

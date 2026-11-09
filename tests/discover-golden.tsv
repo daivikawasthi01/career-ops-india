@@ -1,19 +1,21 @@
-company	allowed_domains	expect	ats
-TIDE	tide.co	any	
-Zepto	zeptonow.com|zepto.com	any	
-TCS	tcs.com	any	
-Wipro	wipro.com	any	
-Slice	sliceit.com	any	
-Apna	apna.co	any	
-Cred	cred.club	any	
-Sagent	sagent.com	accept	rippling
-Groww	groww.in	accept	greenhouse
-Paytm	paytm.com	accept	lever
-Glance	glance.com|glance.in|glance.inmobi.com	any	greenhouse
-Unacademy	unacademy.com	queue	
-Swiggy	swiggy.com	any	
-Jar	jar.app	any	
-Porter	porter.in	any	
-Navi	navi.com	any	
-Freshworks	freshworks.com	any	
-Razorpay	razorpay.com	any	
+# Only the user's verified values are truth. expect=unknown means nothing is confirmed yet, so the row must be queued.
+# Fill confirmed_domains (| separated allowed set) and set expect to accept, queue or any once verified.
+company	confirmed_domains	expect	ats
+TIDE		unknown	
+Zepto		unknown	
+TCS		unknown	
+Wipro		unknown	
+Slice		unknown	
+Apna		unknown	
+Cred		unknown	
+Sagent		unknown	
+Groww		unknown	
+Paytm		unknown	
+Glance		unknown	
+Unacademy		unknown	
+Swiggy		unknown	
+Jar		unknown	
+Porter		unknown	
+Navi		unknown	
+Freshworks		unknown	
+Razorpay		unknown	

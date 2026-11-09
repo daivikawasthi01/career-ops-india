@@ -32,13 +32,13 @@ import {
   registrable, sameSite, isAggregator, checkDomain, checkL1, quoteInEvidence, compareAts, boardFingerprint, fingerprintFit, gate, queryVariants,
 } from '../lib/careers-pipeline.mjs';
 
-const USAGE = `usage: discover-careers.mjs [--llm] [--limit N] [--only NAME,NAME] [--first FILE] [--list] [--slice1] [--golden FILE] [--skip-golden] [--out PATH]
+const USAGE = `usage: discover-careers.mjs [--llm] [--limit N] [--only NAME,NAME] [--first FILE] [--list] [--slice1] [--golden FILE] [--out PATH]
   Layered pipeline (see the header of this file). Output: data/careers-discovery.tsv (append-only; rerun to resume).
   Inputs: config/protected-boards.txt, portals.yml entries with watch: true, data/check-by-hand.txt.
   --llm          run the Groq layers (L1 domain, L4 verifier); GROQ_API_KEY in .env, models GROQ_MODEL / GROQ_FALLBACK_MODEL
   --first FILE   look at the names in FILE before everything else
   --golden FILE  run only the cases in FILE and check them; a pass is required before a full run
-  --skip-golden  start a full run without a passing golden check
+  (debug) CAREER_OPS_UNVALIDATED=1 starts a full run without a passing golden check; every row is then stamped "unvalidated"
   --slice1       also every name in companies.txt slice 1
   --list         print the companies it would look at and exit
   Exit codes: 0 finished, 1 error, 2 captcha or rate limit on the search engine, 3 five companies in a row with no page loaded,
@@ -65,7 +65,7 @@ const hostOf = (u) => { try { return new URL(u).hostname.toLowerCase().replace(/
 
 class Halt extends Error { constructor(code, reason) { super(reason); this.code = code; } }
 
-const COLUMNS = ['company', 'domain', 'careers_url', 'ats', 'campus_url', 'confidence', 'notes', 'model', 'raw_decision', 'status', 'board_match', 'reason', 'evidence'];
+const COLUMNS = ['company', 'domain', 'careers_url', 'ats', 'campus_url', 'confidence', 'notes', 'model', 'raw_decision', 'status', 'board_match', 'reason', 'evidence', 'validation'];
 const tsvRow = (r) => COLUMNS.map((c) => String(r[c] ?? '').replace(/[\t\r\n]+/g, ' ').trim()).join('\t');
 
 function loadDomainOverrides() {
@@ -198,10 +198,10 @@ async function pass({ context, item, profile, query, overrides, llm, fp }) {
   ev.candidates = top.map((c) => `${c.domain}[${c.source}${c.loaded === false ? ',unreachable' : ''}]`);
   const texts = [...results.flatMap((r) => [r.title, r.snippet]), ...top.map((c) => c.homeText || '')];
   // L1
-  let l1; let model = ''; let raw = '';
+  let l1; let model = ''; let raw = ''; const fb = {}; const by = {};
   if (llm) {
     const a = await llm.chooseDomain({ company: item.name, hint: profile.hint, candidates: top.filter((c) => c.loaded !== false || c.source !== 'guess') });
-    model = a.model; raw = a.raw;
+    model = a.model; raw = a.raw; fb.l1 = a.fallback; by.l1 = a.model;
     if (a.value == null) llmFail.n++; else llmFail.n = 0;
     l1 = checkL1(a.value, top, texts);
   } else {
@@ -209,11 +209,11 @@ async function pass({ context, item, profile, query, overrides, llm, fp }) {
     l1 = pick ? { ok: true, domain: pick.domain } : { ok: false, why: 'no LLM and no domain declared in portals.yml or data/company-domains.tsv' };
   }
   ev.l1 = l1.ok ? l1.domain : l1.why;
-  if (!l1.ok) return { ...early(gate({ l1 })), ev, model, raw, domain: '', retry: true };
+  if (!l1.ok) return { ...early(gate({ l1 })), ev, model: by.l1 ? `L1:${by.l1}` : '', raw, domain: '', retry: true };
   // L2
   const l2 = await checkDomain(l1.domain);
   ev.l2 = `${l2.class}${l2.status ? ' ' + l2.status : ''}${l2.parked ? ' parked' : ''}${l2.redirectedAway ? ' ->' + l2.finalHost : ''}`;
-  if (l2.class !== 'ok' && l2.class !== '403' && l2.class !== '429') return { ...early(gate({ l1, l2 })), ev, model, raw, domain: l1.domain, retry: true };
+  if (l2.class !== 'ok' && l2.class !== '403' && l2.class !== '429') return { ...early(gate({ l1, l2 })), ev, model: by.l1 ? `L1:${by.l1}` : '', raw, domain: l1.domain, retry: true };
   // L3
   const l3 = await probeHost(context, l1.domain, item.name);
   ev.l3 = l3.careersUrl || (l3.blocked ? 'blocked' : 'nothing');
@@ -221,7 +221,7 @@ async function pass({ context, item, profile, query, overrides, llm, fp }) {
   let l4 = null; let model4 = '';
   if (llm && l3.pageText) {
     const v = await llm.verifyPage({ profile: { name: item.name, hq: profile.hq, titles: (fp?.sample || []).map((s) => s.title) }, url: l3.pageUrl, title: l3.pageTitle, text: l3.pageText });
-    model4 = v.model; raw = `${raw} || ${v.raw}`;
+    model4 = v.model; raw = `${raw} || ${v.raw}`; fb.l4 = v.fallback; by.l4 = v.model;
     if (v.value == null) llmFail.n++; else llmFail.n = 0;
     const x = v.value;
     const atsClash = x && l3.ats?.best && !['custom', 'none', ''].includes(String(x.ats).toLowerCase()) && String(x.ats).toLowerCase() !== l3.ats.best.ats;
@@ -240,8 +240,8 @@ async function pass({ context, item, profile, query, overrides, llm, fp }) {
   const l5fp = fingerprintFit(fp, profile);
   ev.l5 = `${l5ats.state}${l5ats.detail ? ' (' + l5ats.detail + ')' : ''}; fingerprint ${l5fp.state}`;
   // L6
-  const g = gate({ l1, l2, l3, l4, l5ats, l5fp }, { needLlm: Boolean(llm) });
-  return { ...g, ev, model: model4 || model, raw, domain: l1.domain, l3, l5ats, retry: !g.accepted };
+  const g = gate({ l1, l2, l3, l4, l5ats, l5fp, fb }, { needLlm: Boolean(llm) });
+  return { ...g, ev, model: Object.entries(by).map(([k, v]) => `${k.toUpperCase()}:${v}`).join(';'), raw, domain: l1.domain, l3, l5ats, retry: !g.accepted };
 }
 const llmFail = { n: 0 };
 /** A run that stopped early reports only the first failed gate, not the layers it never reached. */
@@ -284,11 +284,14 @@ function withDeadline(promise, ms, label) {
   return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
 }
 
-/** Golden file: company TAB allowed_domains (|) TAB expect (accept|queue|any) TAB ats (optional). */
+/**
+ * Golden file: company TAB confirmed_domains (|) TAB expect TAB ats. Only the user's confirmed values count as truth.
+ * expect: unknown (nothing confirmed yet: the row must be queued), accept, queue, any. Confirmed domains are an allowed set.
+ */
 function readGolden(path) {
   return readText(path).split('\n').filter((l) => l.trim() && !l.startsWith('#')).slice(1).map((l) => {
     const [company, domains, expect, ats] = l.split('\t');
-    return { company, domains: (domains || '').split('|').filter(Boolean), expect: expect || 'any', ats: ats || '' };
+    return { company, domains: (domains || '').split('|').filter(Boolean), expect: expect || 'unknown', ats: ats || '' };
   });
 }
 function checkGolden(cases, rows) {
@@ -297,6 +300,8 @@ function checkGolden(cases, rows) {
     const r = rows.find((x) => x.company === c.company);
     if (!r) { fails.push(`${c.company}: no result`); continue; }
     const acc = r.status === 'accepted';
+    if (c.expect === 'unknown' && acc) fails.push(`${c.company}: expectation unconfirmed, so the row must be queued, but it was accepted (${r.domain} ${r.ats})`);
+    if (c.expect !== 'unknown' && acc && !c.domains.length) fails.push(`${c.company}: accepted with no confirmed domain to check against`);
     if (acc && c.domains.length && !c.domains.some((d) => sameSite(d, r.domain))) fails.push(`${c.company}: accepted WRONG domain ${r.domain} (allowed ${c.domains.join('|')})`);
     if (acc && c.ats && r.ats !== c.ats) fails.push(`${c.company}: accepted ats ${r.ats}, expected ${c.ats}`);
     if (c.expect === 'accept' && !acc) fails.push(`${c.company}: expected accepted, got queued (${r.reason})`);
@@ -320,7 +325,9 @@ async function main() {
     inputs = [...inputs].sort((a, b) => (rank.get(a.name.toLowerCase()) ?? 1e9) - (rank.get(b.name.toLowerCase()) ?? 1e9));
   }
   if (has('--list')) { for (const i of inputs) console.log(`${i.name}\t${i.sources.join(',')}`); console.log(`\n${inputs.length} companies`); return 0; }
-  if (!golden && !has('--skip-golden') && !existsSync(GOLDEN_PASS)) { console.error(`No passing golden check (${GOLDEN_PASS}). Run with --golden tests/discover-golden.tsv --llm first, or pass --skip-golden.`); return 5; }
+  const unvalidated = !golden && !existsSync(GOLDEN_PASS);
+  if (unvalidated && process.env.CAREER_OPS_UNVALIDATED !== '1') { console.error(`No passing golden check (${GOLDEN_PASS}). Run with --golden tests/discover-golden.tsv --llm first.`); return 5; }
+  const validation = golden ? 'golden-run' : unvalidated ? 'unvalidated' : 'golden-passed';
 
   let llm = null;
   if (has('--llm')) {
@@ -373,6 +380,7 @@ async function main() {
         failures++;
         r = { company: item.name, confidence: 'needs-review', status: 'queued', notes: `from ${item.sources.join('+')}`, reason: `error: ${String(err?.message || err).slice(0, 120)}` };
       }
+      r.validation = validation;
       rows.push(r);
       appendFileSync(out, tsvRow(r) + '\n');
       status[r.status === 'accepted' ? 'accepted' : 'queued']++;
