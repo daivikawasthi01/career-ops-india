@@ -41,7 +41,7 @@ const PORTALS = process.env.CAREER_OPS_PORTALS || join(ROOT, 'portals.yml');
 const ENV_DIRS = [process.env.CAREER_OPS_ENV_DIR, ROOT].filter(Boolean);
 const REPO = join(dirname(new URL(import.meta.url).pathname), '..');
 const COMPANY_DEADLINE_MS = Number(process.env.CAREER_OPS_COMPANY_DEADLINE_MS || 300000);
-const COLS = ['company', 'final_status', 'outcome', 'careers_url', 'ats', 'jobs_total', 'jobs_india', 'sample_titles', 'rounds', 'tests', 'via', 'tried', 'queries', 'models', 'notes'];
+const COLS = ['company', 'final_status', 'outcome', 'careers_url', 'ats', 'jobs_total', 'jobs_india', 'sample_titles', 'rounds', 'tests', 'via', 'tried', 'queries', 'models', 'notes', 'alternatives'];
 const rowLine = (r) => COLS.map((c) => redact(String(r[c] ?? '')).replace(/[\t\r\n]+/g, ' ').trim()).join('\t');
 export const readDone2 = (text) => new Set(text.split('\n').slice(1).map((l) => l.split('\t')[0].trim().toLowerCase()).filter(Boolean));
 
@@ -178,7 +178,10 @@ async function processCompany2({ context, row, rejectedUrls, llm, vision }) {
   let final = !verdicts.length ? (searchBlocked ? 'search-blocked' : 'no-candidate') : PASSING.has(top) || top === 'board-empty' || top === 'listings-unread' ? top : top === 'bot-blocked' ? 'bot-blocked' : top === 'unverified-identity' ? 'needs-identity-check' : 'unresolved';
   if (PASSING.has(final) && final !== 'listings-unread') final = indiaStatus(final, win); // right-portal-no-india only when locations were read; else india-unknown
   if (final === 'unresolved' && searchBlocked) final = 'search-blocked';
+  // Other pages that looked like this company's (a shared name, a second portal): shown in the dashboard so you can pick one.
+  const alternatives = st.results.filter((r) => r.url !== win?.url && !['unreachable', 'not-careers', 'dead-board', 'rejected-by-user'].includes(r.verdict)).slice(0, 4).map((r) => ({ u: r.url, v: r.verdict, jobs: r.total ?? '', india: r.india ?? '' }));
   return {
+    alternatives: JSON.stringify(alternatives),
     company: name, final_status: final, outcome: outcomeOf(final, win?.india), careers_url: win && final !== 'no-candidate' ? win.url : '', ats: win?.ats || '',
     jobs_total: win?.total ?? '', jobs_india: win?.india ?? '', sample_titles: (win?.sample || []).slice(0, 5).join(' | '), rounds, tests: st.tests, via: '',
     tried: JSON.stringify(st.results.slice(0, 12).map((r) => ({ u: r.url, v: r.verdict }))), queries: st.queries.join(' | '), models: [...st.models].join(','), notes: [...st.notes, win?.note ? `how:${String(win.note).slice(0, 60)}` : '', win?.indiaMentions !== undefined ? `india-mentions:${win.indiaMentions}` : ''].filter(Boolean).join(','),

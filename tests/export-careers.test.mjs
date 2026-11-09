@@ -54,3 +54,11 @@ test('dashboard: a pass 2 result replaces the pass 1 flag and keeps the careers 
   assert.equal(rows[0].p1_flag, 'bot-blocked');
   assert.equal(rows[1].flag, 'ok', 'no pass 2 row: unchanged');
 });
+
+test('dashboard rows carry the other pages pass 2 found, so one of several same-name companies can be picked', () => {
+  const alts = JSON.stringify([{ u: 'https://bluestone.co.in/careers/', v: 'listings-unread', jobs: '', india: '' }]);
+  const [r] = mergePass2([{ company: 'Bluestone', flag: 'review', careers_url: '' }], [{ company: 'Bluestone', final_status: 'listings-unread', careers_url: 'https://www.bluestone.com/career', alternatives: alts }]);
+  assert.equal(r.alternatives.length, 1);
+  assert.equal(r.alternatives[0].u, 'https://bluestone.co.in/careers/');
+  assert.deepEqual(mergePass2([{ company: 'X', flag: 'ok' }], [{ company: 'X', final_status: 'jobs-found', jobs_india: '2', alternatives: 'not json' }])[0].alternatives, []);
+});

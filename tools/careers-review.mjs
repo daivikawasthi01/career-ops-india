@@ -48,7 +48,7 @@ export function mergePass2(rows, p2rows) {
     const p = by.get(String(r.company).toLowerCase());
     if (!p) return r;
     const outcome = p.outcome || outcomeOf(p.final_status, p.jobs_india);
-    return { ...r, p1_flag: r.flag, flag: outcome, p1_url: r.careers_url, careers_url: p.careers_url || r.careers_url, jobs_total: p.jobs_total, jobs_india: p.jobs_india, sample: p.sample_titles, why: `${p.final_status}${p.notes ? ' | ' + p.notes : ''}` };
+    return { ...r, p1_flag: r.flag, flag: outcome, p1_url: r.careers_url, careers_url: p.careers_url || r.careers_url, alternatives: (() => { try { return JSON.parse(p.alternatives || '[]'); } catch { return []; } })(), jobs_total: p.jobs_total, jobs_india: p.jobs_india, sample: p.sample_titles, why: `${p.final_status}${p.notes ? ' | ' + p.notes : ''}` };
   });
 }
 
@@ -93,6 +93,7 @@ function draw(){const f=$('flag').value,d=$('dec').value,q=$('q').value.toLowerC
   const c=tr.children;c[0].firstChild.textContent=r.company;c[1].textContent=r.flag;c[2].textContent=r.domain||'-';
   const inp=c[3].firstChild;inp.value=url;inp.onchange=()=>save(r.company,{careers_url:inp.value});
   if(url){const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';a.textContent=' open';c[3].append(a);}
+  if((r.alternatives||[]).length){const box=document.createElement('div');box.className='mut';box.append('Other pages found: ');for(const al of r.alternatives){const b=document.createElement('button');b.textContent=al.u.replace(/^https?:\/\/(www\.)?/,'').slice(0,40)+' ('+al.v+')';b.title='use this page';b.style.margin='2px';b.onclick=()=>{inp.value=al.u;save(r.company,{careers_url:al.u});};box.append(b);const o=document.createElement('a');o.href=al.u;o.target='_blank';o.rel='noopener';o.textContent='\u2197';box.append(o,' ');}c[3].append(box);}
   c[4].textContent=r.jobs_total!==undefined?((r.jobs_total||'-')+' / '+(r.jobs_india||'-')+(r.sample?' | '+r.sample.slice(0,60):'')):((r.ats||'-')+' / '+(r.board_match||'-'));c[5].textContent=(r.why||r.reason||'').slice(0,140);
   for(const[k,t]of[['ok','\\u2714'],['bad','\\u2718']]){const b=document.createElement('button');b.textContent=t;b.title=k==='ok'?'correct':'wrong';if(v.decision===k)b.style.borderColor='currentColor';b.onclick=()=>save(r.company,{decision:v.decision===k?null:k});c[6].append(b);}
   $('rows').append(tr);}}
