@@ -119,7 +119,9 @@ async function processCompany2({ context, row, rejectedUrls, llm, vision }) {
   for (const u of rejectedUrls) mark(st.tried, u, 'rejected-by-user');
   st.trusted = new Set(row.status === 'accepted' && row.careers_url ? [keyOf(row.careers_url, atsFromUrl)] : []);
   const passed = () => st.results.some((r) => PASSING.has(r.verdict));
-  for (const u of [row.careers_url].filter((u) => /^https?:/.test(u || '') && !seen(st.tried, u))) await testUrl(context, u, name, st);
+  const known = env.known?.get(name.toLowerCase().replace(/[^a-z0-9]/g, '')); // a URL already in portals.yml (your verified list) is tried before any search
+  if (known && !seen(st.tried, known) && known !== row.careers_url) { st.trusted.add(keyOf(known, atsFromUrl)); await testUrl(context, known, name, st); }
+  for (const u of [row.careers_url].filter((u) => !passed() && /^https?:/.test(u || '') && !seen(st.tried, u))) await testUrl(context, u, name, st);
   let rounds = 0; let searchBlocked = false;
   while (!passed() && rounds < LIMITS.maxRounds && st.tests < LIMITS.maxTests) {
     rounds++;
@@ -128,10 +130,10 @@ async function processCompany2({ context, row, rejectedUrls, llm, vision }) {
       const plan = await llm.planQueries({ company: name, hint: row.notes, tried: st.results.map((r) => ({ url: r.url, verdict: r.verdict })), queries: st.queries, snippet: st.results.at(-1)?.snippet || '' });
       if (plan.model) st.models.add(plan.model);
       const fresh = (plan.value?.queries || []).filter((q) => !st.queries.includes(q));
-      if (fresh.length) queries = fresh;
+      queries = [...queries, ...fresh.filter((q) => !queries.includes(q))]; // the fixed India pair always runs; the LLM adds to it
     }
     const pool = []; let shot = ''; let empties = 0;
-    for (const q of queries.slice(0, 3)) {
+    for (const q of queries.slice(0, 4)) {
       const res = await searchResults(context, q, { shot: vision && !shot });
       st.queries.push(q);
       if (!res.length) { empties++; shot = shot || res.shot || ''; }
@@ -150,7 +152,7 @@ async function processCompany2({ context, row, rejectedUrls, llm, vision }) {
         cands = rankCandidates(urls, st.tried, { limit: LIMITS.perRound, name });
       }
     }
-    if (shouldStop({ round: rounds, tests: st.tests, newCandidates: cands.length, passed: passed() }) && !cands.length) break;
+    if (shouldStop({ round: rounds, tests: st.tests, newCandidates: cands.length, passed: passed() }) && !cands.length && (st.tests > 0 || rounds >= 2)) { if (empties === queries.slice(0, 4).length) st.notes.push('search-empty'); break; } // nothing tested yet: one more round with the other query pair
     for (const c of cands) { if (st.tests >= LIMITS.maxTests || passed()) break; await testUrl(context, c.url, name, st); }
   }
   const verdicts = st.results.map((r) => r.verdict);
@@ -173,6 +175,7 @@ export async function initEnv() {
   const { makeHttpCtx } = await import('../providers/_http.mjs');
   const { buildLocationFilter } = await import('../scan.mjs');
   const portals = existsSync(PORTALS) ? (loadYaml(read(PORTALS)) || {}) : {};
+  env.known = new Map((portals.tracked_companies || []).filter((e) => e?.name && /^https?:/.test(e.careers_url || '') && e.enabled !== false).map((e) => [String(e.name).toLowerCase().replace(/[^a-z0-9]/g, ''), e.careers_url]));
   Object.assign(env, { providers: await loadProviders(join(REPO, 'providers')), resolveProvider, http: makeHttpCtx(), inIndia: buildLocationFilter(applyPipelineConfig(portals).location_filter) });
 
 }
