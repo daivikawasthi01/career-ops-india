@@ -196,3 +196,11 @@ test('guessed careers URLs come only from a plausible host', () => {
   assert.deepEqual(guessCareerUrls(''), []);
   assert.deepEqual(guessCareerUrls('not a host'), []);
 });
+
+import { isHollowResults } from '../tools/discover-careers.mjs';
+test('search rows with links but no titles are hollow, real result rows are not', () => {
+  assert.equal(isHollowResults(Array.from({ length: 10 }, () => ({ title: '', url: 'https://x.com' }))), true);
+  assert.equal(isHollowResults([{ title: 'Careers - Zepto' }, { title: 'Zepto: Jobs | LinkedIn' }, { title: 'Zepto Careers' }, { title: '' }]), false);
+  assert.equal(isHollowResults([]), false);
+  assert.equal(isHollowResults([{ title: 'Only one real title' }]), false);
+});

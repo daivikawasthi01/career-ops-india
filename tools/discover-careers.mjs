@@ -217,6 +217,8 @@ const searchTurn = async () => {
   return p;
 };
 /** Top results from the first engine that returns any. Zero results from every engine is reported as an empty search, never as "no candidates". */
+/** Result rows that carry links but almost no title text: a throttled page, not results. */
+export const isHollowResults = (rs) => rs.length > 0 && rs.filter((r) => String(r.title || '').trim().length > 3).length < Math.min(3, rs.length);
 async function searchResults(context, query, opts = {}) {
   let shot = '';
   await searchTurn(); // searches are spaced out across all workers
@@ -227,7 +229,11 @@ async function searchResults(context, query, opts = {}) {
       await page.goto(eng.url(query), { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT });
       const text = await page.evaluate(() => (document.body?.innerText || '').slice(0, 3000));
       if (captchaLikely({ status: 200, html: text, url: page.url() })) continue;
-      const rows = await page.evaluate(eng.read);
+      let rows = await page.evaluate(eng.read);
+      // Bing sometimes returns the result rows with no text (a throttled, hollow page). Links without titles are not results: wait once, read again,
+      // and otherwise treat the engine as blocked so the next one is tried and the governor slows down.
+      if (isHollowResults(rows)) { await page.waitForTimeout(4000); rows = await page.evaluate(eng.read); }
+      if (isHollowResults(rows)) { searchStats.hollow = (searchStats.hollow || 0) + 1; continue; }
       const out = rows.map((r) => {
         let url = unwrapBingUrl(r.href);
         try { const t = new URL(r.href).searchParams.get('uddg'); if (t) url = decodeURIComponent(t); } catch { /* keep */ }
