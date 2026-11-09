@@ -207,7 +207,8 @@ test('pipeline L6: accepted only when every gate agrees; a missing verifier queu
   assert.equal(gate({ ...good, l4: null }).accepted, false, 'LLM mode needs the verifier');
   assert.equal(gate({ ...good, l4: null }, { needLlm: false }).accepted, true);
   assert.equal(gate({ ...good, l5ats: { state: 'no-board' } }).accepted, true, 'no portals board to compare is not a failure');
-  assert.equal(queryVariants('Cred', { expectIndia: true }).length, 3);
+  assert.equal(queryVariants('Cred', { expectIndia: true }).length, 4);
+  assert.equal(queryVariants('Cred', {})[0], 'Cred careers sde');
 });
 
 test('llm: schemas are fixed, prompts carry only the allowed fields, the provider prefix is checked', () => {
