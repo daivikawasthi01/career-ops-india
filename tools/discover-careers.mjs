@@ -49,6 +49,7 @@ const arg = (name) => { const i = process.argv.indexOf(name); return i >= 0 ? pr
 const has = (name) => process.argv.includes(name);
 const OUT = arg('--out') || join(ROOT, 'data', 'careers-discovery.tsv');
 const STATUS = OUT.replace(/\.tsv$/, '.status.json');
+const MIN_CONFIRMED = 10;
 const GOLDEN_PASS = join(ROOT, 'data', 'careers-golden.pass.json');
 const PROFILE_DIR = join(ROOT, 'data', 'cache', 'careers-profile');
 const PORTALS = process.env.CAREER_OPS_PORTALS || join(ROOT, 'portals.yml');
@@ -429,7 +430,6 @@ if (isMainModule(import.meta.url)) {
   main().then((c) => process.exit(c)).catch((err) => { console.error(redact(err?.stack || err)); process.exit(1); });
 }
 /** The pass marker needs enough confirmed cases; an all-unknown file can never pass. */
-const MIN_CONFIRMED = 10;
 function goldenVerdict(cases, fails) {
   const confirmed = cases.filter((c) => c.expect !== 'unknown' && c.domains.length).length;
   return { confirmed, passed: fails.length === 0 && confirmed >= MIN_CONFIRMED, enough: confirmed >= MIN_CONFIRMED };
