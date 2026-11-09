@@ -29,7 +29,7 @@ import {
 } from '../lib/careers-discovery.mjs';
 import { makeLlm, loadGroqKey, loadModels } from '../lib/careers-llm.mjs';
 import {
-  registrable, sameSite, isAggregator, checkDomain, checkL1, quoteInEvidence, compareAts, boardFingerprint, fingerprintFit, gate, queryVariants, redact,
+  registrable, sameSite, isAggregator, checkDomain, checkL1, quoteInEvidence, compareAts, boardFingerprint, fingerprintFit, gate, queryVariants, redact, unwrapBingUrl,
 } from '../lib/careers-pipeline.mjs';
 
 const USAGE = `usage: discover-careers.mjs [--llm] [--limit N] [--only NAME,NAME] [--first FILE] [--list] [--slice1] [--golden FILE] [--out PATH]
@@ -116,30 +116,41 @@ async function visit(context, url) {
 
 let lastSearchAt = 0;
 /** L0 search: top 8 results with title, url, snippet. Polite (3-5 s apart); stops the run at a captcha. */
+const ENGINES = [
+  { name: 'bing', url: (q) => `https://www.bing.com/search?q=${encodeURIComponent(q)}`,
+    read: () => [...document.querySelectorAll('li.b_algo')].slice(0, 10).map((r) => ({ title: r.querySelector('h2')?.innerText || '', href: r.querySelector('h2 a')?.href || '', snippet: r.querySelector('.b_caption p, p')?.innerText || '' })) },
+  { name: 'duckduckgo', url: (q) => `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`,
+    read: () => [...document.querySelectorAll('.result')].slice(0, 12).map((r) => ({ title: r.querySelector('.result__a')?.innerText || '', href: r.querySelector('.result__a')?.href || '', snippet: r.querySelector('.result__snippet')?.innerText || '' })) },
+];
+const searchStats = { empty: 0, calls: 0 };
+/** Top results from the first engine that returns any. Zero results from every engine is reported as an empty search, never as "no candidates". */
 async function searchResults(context, query) {
   const wait = 3000 + Math.random() * 2000 - (Date.now() - lastSearchAt);
   if (wait > 0) await sleep(wait);
   lastSearchAt = Date.now();
-  const page = await context.newPage();
-  try {
-    await page.goto(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT });
-    const text = await page.evaluate(() => (document.body?.innerText || '').slice(0, 3000));
-    const status = 200;
-    if (captchaLikely({ status, html: text, url: page.url() })) throw new Halt(2, 'captcha or rate limit on the search engine');
-    const rows = await page.evaluate(() => [...document.querySelectorAll('.result')].slice(0, 12).map((r) => ({
-      title: r.querySelector('.result__a')?.innerText || '', href: r.querySelector('.result__a')?.href || '', snippet: r.querySelector('.result__snippet')?.innerText || '',
-    })));
-    return rows.map((r) => {
-      let url = r.href;
-      try { const t = new URL(r.href).searchParams.get('uddg'); if (t) url = decodeURIComponent(t); } catch { /* keep */ }
-      return { title: r.title.trim(), url, snippet: r.snippet.trim() };
-    }).filter((r) => /^https?:/.test(r.url) && !/duckduckgo\.com/.test(r.url)).slice(0, 8);
-  } catch (err) {
-    if (err instanceof Halt) throw err;
-    return [];
-  } finally {
-    await page.close().catch(() => {});
+  searchStats.calls++;
+  for (const eng of ENGINES) {
+    const page = await context.newPage();
+    try {
+      await page.goto(eng.url(query), { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT });
+      const text = await page.evaluate(() => (document.body?.innerText || '').slice(0, 3000));
+      if (captchaLikely({ status: 200, html: text, url: page.url() })) continue;
+      const rows = await page.evaluate(eng.read);
+      const out = rows.map((r) => {
+        let url = unwrapBingUrl(r.href);
+        try { const t = new URL(r.href).searchParams.get('uddg'); if (t) url = decodeURIComponent(t); } catch { /* keep */ }
+        return { title: r.title.trim(), url, snippet: r.snippet.trim() };
+      }).filter((r) => /^https?:/.test(r.url) && !/(duckduckgo|bing)\.com/.test(new URL(r.url).hostname)).slice(0, 8);
+      if (out.length) { out.engine = eng.name; return out; }
+    } catch (err) {
+      if (err instanceof Halt) throw err;
+    } finally {
+      await page.close().catch(() => {});
+    }
   }
+  searchStats.empty++;
+  const none = []; none.engine = 'none';
+  return none;
 }
 
 /** L3 on one host: homepage, /careers (or the homepage's own careers link), ATS links from links + iframes + requests. */
@@ -185,6 +196,9 @@ async function pass({ context, item, profile, query, overrides, llm, fp }) {
   const ev = { query };
   // L0
   const results = await searchResults(context, query);
+  searchStats.run = results.length ? 0 : (searchStats.run || 0) + 1;
+  if (searchStats.run >= 3) throw new Halt(2, 'search returned nothing from every engine 3 times in a row (blocked?)');
+  if (!results.length) return { ...early(gate({ l1: { ok: false, why: 'search returned no results from any engine, so no candidates were gathered' } })), ev, model: '', raw: '', domain: '', retry: true };
   const cands = [];
   const add = (domain, source) => { if (domain && !cands.some((c) => sameSite(c.domain, domain))) cands.push({ domain, source, results: [] }); };
   const ov = overrides.get(item.name.toLowerCase());

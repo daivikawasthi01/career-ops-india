@@ -138,7 +138,7 @@ import {
   boardFingerprint, fingerprintFit, gate, queryVariants,
 } from '../lib/careers-pipeline.mjs';
 import { checkGolden, readGolden, goldenVerdict, tsvRow, COLUMNS } from '../tools/discover-careers.mjs';
-import { redact } from '../lib/careers-pipeline.mjs';
+import { redact, unwrapBingUrl } from '../lib/careers-pipeline.mjs';
 import { parseAggregatorHosts, isAggregatorBoard } from '../lib/board-audit.mjs';
 import { auditBoard } from '../audit-board-identity.mjs';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -327,4 +327,11 @@ test('aggregator boards: the identity gate skips a listed host and nothing in th
     if (!src.includes('aggregator-boards')) continue;
     assert.ok(!/(writeFileSync|appendFileSync|writeFile|renameSync)\([^)]*aggregator/i.test(src), `${f} must not write aggregator-boards.tsv`);
   }
+});
+
+test('bing result links are unwrapped to the real URL', () => {
+  const real = 'https://www.tcs.com/careers';
+  const wrapped = `https://www.bing.com/ck/a?!&&p=abc&u=a1${Buffer.from(real).toString('base64url')}&ntb=1`;
+  assert.equal(unwrapBingUrl(wrapped), real);
+  assert.equal(unwrapBingUrl('https://example.com/x'), 'https://example.com/x');
 });
