@@ -391,7 +391,7 @@ async function pass({ context, item, profile, queries, overrides, llm, fp }) {
     // Seed from Wikidata's official-website property: retrieved evidence, not model memory.
     for (const w of await wikidataSites(item.name)) if (!results.some((x) => sameSite(hostOf(x.url), hostOf(w.url)))) results.push(w);
   }
-  if (!declaredHost && !results.length) return { ...early(gate({ l1: { ok: false, why: 'search returned no results from any engine, so no candidates were gathered' } })), ev, model: '', raw: '', domain: '', retry: true };
+  // No search results is not the end: guessed domains from the name are still candidates (the model and the page checks decide).
   const cands = [];
   const add = (domain, source) => { if (domain && !cands.some((c) => sameSite(c.domain, domain))) cands.push({ domain, source, results: [] }); };
   const ov = overrides.get(item.name.toLowerCase());
@@ -402,6 +402,7 @@ async function pass({ context, item, profile, queries, overrides, llm, fp }) {
   for (const c of cands) c.results = results.filter((r) => sameSite(hostOf(r.url), c.domain));
   if (cands.length < 3) for (const g of domainCandidates(item.name).slice(0, 3)) if (cands.length < 5) add(g, 'guess');
   const top = cands.slice(0, 5);
+  if (!top.length) return { ...early(gate({ l1: { ok: false, why: 'search returned no results from any engine, so no candidates were gathered' } })), ev, model: '', raw: '', domain: '', retry: true };
   for (const c of top.slice(0, 3)) { const h = await visit(context, `https://${c.domain}/`); c.homeText = h.ok ? h.text.slice(0, 800) : ''; c.loaded = h.ok; }
   ev.candidates = top.map((c) => `${c.domain}[${c.source}${c.loaded === false ? ',unreachable' : ''}]`);
   const texts = [];
