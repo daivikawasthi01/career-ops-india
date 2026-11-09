@@ -62,3 +62,26 @@ test('dashboard rows carry the other pages pass 2 found, so one of several same-
   assert.equal(r.alternatives[0].u, 'https://bluestone.co.in/careers/');
   assert.deepEqual(mergePass2([{ company: 'X', flag: 'ok' }], [{ company: 'X', final_status: 'jobs-found', jobs_india: '2', alternatives: 'not json' }])[0].alternatives, []);
 });
+
+import { makeServer, phaseView } from '../tools/careers-review.mjs';
+test('the dashboard page serves a script that parses, and the run endpoints answer', async () => {
+  const server = makeServer(); await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const html = await (await fetch(base + '/')).text();
+    const script = html.match(/<script>([\s\S]*)<\/script>/)[1];
+    assert.doesNotThrow(() => new Function(script), 'page script has a syntax error');
+    assert.ok(html.includes('id="runs"'));
+    const runs = await (await fetch(base + '/api/runs')).json();
+    assert.equal(runs.length, 3);
+    assert.deepEqual(await (await fetch(base + '/api/log?phase=9')).json(), []);
+  } finally { server.close(); }
+});
+
+test('a run that stopped updating shows as stopped, a fresh one as live', () => {
+  const now = Date.parse('2026-11-09T12:00:00Z');
+  assert.equal(phaseView({ state: 'running', updated_at: '2026-11-09T11:59:30Z' }, now).live, true);
+  const old = phaseView({ state: 'running', updated_at: '2026-11-09T11:50:00Z' }, now);
+  assert.equal(old.state, 'stopped'); assert.equal(old.live, false);
+  assert.equal(phaseView({ state: 'finished', updated_at: '2026-11-09T10:00:00Z' }, now).state, 'finished');
+});

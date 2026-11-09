@@ -520,7 +520,7 @@ async function main() {
   writeStatus(status);
   let failures = 0; let code = 0;
   const rows = [];
-  const pg = createProgress({ total: batch.length, label: 'pass 1', logFile: join(dirname(out), 'careers-run-pass1.log') }); pg.start();
+  const pg = createProgress({ total: batch.length, label: 'pass 1', logFile: join(dirname(out), 'careers-run-pass1.log'), statusFile: join(dirname(out), 'careers-run-pass1.status.json') }); pg.start();
   try {
     let next = 0; let stop = null;
     const WORKERS = Math.max(1, Number(arg('--workers')) || 3);
@@ -563,7 +563,7 @@ async function main() {
     status.state = 'halted'; status.halt_reason = err.message; code = err.code;
     console.error(redact(`HALTED: ${err.message}. ${status.done} of ${total} done; rerun to resume.`));
   } finally {
-    pg.done();
+    pg.done('', status.state === 'halted' ? 'halted' : 'finished');
     status.current = null;
     if (llm) { status.llm_usage = llm.usage; console.log(`LLM usage: ${llm.usage.calls} calls, ${llm.usage.input} input tokens, ${llm.usage.output} output tokens, ${llm.usage.errors} errors`); }
     writeStatus(status);

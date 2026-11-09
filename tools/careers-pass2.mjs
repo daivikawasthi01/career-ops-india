@@ -236,7 +236,7 @@ async function main() {
 
   const vision = Boolean(llm) && !has('--no-vision');
   let next = 0; let stop = null; let n = 0; const counts = {};
-  const pg = createProgress({ total: todo.length, label: 'pass 2', logFile: join(ROOT, 'data', 'careers-run-pass2.log') }); pg.start();
+  const pg = createProgress({ total: todo.length, label: 'pass 2', logFile: join(ROOT, 'data', 'careers-run-pass2.log'), statusFile: join(ROOT, 'data', 'careers-run-pass2.status.json') }); pg.start();
   const worker = async () => {
     while (!stop && next < todo.length) {
       const row = todo[next++];
@@ -256,7 +256,7 @@ async function main() {
   };
   await Promise.all(Array.from({ length: Math.max(1, Number(arg('--workers')) || 3) }, worker));
   await context.close().catch(() => {});
-  pg.done();
+  pg.done('', stop ? 'halted' : 'finished');
   console.log('Summary:', JSON.stringify(counts), llm ? JSON.stringify(llm.usage) : '');
   if (stop) { console.error(`HALTED: ${stop.message}. Rerun to resume.`); return stop.code; }
   return 0;

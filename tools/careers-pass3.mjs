@@ -84,7 +84,7 @@ async function main() {
   setSessionContext(context);
   await context.route('**/*', (route) => (['image', 'font', 'media'].includes(route.request().resourceType()) ? route.abort() : route.continue()));
   let next = 0; let stop = null; let n = 0; const counts = {};
-  const pg = createProgress({ total: todo.length, label: 'pass 3', logFile: join(ROOT, 'data', 'careers-run-pass3.log') }); pg.start();
+  const pg = createProgress({ total: todo.length, label: 'pass 3', logFile: join(ROOT, 'data', 'careers-run-pass3.log'), statusFile: join(ROOT, 'data', 'careers-run-pass3.status.json') }); pg.start();
   const worker = async () => {
     while (!stop && next < todo.length) {
       const row = todo[next++]; let r;
@@ -99,7 +99,7 @@ async function main() {
   };
   await Promise.all(Array.from({ length: Math.max(1, Number(arg('--workers')) || 2) }, worker));
   await context.close().catch(() => {});
-  pg.done();
+  pg.done('', stop ? 'halted' : 'finished');
   console.log('Summary:', JSON.stringify(counts));
   if (stop) { console.error(`HALTED: ${stop.message}`); return stop.code; }
   return 0;

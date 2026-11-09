@@ -10,6 +10,7 @@
  * It never edits portals.yml or the discovery TSV, and listens on loopback only.
  */
 import { createServer } from 'node:http';
+import { openSync, readSync, fstatSync, closeSync } from 'node:fs';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { isMainModule } from '../lib/is-main-module.mjs';
@@ -52,6 +53,25 @@ export function mergePass2(rows, p2rows) {
   });
 }
 
+const RUN_DIR = dirname(TSV);
+const runFile = (n, kind) => join(RUN_DIR, `careers-run-pass${n}.${kind}`);
+/** A phase status file as the page shows it: a run that stopped updating (Ctrl-C, crash) is "stopped", not "running". */
+export function phaseView(raw, now = Date.now(), staleMs = 90000) {
+  if (!raw || typeof raw !== 'object') return null;
+  const live = raw.state === 'running' && now - Date.parse(raw.updated_at || 0) < staleMs;
+  return { ...raw, state: raw.state === 'running' && !live ? 'stopped' : raw.state, live };
+}
+function readPhases() {
+  return [1, 2, 3].map((n) => { try { return { phase: n, ...phaseView(JSON.parse(readFileSync(runFile(n, 'status.json'), 'utf8'))) }; } catch { return { phase: n, state: 'not run' }; } });
+}
+function tailLog(n, lines = 60) {
+  try {
+    const fd = openSync(runFile(n, 'log'), 'r'); const size = fstatSync(fd).size; const len = Math.min(size, 65536);
+    const buf = Buffer.alloc(len); readSync(fd, buf, 0, len, size - len); closeSync(fd);
+    return buf.toString('utf8').split('\n').filter(Boolean).slice(-lines);
+  } catch { return []; }
+}
+
 const readReview = () => { try { return JSON.parse(readFileSync(REVIEW, 'utf8')); } catch { return {}; } };
 function saveReview(obj) {
   mkdirSync(dirname(REVIEW), { recursive: true });
@@ -69,12 +89,14 @@ table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:6px 10px
 td.u input{width:100%;min-width:220px}.mut{color:var(--mut);font-size:12px}
 .ok,.pass{color:var(--ok)}.bad,.not-found{color:var(--bad)}.warn{color:var(--warn)}.no-india-jobs{color:#b7791f}.india-unknown{color:#a8a000}.no-jobs-read{color:#d9730d}.blocked{color:var(--mut)}.check-identity{color:#8250df}.act button{cursor:pointer;font-size:16px}
 tr.done{opacity:.55}
+#runs{display:flex;gap:10px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--line)}.run{flex:1 1 280px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:13px}.run b{display:block}.track{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin:6px 0}.track i{display:block;height:100%;background:var(--ok)}.run.stopped .track i,.run.halted .track i{background:var(--warn)}.run pre{max-height:180px;overflow:auto;font-size:11px;margin:6px 0 0;white-space:pre-wrap}
 @media(max-width:700px){td.hide{display:none}th.hide{display:none}}
 </style></head><body>
 <header><b>Careers review</b><span id="count" class="mut"></span>
 <select id="flag"><option value="">all flags</option></select>
 <select id="dec"><option value="">any decision</option><option value="todo">not reviewed</option><option value="ok">ticked</option><option value="bad">crossed</option></select>
 <input id="q" placeholder="search company"></header>
+<div id="runs"></div>
 <table><thead><tr><th>Company</th><th>Flag</th><th>Domain</th><th>Careers URL (editable)</th><th class="hide">Jobs / India</th><th class="hide">Why</th><th>Review</th></tr></thead><tbody id="rows"></tbody></table>
 <script>
 let rows=[],rev={};
@@ -93,13 +115,24 @@ function draw(){const f=$('flag').value,d=$('dec').value,q=$('q').value.toLowerC
   const c=tr.children;c[0].firstChild.textContent=r.company;c[1].textContent=r.flag;c[2].textContent=r.domain||'-';
   const inp=c[3].firstChild;inp.value=url;inp.onchange=()=>save(r.company,{careers_url:inp.value});
   if(url){const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';a.textContent=' open';c[3].append(a);}
-  if((r.alternatives||[]).length){const box=document.createElement('div');box.className='mut';box.append('Other pages found: ');for(const al of r.alternatives){const b=document.createElement('button');b.textContent=al.u.replace(/^https?:\/\/(www\.)?/,'').slice(0,40)+' ('+al.v+')';b.title='use this page';b.style.margin='2px';b.onclick=()=>{inp.value=al.u;save(r.company,{careers_url:al.u});};box.append(b);const o=document.createElement('a');o.href=al.u;o.target='_blank';o.rel='noopener';o.textContent='\u2197';box.append(o,' ');}c[3].append(box);}
+  if((r.alternatives||[]).length){const box=document.createElement('div');box.className='mut';box.append('Other pages found: ');for(const al of r.alternatives){const b=document.createElement('button');b.textContent=al.u.replace('https://','').replace('http://','').replace('www.','').slice(0,40)+' ('+al.v+')';b.title='use this page';b.style.margin='2px';b.onclick=()=>{inp.value=al.u;save(r.company,{careers_url:al.u});};box.append(b);const o=document.createElement('a');o.href=al.u;o.target='_blank';o.rel='noopener';o.textContent='\u2197';box.append(o,' ');}c[3].append(box);}
   c[4].textContent=r.jobs_total!==undefined?((r.jobs_total||'-')+' / '+(r.jobs_india||'-')+(r.sample?' | '+r.sample.slice(0,60):'')):((r.ats||'-')+' / '+(r.board_match||'-'));c[5].textContent=(r.why||r.reason||'').slice(0,140);
   for(const[k,t]of[['ok','\\u2714'],['bad','\\u2718']]){const b=document.createElement('button');b.textContent=t;b.title=k==='ok'?'correct':'wrong';if(v.decision===k)b.style.borderColor='currentColor';b.onclick=()=>save(r.company,{decision:v.decision===k?null:k});c[6].append(b);}
   $('rows').append(tr);}}
 async function save(company,patch){rev[company]={...(rev[company]||{}),...patch};await fetch('/api/review',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({company,patch})});draw();}
 for(const id of['flag','dec'])$(id).onchange=draw;$('q').oninput=draw;
-load();setInterval(()=>{if(document.activeElement.tagName!=='INPUT')load();},30000);
+const fmt=s=>s==null?'--':s<60?s+'s':s<3600?Math.floor(s/60)+'m':Math.floor(s/3600)+'h'+String(Math.floor(s%3600/60)).padStart(2,'0')+'m';
+const NAMES={1:'Phase 1: find pages',2:'Phase 2: fetch jobs, India check',3:'Phase 3: India versions'};const openLog={};
+async function loadRuns(){const ph=await fetch('/api/runs').then(r=>r.json());const box=$('runs');box.innerHTML='';
+ for(const p of ph){const d=document.createElement('div');d.className='run '+(p.state||'');const pct=p.total?Math.round(100*p.done/p.total):0;
+  const top=Object.entries(p.counts||{}).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([k,v])=>k+' '+v).join(' | ');
+  d.innerHTML='<b></b><div class="mut"></div><div class="track"><i style="width:'+pct+'%"></i></div><div class="mut"></div><div class="mut"></div><button>log</button><pre hidden></pre>';
+  const c=d.children;c[0].textContent=NAMES[p.phase]+' ('+p.state+(p.live?', live':'')+')';c[1].textContent=p.total?(p.done+' / '+p.total+' ('+pct+'%)'+(p.live?' | '+(p.sec_per_item||'-')+' s/item | ETA '+fmt(p.eta_sec):'')):'no run yet';c[3].textContent=top;c[4].textContent=p.updated_at?'updated '+new Date(p.updated_at).toLocaleTimeString():'';
+  const pre=c[6];c[5].onclick=async()=>{openLog[p.phase]=!openLog[p.phase];pre.hidden=!openLog[p.phase];if(!pre.hidden){pre.textContent=(await fetch('/api/log?phase='+p.phase).then(r=>r.json())).join('\\n');pre.scrollTop=pre.scrollHeight;}};
+  if(openLog[p.phase]){pre.hidden=false;pre.textContent=(await fetch('/api/log?phase='+p.phase).then(r=>r.json())).join('\\n');}
+  box.append(d);}}
+loadRuns();setInterval(loadRuns,5000);
+load();setInterval(()=>{if(document.activeElement.tagName!=='INPUT')load();},10000);
 </script></body></html>`;
 
 export function makeServer() {
@@ -107,6 +140,8 @@ export function makeServer() {
     const send = (code, type, body) => { res.writeHead(code, { 'content-type': type, 'cache-control': 'no-store' }); res.end(body); };
     if (req.method === 'GET' && req.url === '/') return send(200, 'text/html; charset=utf-8', PAGE);
     if (req.method === 'GET' && req.url === '/api/rows') return send(200, 'application/json', JSON.stringify(existsSync(TSV) ? mergePass2(parseTsv(readFileSync(TSV, 'utf8')), existsSync(PASS2) ? parseTsv(readFileSync(PASS2, 'utf8')) : []) : []));
+    if (req.method === 'GET' && req.url === '/api/runs') return send(200, 'application/json', JSON.stringify(readPhases()));
+    if (req.method === 'GET' && req.url.startsWith('/api/log')) { const n = Number(new URL(req.url, 'http://x').searchParams.get('phase')); return send(200, 'application/json', JSON.stringify(n >= 1 && n <= 3 ? tailLog(n) : [])); }
     if (req.method === 'GET' && req.url === '/api/review') return send(200, 'application/json', JSON.stringify(readReview()));
     if (req.method === 'POST' && req.url === '/api/review') {
       let body = ''; req.on('data', (c) => { body += c; if (body.length > 20000) req.destroy(); });
