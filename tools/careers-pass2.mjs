@@ -58,7 +58,7 @@ async function fetchBoard(url, name) {
 }
 
 /** One URL, one verdict. Follows an ATS found on the page and "view jobs" style links, depth-limited. */
-async function testUrl(context, url, name, st, depth = 0) {
+export async function testUrl(context, url, name, st, depth = 0) {
   mark(st.tried, url, 'testing'); st.tests++;
   const done = (rec) => { mark(st.tried, url, rec.verdict); st.results.push({ url, ...rec }); return { url, ...rec }; };
   const ats = atsFromUrl(url);
@@ -140,6 +140,17 @@ async function processCompany2({ context, row, rejectedUrls, llm, vision }) {
   };
 }
 
+/** Providers, http context and the India location filter used to count a board's postings. */
+export async function initEnv() {
+  const { applyPipelineConfig } = await import('../lib/pipeline-config.mjs');
+  const { loadProviders, resolveProvider } = await import('../providers/_registry.mjs');
+  const { makeHttpCtx } = await import('../providers/_http.mjs');
+  const { buildLocationFilter } = await import('../scan.mjs');
+  const portals = existsSync(PORTALS) ? (loadYaml(read(PORTALS)) || {}) : {};
+  Object.assign(env, { providers: await loadProviders(join(REPO, 'providers')), resolveProvider, http: makeHttpCtx(), inIndia: buildLocationFilter(applyPipelineConfig(portals).location_filter) });
+
+}
+
 async function main() {
   const rows = parseTsv(read(IN) || 'company\n');
   const review = (() => { try { return JSON.parse(read(REVIEW) || '{}'); } catch { return {}; } })();
@@ -164,13 +175,7 @@ async function main() {
     const c = existsSync(cfgPath) ? (loadYaml(read(cfgPath)) || {}).discovery?.llm : null;
     llm = await makeLlm({ keys, ...loadModels([...ENV_DIRS, REPO], c && typeof c === 'object' ? c : {}) });
   }
-  const { applyPipelineConfig } = await import('../lib/pipeline-config.mjs');
-  const { loadProviders, resolveProvider } = await import('../providers/_registry.mjs');
-  const { makeHttpCtx } = await import('../providers/_http.mjs');
-  const { buildLocationFilter } = await import('../scan.mjs');
-  const portals = existsSync(PORTALS) ? (loadYaml(read(PORTALS)) || {}) : {};
-  Object.assign(env, { providers: await loadProviders(join(REPO, 'providers')), resolveProvider, http: makeHttpCtx(), inIndia: buildLocationFilter(applyPipelineConfig(portals).location_filter) });
-
+  await initEnv();
   const { chromium } = await import('playwright');
   const profile = join(ROOT, 'data', 'cache', 'careers-profile-pass2');
   mkdirSync(profile, { recursive: true });

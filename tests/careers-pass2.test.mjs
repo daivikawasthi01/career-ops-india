@@ -67,3 +67,31 @@ test('vision states map to actions', () => {
 test('every search query asks for India', () => {
   for (const pass of [0, 1]) for (const q of queryPair('Zepto', {}, pass)) assert.match(q, /india/i);
 });
+
+import { indiaVariants, sameOwner, pass3Decision } from '../lib/careers-pass2.mjs';
+import { atsFromUrl } from '../lib/careers-discovery.mjs';
+
+test('india variants: locale segments swap, params swap, otherwise prefixes', () => {
+  assert.deepEqual(indiaVariants('https://www.apple.com/careers/us/'), ['https://www.apple.com/careers/in/', 'https://www.apple.com/careers/en-in/']);
+  assert.equal(indiaVariants('https://x.com/en-us/careers')[0], 'https://x.com/en-in/careers');
+  assert.equal(indiaVariants('https://x.com/careers?country=US')[0], 'https://x.com/careers?country=IN');
+  const plain = indiaVariants('https://x.com/careers');
+  assert.ok(plain.includes('https://x.com/in/careers') && plain.includes('https://in.x.com/careers'));
+  assert.ok(plain.length <= 6 && !plain.includes('https://x.com/careers'));
+  assert.deepEqual(indiaVariants('not a url'), []);
+});
+
+test('only the same site or the same ATS tenant may replace a portal', () => {
+  assert.ok(sameOwner('https://www.apple.com/careers/us/', 'https://jobs.apple.com/en-in/search', atsFromUrl));
+  assert.ok(!sameOwner('https://www.apple.com/careers/us/', 'https://www.other.com/careers/in/', atsFromUrl));
+  assert.ok(sameOwner('https://boards.greenhouse.io/acme', 'https://job-boards.greenhouse.io/acme', atsFromUrl));
+  assert.ok(!sameOwner('https://boards.greenhouse.io/acme', 'https://boards.greenhouse.io/other', atsFromUrl));
+});
+
+test('pass 3 switches only for India postings the old page lacks', () => {
+  assert.equal(pass3Decision({ oldIndia: 0, candidate: { verdict: 'jobs-found', india: 12 } }), 'switch');
+  assert.equal(pass3Decision({ oldIndia: 0, candidate: { verdict: 'jobs-found', india: 0 } }), 'keep');
+  assert.equal(pass3Decision({ oldIndia: 3, candidate: { verdict: 'jobs-found', india: 3 } }), 'keep');
+  assert.equal(pass3Decision({ oldIndia: 0, candidate: { verdict: 'listings-on-page', indiaMentions: 4 } }), 'switch');
+  assert.equal(pass3Decision({ oldIndia: 0, candidate: null }), 'none-found');
+});
