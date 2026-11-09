@@ -409,6 +409,13 @@ async function main() {
   console.log(`Accepted ${status.accepted}, queued ${status.queued}.`);
   if (golden && code === 0) {
     const fails = checkGolden(golden, rows);
+    console.log('\nGOLDEN REPORT (case | result | status | domain | layer that stopped it)');
+    for (const c of golden) {
+      const r = rows.find((x) => x.company === c.company) || {};
+      const bad = fails.some((f) => f.startsWith(`${c.company}:`));
+      const layer = r.status === 'accepted' ? '-' : String(r.reason || '').split(' || ')[0].split(' / ').map((x) => x.split(':')[0]).join(',');
+      console.log(`${c.company} | ${bad ? 'FAIL' : 'pass'} | ${r.status} | ${r.domain || '-'} | ${layer}`);
+    }
     if (fails.length) { console.error(`GOLDEN FAILED:\n  ${fails.join('\n  ')}`); return 5; }
     writeFileSync(GOLDEN_PASS, JSON.stringify({ passed_at: new Date().toISOString(), cases: golden.length, llm: Boolean(llm), accepted: status.accepted }, null, 1) + '\n');
     console.log(`GOLDEN PASSED: ${golden.length} cases.`);
