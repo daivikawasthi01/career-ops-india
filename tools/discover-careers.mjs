@@ -164,7 +164,8 @@ async function visit(context, url, opts = {}) {
       frames: [...document.querySelectorAll('iframe[src]')].map((f) => f.src),
     }));
     const html = (await page.content()).slice(0, 600000);
-    return { ok: true, status: resp?.status() ?? 0, finalUrl: page.url(), html, requests, jsonJobs: bestJsonJobs(json), interacted, ...info };
+    const shot = opts.shot ? (await page.screenshot({ type: 'jpeg', quality: 60 }).catch(() => Buffer.alloc(0))).toString('base64') : '';
+    return { ok: true, status: resp?.status() ?? 0, finalUrl: page.url(), html, requests, jsonJobs: bestJsonJobs(json), interacted, shot, ...info };
   } catch (err) {
     return { ok: false, error: String(err?.message || err).split('\n')[0].slice(0, 80) };
   } finally {

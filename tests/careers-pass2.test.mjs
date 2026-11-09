@@ -31,7 +31,7 @@ test('best verdict wins; only jobs-found and listings-on-page pass', () => {
   assert.equal(best(['not-careers', 'landing', 'bot-blocked']), 'landing');
   assert.equal(best(['bot-blocked', 'jobs-found']), 'jobs-found');
   assert.equal(best([]), 'not-careers');
-  assert.ok(PASSING.has('jobs-found') && PASSING.has('listings-unread') && !PASSING.has('board-empty'));
+  assert.ok(PASSING.has('jobs-found') && PASSING.has('listings-on-page') && !PASSING.has('listings-unread') && !PASSING.has('board-empty'));
 });
 
 test('candidates: tried URLs, search engines and job aggregators are dropped, careers-looking own-site first', () => {
@@ -162,7 +162,13 @@ test('a site menu or product list in page JSON is not a job list, and a soft 404
   assert.equal(classifyPage({ status: 200, text: 'Careers | open positions', links }).verdict, 'listings-on-page');
 });
 
-import { HIRING_SIGNAL } from '../lib/careers-pass2.mjs';
+import { HIRING_SIGNAL, visionListingsOk } from '../lib/careers-pass2.mjs';
+test('screenshot readings count only when they name job-title-like items', () => {
+  assert.equal(visionListingsOk({ shows_job_listings: true, job_titles: ['romance', 'party wear', 'festive'], locations: [] }), null);
+  assert.equal(visionListingsOk({ shows_job_listings: false, job_titles: ['Software Engineer', 'Data Analyst', 'QA Tester'] }), null);
+  const r = visionListingsOk({ shows_job_listings: true, job_titles: ['Software Engineer', 'Data Analyst', 'Retail Manager'], locations: ['Mumbai', 'Remote', 'Pune'] });
+  assert.deepEqual([r.count, r.located, r.india], [3, 3, 2]);
+});
 test('hiring signal: an about-us page titled Career does not have it, a real careers page does', () => {
   assert.ok(!HIRING_SIGNAL.test('Career | BlueStone.com About Us Established in 2011, BlueStone is India\'s leading destination for fine jewellery'));
   for (const t of ['Current openings', 'Join our team', 'We are hiring', 'Apply now', 'email careers@x.com', 'View all jobs']) assert.ok(HIRING_SIGNAL.test(t), t);

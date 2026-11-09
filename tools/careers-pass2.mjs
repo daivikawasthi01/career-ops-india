@@ -24,7 +24,7 @@ import { atsFromUrl, findAtsLinks, pickAts, extractUrls } from '../lib/careers-d
 import { boardFingerprint, redact } from '../lib/careers-pipeline.mjs';
 import { makeLlm, loadGroqKeys, loadModels } from '../lib/careers-llm.mjs';
 import { slugMatchesName } from '../lib/board-audit.mjs';
-import { classifyPage, followLinks, best, PASSING, CAREERS_PATH, identityOk, keyOf, rankCandidates, mark, seen, shouldStop, LIMITS, visionAction, INDIA_RE, indiaStatus, guessCareerUrls, HIRING_SIGNAL } from '../lib/careers-pass2.mjs';
+import { classifyPage, followLinks, best, PASSING, CAREERS_PATH, identityOk, keyOf, rankCandidates, mark, seen, shouldStop, LIMITS, visionAction, INDIA_RE, indiaStatus, guessCareerUrls, HIRING_SIGNAL, visionListingsOk } from '../lib/careers-pass2.mjs';
 import { parseTsv } from './careers-review.mjs';
 import { visit, searchResults, hostOf, Halt, gov, sleep, setSessionContext } from './discover-careers.mjs';
 import { queryPair } from '../lib/careers-pipeline.mjs';
@@ -100,12 +100,18 @@ export async function testUrl(context, url, name, st, depth = 0) {
   const looksOwn = ats || nameInHost(v.finalUrl, name);
   if ((cls.verdict === 'landing' || cls.verdict === 'not-careers') && cls.note !== 'page says not found' && looksOwn && depth < 2) {
     // Some portals show roles only after a search: type into their search box and read the page data again.
-    const v2 = await visit(context, url, { search: 'engineer', openRoles: true });
+    const v2 = await visit(context, url, { search: 'engineer', openRoles: true, shot: Boolean(env.readListings) });
     if (v2.ok && v2.interacted) {
       const viaSearch = fromJson(v2, 'jobs after typing in the portal search box');
       if (viaSearch) return done(viaSearch);
       const c2 = classifyPage({ status: v2.status, text: v2.text, links: v2.links });
       if (c2.verdict === 'listings-on-page') return done({ verdict: 'listings-on-page', total: c2.count, sample: c2.sample, note: 'listings after typing in the portal search box' });
+    }
+    if (v2.ok && v2.shot && env.readListings) { // last attempt to fetch jobs: read the rendered page like a person would
+      const r = await env.readListings({ company: name, url: v2.finalUrl, imageB64: v2.shot });
+      if (r.model) st.models.add(r.model);
+      const ok = visionListingsOk(r.value);
+      if (ok) return done({ verdict: 'listings-on-page', total: ok.count, located: ok.located, india: ok.india, sample: ok.sample, note: 'jobs read from a screenshot' });
     }
   }
   if ((cls.verdict === 'landing' || cls.verdict === 'not-careers') && cls.note !== 'page says not found' && HIRING_SIGNAL.test(v.text) && looksOwn && CAREERS_PATH.test(new URL(v.finalUrl).pathname + ' ' + v.title)) return done({ verdict: 'listings-unread', note: 'careers-looking page, listings not readable', snippet: v.text.slice(0, 600), indiaMentions: (v.text.match(new RegExp(INDIA_RE.source, 'gi')) || []).length });
@@ -158,7 +164,7 @@ async function processCompany2({ context, row, rejectedUrls, llm, vision }) {
   const verdicts = st.results.map((r) => r.verdict);
   const top = best(verdicts);
   const win = st.results.find((r) => r.verdict === top && !r.via) || st.results.find((r) => r.verdict === top);
-  let final = !verdicts.length ? (searchBlocked ? 'search-blocked' : 'no-candidate') : PASSING.has(top) || top === 'board-empty' ? top : top === 'bot-blocked' ? 'bot-blocked' : top === 'unverified-identity' ? 'needs-identity-check' : 'unresolved';
+  let final = !verdicts.length ? (searchBlocked ? 'search-blocked' : 'no-candidate') : PASSING.has(top) || top === 'board-empty' || top === 'listings-unread' ? top : top === 'bot-blocked' ? 'bot-blocked' : top === 'unverified-identity' ? 'needs-identity-check' : 'unresolved';
   if (PASSING.has(final) && final !== 'listings-unread') final = indiaStatus(final, win); // right-portal-no-india only when locations were read; else india-unknown
   if (final === 'unresolved' && searchBlocked) final = 'search-blocked';
   return {
@@ -205,6 +211,7 @@ async function main() {
     llm = await makeLlm({ keys, ...loadModels([...ENV_DIRS, REPO], c && typeof c === 'object' ? c : {}) });
   }
   await initEnv();
+  env.readListings = llm && !has('--no-vision') ? llm.readListings : null;
   const { chromium } = await import('playwright');
   const profile = join(ROOT, 'data', 'cache', 'careers-profile-pass2');
   mkdirSync(profile, { recursive: true });
