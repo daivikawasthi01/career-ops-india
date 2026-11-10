@@ -118,6 +118,17 @@ class SuggestTest(unittest.TestCase):
             lo, hi, _ = suggest.plan_length(F("a", "Why us", "textarea", maxlength=300), "Why us", {})
             self.assertLessEqual(hi * 6, 300)
 
+    def test_open_questions_keep_a_minimum_length_in_a_small_box(self):
+        with db.tx(self.db) as conn:
+            self.fake.chat_replies = ['{"words": 15, "paragraphs": 1}']  # the model picks a one-liner for a short-answer box
+            lo, hi, _ = suggest.plan_length(F("a", "What is your best achievement till date?", "text"), "What is your best achievement till date?", {})
+        self.assertGreaterEqual(lo, 70)
+        self.assertGreaterEqual(hi, 150)
+        with db.tx(self.db) as conn:
+            self.fake.chat_replies = ['{"words": 15}']  # a character limit still wins
+            lo, hi, _ = suggest.plan_length(F("a", "What is your best achievement till date?", "text", maxlength=100), "What is your best achievement till date?", {})
+        self.assertLessEqual(hi * 6, 100)
+
     def test_a_useless_plan_falls_back_to_the_configured_rules(self):
         with db.tx(self.db) as conn:
             self.fake.chat_replies = ["not json"]

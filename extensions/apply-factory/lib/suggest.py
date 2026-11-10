@@ -239,6 +239,14 @@ def plan_length(field: dict, label: str, ctx: dict, prefix: str = "") -> tuple[i
                 lo = min(lo, hi)
     except (llm.LLMUnavailable, KeyError, ValueError, TypeError):
         pass
+    # The model may shorten a plan for a small box but never below what the question type needs: a question about your own story
+    # or one the rules size (answer_length) keeps at least that minimum, whatever the box looks like.
+    floor_lo, floor_hi = rules.answer_length(label, "text", limit)  # only the rules that name this kind of question
+    if not floor_lo and rules.is_open_question(label):
+        floor_lo, floor_hi = rules.answer_length(label, "textarea", limit)
+    if floor_lo:
+        lo, hi = max(lo, floor_lo), max(hi, floor_hi)
+        paragraphs = max(paragraphs, 2 if hi > 100 else 1)
     return lo, hi, paragraphs
 
 
@@ -252,8 +260,9 @@ def _free_text(conn, field: dict, label: str, job: str, ctx: dict) -> dict:
               f"VOICE:\n{context.voice()[:1200] or '(none)'}\n\nPROOF POINTS:\n{context.digest()[:1200] or '(none)'}\n\n{job}")
     lo, hi, paragraphs = plan_length(field, label, ctx, prefix)
     if hi >= 40:
-        length = (f"Write {lo} to {hi} words in {paragraphs} short paragraph{'s' if paragraphs > 1 else ''}. Use the CV's real details "
-                  f"(what you built, with which tools, what changed). Fewer than {lo} words is too short.")
+        sentences = max(3, round((lo + hi) / 2 / 17))  # a small model follows a sentence count better than a word count
+        length = (f"Write {sentences} full sentences ({lo} to {hi} words) in {paragraphs} short paragraph{'s' if paragraphs > 1 else ''}. "
+                  f"Use the CV's real details (what you built, with which tools, what changed). Fewer than {lo} words is too short.")
     elif hi:
         length = f"Write at most {hi} words, in one sentence or a short phrase."
     else:
