@@ -15,57 +15,6 @@ def ago(days):
     return (NOW - timedelta(days=days)).isoformat()
 
 
-class StepDue(unittest.TestCase):
-    def test_never_run_is_due(self):
-        self.assertTrue(mine.step_due({}, "ats", 7, NOW))
-
-    def test_recent_run_is_not_due(self):
-        self.assertFalse(mine.step_due({"ats": {"at": ago(3), "coverage": 0.95}}, "ats", 7, NOW))
-
-    def test_old_run_is_due(self):
-        self.assertTrue(mine.step_due({"ats": {"at": ago(7), "coverage": 0.95}}, "ats", 7, NOW))
-
-    def test_old_state_format_still_works(self):
-        self.assertFalse(mine.step_due({"ats": ago(3)}, "ats", 7, NOW))
-        self.assertTrue(mine.step_due({"ats": ago(8)}, "ats", 7, NOW))
-
-    def test_garbage_timestamp_is_due(self):
-        self.assertTrue(mine.step_due({"ats": {"at": "not a date"}}, "ats", 7, NOW))
-
-    def test_thin_coverage_comes_back_sooner(self):
-        self.assertEqual(mine.due_after_days(7, 0.95), 7)
-        self.assertEqual(mine.due_after_days(7, 0.6), 3)
-        self.assertEqual(mine.due_after_days(7, 0.3), 1)
-        self.assertEqual(mine.due_after_days(2, 0.3), 1)
-        self.assertEqual(mine.due_after_days(7, None), 7)
-        self.assertFalse(mine.step_due({"ats": {"at": ago(2), "coverage": 0.6}}, "ats", 7, NOW))
-        self.assertTrue(mine.step_due({"ats": {"at": ago(3), "coverage": 0.6}}, "ats", 7, NOW))
-        self.assertTrue(mine.step_due({"ats": {"at": ago(1), "coverage": 0.3}}, "ats", 7, NOW))
-
-
-class SelectSteps(unittest.TestCase):
-    def test_default_run_drops_ats_when_not_due(self):
-        steps, notes = mine.select_steps(STEPS, {"ats": {"at": ago(2), "coverage": 0.9}}, False, 7, NOW)
-        self.assertEqual([s["id"] for s in steps], ["freehire", "jobspy"])
-        self.assertIn("not due", notes[0])
-        self.assertIn("90%", notes[0])
-
-    def test_default_run_keeps_ats_when_due(self):
-        steps, notes = mine.select_steps(STEPS, {"ats": {"at": ago(9), "coverage": 0.9}}, False, 7, NOW)
-        self.assertEqual(len(steps), 3)
-        self.assertEqual(notes, [])
-
-    def test_explicit_steps_always_run(self):
-        steps, notes = mine.select_steps(STEPS, {"ats": {"at": ago(1), "coverage": 0.9}}, True, 7, NOW)
-        self.assertEqual(len(steps), 3)
-        self.assertEqual(notes, [])
-
-    def test_steps_given_reads_both_spellings(self):
-        self.assertTrue(mine.steps_given(["--days", "3", "--steps", "ats"]))
-        self.assertTrue(mine.steps_given(["--steps=ats"]))
-        self.assertFalse(mine.steps_given(["--days", "3", "--dry-run"]))
-
-
 class RecordRun(unittest.TestCase):
     def test_real_run_records_time_and_coverage(self):
         state = {}
@@ -121,17 +70,6 @@ class BareLines(unittest.TestCase):
 
 
 class SitesAndWindows(unittest.TestCase):
-    def test_linkedin_dropped_when_not_due(self):
-        state = {"linkedin": {"at": ago(1), "coverage": None}}
-        sites, notes = mine.select_sites("naukri,indeed,linkedin", state, False, NOW)
-        self.assertEqual(sites, "naukri,indeed")
-        self.assertTrue(notes)
-
-    def test_linkedin_kept_when_due_or_forced_or_never_run(self):
-        self.assertEqual(mine.select_sites("naukri,linkedin", {"linkedin": {"at": ago(3)}}, False, NOW)[0], "naukri,linkedin")
-        self.assertEqual(mine.select_sites("naukri,linkedin", {"linkedin": {"at": ago(1)}}, True, NOW)[0], "naukri,linkedin")
-        self.assertEqual(mine.select_sites("naukri,linkedin", {}, False, NOW)[0], "naukri,linkedin")
-
     def test_merge_collapses_across_steps_and_keeps_found_by(self):
         rows = mine.merge({"jobspy": [{"company": "Acme", "title": "SDE Intern", "location": "Pune", "source": "jobspy:linkedin",
                                       "url": "https://www.linkedin.com/jobs/view/3912345678"}],

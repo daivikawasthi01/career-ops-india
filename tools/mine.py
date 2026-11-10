@@ -70,45 +70,12 @@ def save_state(state, path=STATE):
     tmp.replace(path)
 
 
-LOW_COVERAGE = 0.8      # below this share of boards read, the step comes back sooner
-VERY_LOW_COVERAGE = 0.5
-
-
 def _entry(state, step_id):
     """State entry as (timestamp, coverage). Old files stored a bare timestamp string."""
     raw = state.get(step_id)
     if isinstance(raw, dict):
         return raw.get("at"), raw.get("coverage")
     return raw, None
-
-
-def due_after_days(every_days, coverage):
-    """A run that read most boards waits the full interval; a thin run comes back sooner."""
-    if coverage is None or coverage >= LOW_COVERAGE:
-        return every_days
-    return min(every_days, 1 if coverage < VERY_LOW_COVERAGE else 3)
-
-
-def step_due(state, step_id, every_days, now=None):
-    """True when the step has never succeeded, or last succeeded long enough ago for its coverage."""
-    last, coverage = _entry(state, step_id)
-    if not last:
-        return True
-    now = now or datetime.now()
-    try:
-        return (now - datetime.fromisoformat(last)).total_seconds() >= due_after_days(every_days, coverage) * 86400
-    except ValueError:
-        return True
-
-
-def select_steps(steps, state, explicit, ats_every, now=None):
-    """Drop the ats step from a default run when it is not due. Returns (steps, notes)."""
-    if explicit or step_due(state, "ats", ats_every, now):
-        return steps, []
-    last, coverage = _entry(state, "ats")
-    why = f"last run {str(last)[:10]}" + (f", {coverage:.0%} of boards read" if coverage is not None else "")
-    kept = [s for s in steps if s["id"] != "ats"]
-    return kept, [f"mine: ats step not due ({why}); pass --steps to force it"]
 
 
 def record_run(state, status, dry_run, now=None):
@@ -508,7 +475,6 @@ def build_parser():
     ap.add_argument("--ats-sources", default="greenhouse,lever,ashby", help="ATS directories for the reverse sweep")
     ap.add_argument("--ats-limit", type=int, default=0, help="max companies per ATS (0 = all)")
     ap.add_argument("--ats-days", type=int, default=employer_window_days() or 14, help="posting window for the ats step: company boards keep postings open for months (freshness.employer_max_age_days)")
-    ap.add_argument("--ats-every", type=int, default=7, help="days between ats runs in a default run; --steps ats always runs it. The sweep is slow and low yield (a 30 day sample of 300 Greenhouse boards found 2 India roles)")
     ap.add_argument("--freehire-pages", type=int, default=6, help="pages of 100 per freehire query")
     ap.add_argument("--internshala-pages", type=int, default=5, help="result pages per Internshala category")
     ap.add_argument("--no-feeders", action="store_true", help="skip the source feeders (careers directory, directory boards, India ATS tenant probe, Telegram employer names, campus page watch). A default run runs those that are due; naming one in --steps runs it now")
@@ -533,15 +499,13 @@ def plan_run(args, state, started, argv):
     """Decide what this run does: which steps, which feeders, which scan windows. Prints nothing and runs nothing."""
     explicit = steps_given(argv)
     windows = {sid: health.window_days((_entry(state, sid)[0]), args.days, started) for sid in windowed_ids()}
-    args.sites, site_notes = select_sites(args.sites, state, explicit, started)
     steps = [x for x in build_steps(args, windows) if not (x["id"] == "jobspy" and not args.sites)]
-    steps, notes = select_steps(steps, state, explicit, args.ats_every)
-    feeder_pick, feeder_notes = feeders.select_feeders(feeders.feeder_list(), state, [x.strip() for x in args.steps.split(",")] if explicit else [],
-                                                       args.dry_run, step_due, args.no_feeders)
+    feeder_pick, feeder_notes = feeders.select_feeders(feeders.feeder_list(), [x.strip() for x in args.steps.split(",")] if explicit else [],
+                                                       args.dry_run, args.no_feeders)
     if args.slow:  # only the slow lane's batch, no feeders
         steps = [make_step(e, args) for e in step_registry() if e.get("standalone") and e.get("cli") == "--slow"]
         feeder_pick, feeder_notes = [], []
-    return RunPlan(explicit, windows, steps, feeder_pick, notes + site_notes + feeder_notes)
+    return RunPlan(explicit, windows, steps, feeder_pick, feeder_notes)
 
 
 def execute_plan(plan, args, state, log, xlsx_path, started):
@@ -560,8 +524,6 @@ def execute_plan(plan, args, state, log, xlsx_path, started):
         per_step[step["id"]] = offers
         runs.append(status)
         if record_run(state, status, args.dry_run):
-            if step["id"] == "jobspy" and "linkedin" in args.sites.split(","):
-                state["linkedin"] = state[step["id"]]
             save_state(state)
         write_excel(xlsx_path, merge(per_step), runs, failures, started)
     return feeder_runs, runs, per_step, failures
@@ -687,16 +649,6 @@ def main():
     announce(args, plan, started, saved.new_rows)
     print_report(args, plan, saved, feeder_runs, runs, failures, per_step, (xlsx_path, log_path, dedup_path))
     return health.exit_code(runs)
-
-
-def select_sites(sites, state, explicit, now=None):
-    """Drop LinkedIn from a default jobspy run when it is not due (config jobspy.run_every_days.linkedin)."""
-    every = (pipeline_cfg.section("jobspy").get("run_every_days") or {}).get("linkedin")
-    names = [x.strip() for x in sites.split(",") if x.strip()]
-    if explicit or not every or "linkedin" not in names or step_due(state, "linkedin", every, now):
-        return sites, []
-    kept = [x for x in names if x != "linkedin"]
-    return ",".join(kept), [f"mine: linkedin not due (runs every {every} days); pass --steps to force it"]
 
 
 if __name__ == "__main__":

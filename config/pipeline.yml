@@ -222,7 +222,6 @@ jobspy:
     indeed: {first_pass: true, budget: 60, jitter_seconds: [2, 6]}
     linkedin: {slow: true, budget: 40, jitter_seconds: [6, 15]}
     glassdoor: {slow: true, budget: 30, jitter_seconds: [3, 8]}
-  run_every_days: {linkedin: 2}
   # The slow lane (mine.py --slow, started after the first pass): LinkedIn and Glassdoor rate-limit, so they run a few searches at a
   # time, widely spaced, for the last day only. 20 terms / per_run 3 = every term covered in about 7 batches.
   slow: {per_run: 3, days: 1, jitter_seconds: [20, 45], batches: 8, gap_minutes: 60}

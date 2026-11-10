@@ -26,6 +26,9 @@ jobs:
       CAREER_OPS_ROOT: ${{ vars.CAREER_OPS_DIR }}
     steps:
       - name: mine.py
-        # Scheduled runs are real; a manual run is a dry run unless you untick the box. LinkedIn and Glassdoor run in
-        # slow-lane.yml, so the detached lane is not started here.
-        run: tools/.venv-jobspy/bin/python tools/mine.py --no-slow ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '--dry-run' || '' }}
+        # The whole script, every time: feeders, all scan steps, the Telegram ping, then the background slow lane for
+        # LinkedIn and Glassdoor. Scheduled runs are real; a manual run is a dry run unless you untick the box.
+        # An empty RUNNER_TRACKING_ID stops the runner from killing the slow lane when this job ends.
+        env:
+          RUNNER_TRACKING_ID: ""
+        run: tools/.venv-jobspy/bin/python tools/mine.py ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '--dry-run' || '' }}

@@ -72,7 +72,7 @@ function feederList() {
   if (Date.now() - feederCache.at < 60000) return feederCache.list;
   const r = spawnSync(PYTHON, ['-c', 'import json,feeders;print(json.dumps(feeders.feeder_list()))'], { cwd: join(REPO, 'tools'), env: { ...process.env, CAREER_OPS_ROOT: ROOT }, encoding: 'utf8', timeout: 15000 });
   let list = [];
-  try { list = JSON.parse(r.stdout || '[]').map((f) => ({ id: f.id, every: f.every, file: f.file })); } catch { /* no python: the page shows no feeders */ }
+  try { list = JSON.parse(r.stdout || '[]').map((f) => ({ id: f.id, file: f.file })); } catch { /* no python: the page shows no feeders */ }
   feederCache = { at: Date.now(), list };
   return list;
 }
@@ -128,7 +128,7 @@ async function sources() {
   const state = readJson(STATE_FILE, {});
   const portals = await yamlLoad(join(ROOT, 'portals.yml'));
   const stateOf = (id) => (state[id] ? { at: state[id].at, coverage: state[id].coverage } : null);
-  const feeders = feederList().map((f) => ({ kind: 'feeder', id: f.id, detail: `every ${f.every} days`, last: stateOf(f.id), runnable: true }));
+  const feeders = feederList().map((f) => ({ kind: 'feeder', id: f.id, detail: 'runs with every mine.py run', last: stateOf(f.id), runnable: true }));
   const steps = stepRegistry().map((e) => ({ kind: 'step', id: e.id, detail: e.label, standalone: !!e.standalone, last: stateOf(e.state_id || e.id), runnable: true }));
   const boards = (portals.job_boards || []).map((b) => ({ kind: 'board', id: b.name, detail: b.provider || (b.api ? 'api' : 'board'), enabled: b.enabled !== false, runnable: false }));
   return { feeders, steps, boards, stateFile: mtime(STATE_FILE) };
