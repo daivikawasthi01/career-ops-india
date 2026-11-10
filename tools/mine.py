@@ -40,6 +40,7 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import dedup  # noqa: E402
 import feeders  # noqa: E402
+import freshness  # noqa: E402
 import notify_telegram  # noqa: E402
 from canonical import canonical_url  # noqa: E402
 import health  # noqa: E402
@@ -500,7 +501,7 @@ def build_parser():
     ap.add_argument("--steps", default=",".join(default_step_ids()), help="comma list of steps to run")
     ap.add_argument("--ats-sources", default="greenhouse,lever,ashby", help="ATS directories for the reverse sweep")
     ap.add_argument("--ats-limit", type=int, default=0, help="max companies per ATS (0 = all)")
-    ap.add_argument("--ats-days", type=int, default=14, help="posting window for the ats step (it runs weekly, so it needs a wider window than --days)")
+    ap.add_argument("--ats-days", type=int, default=8, help="posting window for the ats step (it runs weekly, so it needs a wider window than --days; keep it just above freshness.max_age_days)")
     ap.add_argument("--ats-every", type=int, default=7, help="days between ats runs in a default run; --steps ats always runs it. The sweep is slow and low yield (a 30 day sample of 300 Greenhouse boards found 2 India roles)")
     ap.add_argument("--freehire-pages", type=int, default=6, help="pages of 100 per freehire query")
     ap.add_argument("--internshala-pages", type=int, default=5, help="result pages per Internshala category")
@@ -583,6 +584,7 @@ class Saved:
     new_rows: list
     known: int
     history_note: str
+    dropped: dict  # rows the freshness gate refused: {"stale": n, "undated": n, "experience": n}
 
 
 def save_results(args, started, per_step, runs, failures, xlsx_path):
@@ -597,7 +599,8 @@ def save_results(args, started, per_step, runs, failures, xlsx_path):
     if conn.execute("SELECT COUNT(*) FROM seen").fetchone()[0] == 0 and (ROOT / "data" / "scan-history.tsv").exists():
         rep = store.migrate_scan_history(conn, ROOT / "data" / "scan-history.tsv")
         history_note = f"imported scan-history.tsv: {rep['total']} rows"
-    merged = merge(per_step)
+    cfg = pipeline_cfg.load()
+    merged, dropped = freshness.apply(merge(per_step), cfg.get("freshness"), cfg.get("max_min_experience_years", 0))
     new_rows, known = store.ingest(conn, merged, run_id)
     new_keys = {r["canonical_url"] for r in new_rows}
     new_urls = {u for r in new_rows for u in r["urls"]}
@@ -617,7 +620,7 @@ def save_results(args, started, per_step, runs, failures, xlsx_path):
     store.record_failures(conn, run_id, failures)
     record_term_yield(conn, run_id, runs, per_step, new_urls, started)
     write_excel(xlsx_path, db_rows(conn, run_id), runs, failures, started)
-    return Saved(merged, new_rows, known, history_note)
+    return Saved(merged, new_rows, known, history_note, dict(dropped))
 
 
 def announce(args, plan, started, new_rows):
@@ -636,6 +639,8 @@ def print_report(args, plan, saved, feeder_runs, runs, failures, per_step, paths
           f"{len(failures)} failure/retry events")
     if saved.history_note:
         print(saved.history_note)
+    if saved.dropped:
+        print("freshness gate dropped: " + ", ".join(f"{n} {why}" for why, n in sorted(saved.dropped.items())))
     print(health.summary_table([{"source": r["id"], "fetched": r["fetched"], "kept": r["kept"], "new": r["new"],
                                  "duplicates": r["duplicates"], "errors": r["errors"], "health": r["health"],
                                  "seconds": r["secs"]} for r in runs]))

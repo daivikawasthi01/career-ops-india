@@ -23,11 +23,17 @@ test('drops off-host or id-less rows; throws on a changed envelope', () => {
   assert.throws(() => parseInstahyrePage(null), /unexpected response/);
 });
 test('options are clamped and sanitised', () => {
-  assert.deepEqual(resolveOptions({}), { years: 0, skills: '', cities: [], maxPages: 25 });
+  assert.deepEqual(resolveOptions({}), { years: 0, skills: '', cities: [], maxPages: 25, newest: 100 });
   assert.equal(resolveOptions({ years: 'any' }).years, null);
   assert.equal(resolveOptions({ years: 99 }).years, 0);
   assert.equal(resolveOptions({ skills: 'Py thon;<x>' }).skills, 'py thonx');
   assert.equal(resolveOptions({ maxPages: 9999 }).maxPages, 60);
   assert.deepEqual(cityList({ locations: 'A, B,,C' }), ['A', 'B', 'C']);
   assert.equal(p.detect({}), null);
+});
+
+test('newest limits the rows kept: the feed has no dates, so the highest ids are the recency limit', () => {
+  assert.equal(resolveOptions({ newest: 40 }).newest, 40);
+  assert.equal(resolveOptions({ newest: 0 }).newest, 100);
+  assert.equal(resolveOptions({ newest: 'x' }).newest, 100);
 });

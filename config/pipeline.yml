@@ -160,6 +160,16 @@ title_filter:
 # batch / passout / graduates must name one of these; postings naming no year stay.
 batch_years: [2027]
 
+# Only recent jobs are kept (tools/freshness.py, applied to every row whichever scanner found it).
+#   max_age_days       a posting dated older than this is dropped as stale
+#   undated_ok_steps   scan steps whose query already limits the age (their window / hours_old), so an undated row is trusted
+#   undated_ok_sources newest-first feeds without dates, capped to their newest N rows (instahyre: `newest`)
+# Any other undated row is dropped: its age cannot be checked.
+freshness:
+  max_age_days: 7
+  undated_ok_steps: [freehire, internshala, jobspy, jobspy-slow]
+  undated_ok_sources: [instahyre]
+
 # Naukri-style experience ranges ("0-2 Yrs"): keep when the MINIMUM is at most this.
 max_min_experience_years: 0
 

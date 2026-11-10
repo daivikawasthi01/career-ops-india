@@ -138,6 +138,11 @@ export function internshipTitle(title) {
   return /intern/i.test(t) ? t : `${t} Intern`;
 }
 
+/** The posting day from "N days ago" when the card carries no date, so the freshness gate can check its age. */
+export function postedFromDaysAgo(daysAgo, now = Date.now()) {
+  return typeof daysAgo === 'number' && daysAgo >= 0 ? new Date(now - daysAgo * 864e5).toISOString().slice(0, 10) : undefined;
+}
+
 export function toOffer(card, kind) {
   const place = Array.isArray(card.locations) && card.locations.length ? card.locations.slice(0, 3).join(', ') : '';
   const where = card.work_mode === 'work_from_home' ? 'Remote (India)' : place || 'India';
@@ -147,7 +152,7 @@ export function toOffer(card, kind) {
     title: kind === 'internship' ? internshipTitle(card.title) : String(card.title || '').trim(),
     company: card.company?.name || '',
     location: where + stipend,
-    postedAt: card.posted?.date || undefined,
+    postedAt: card.posted?.date || postedFromDaysAgo(card.posted?.days_ago),
     source: kind === 'internship' ? 'internshala:internship' : 'internshala:job',
   };
 }
