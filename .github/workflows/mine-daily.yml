@@ -1,0 +1,31 @@
+# Daily mine.py run on your own machine (self-hosted runner): your data, .env, venv and IP stay local.
+# Setup: docs/SCHEDULE.md. Cron below is UTC: 04:00 UTC = 09:30 IST.
+name: mine-daily
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (saves nothing, sends no Telegram message)"
+        type: boolean
+        default: true
+concurrency:
+  group: mine
+  cancel-in-progress: false
+permissions: {}
+jobs:
+  mine:
+    runs-on: self-hosted
+    timeout-minutes: 300
+    defaults:
+      run:
+        working-directory: ${{ vars.CAREER_OPS_DIR }}
+    env:
+      PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+      CAREER_OPS_ROOT: ${{ vars.CAREER_OPS_DIR }}
+    steps:
+      - name: mine.py
+        # Scheduled runs are real; a manual run is a dry run unless you untick the box. LinkedIn and Glassdoor run in
+        # slow-lane.yml, so the detached lane is not started here.
+        run: tools/.venv-jobspy/bin/python tools/mine.py --no-slow ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '--dry-run' || '' }}

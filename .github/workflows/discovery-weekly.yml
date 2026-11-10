@@ -1,0 +1,28 @@
+# Weekly careers discovery: finds career pages and ATS boards for companies not seen yet (the company lists are refreshed by
+# the daily mine.py feeders). It resumes where the last run stopped and waits out rate limits itself, so it can run for many
+# hours: this needs a self-hosted runner (hosted runners stop a job after 6 hours). Cron is UTC: Saturday 20:30 = Sunday 02:00 IST.
+name: discovery-weekly
+on:
+  schedule:
+    - cron: "30 20 * * 6"
+  workflow_dispatch:
+concurrency:
+  group: discovery
+  cancel-in-progress: false
+permissions: {}
+jobs:
+  discover:
+    runs-on: self-hosted
+    timeout-minutes: 2880
+    defaults:
+      run:
+        working-directory: ${{ vars.CAREER_OPS_DIR }}
+    env:
+      PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+      CAREER_OPS_ROOT: ${{ vars.CAREER_OPS_DIR }}
+      CAREER_OPS_CLAUDE_FALLBACK: "0"          # keep the Claude plan free: no claude -p tier
+      CAREER_OPS_LLM_MAX_WAIT_MS: "240000"     # wait out a rate limit up to 4 minutes at a time
+      CAREER_OPS_COMPANY_DEADLINE_MS: "900000" # 15 minutes per company, so those waits fit
+    steps:
+      - name: Careers discovery, phases 1 and 2 and the export
+        run: tools/overnight-supervisor.sh 0
