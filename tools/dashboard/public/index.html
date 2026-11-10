@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pipeline</title>
+<meta name="description" content="One local page for the job-search pipeline: sources, harvested company names, ATS boards, campus pages and the jobs found.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Mono:wght@400;500&family=Host+Grotesk:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="./dashboard.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="bar">
+  <div class="bar-in">
+    <a class="mark" href="#/overview">Pipeline</a>
+    <nav class="tabs" id="tabs" aria-label="Sections"></nav>
+    <div class="bar-end">
+      <span class="chip" id="run-chip" hidden></span>
+      <button class="btn primary" id="launch" type="button" aria-haspopup="dialog">Run mine.py</button>
+      <button class="btn ghost" id="refresh" type="button">Refresh</button>
+    </div>
+  </div>
+</header>
+<main id="main" class="wrap" tabindex="-1"></main>
+<noscript><p class="wrap">This page needs JavaScript to show the pipeline.</p></noscript>
+<script src="./app.js" type="module"></script>
+</body>
+</html>
