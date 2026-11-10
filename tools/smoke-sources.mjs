@@ -26,6 +26,8 @@ const PROVIDERS = [
   ['unstop', 'unstop', { name: 'Unstop', opportunity: 'jobs' }],
   ['instahyre', 'instahyre', { name: 'Instahyre', years: 0, maxPages: 1 }],
   ['hirist', 'hirist', { name: 'Hirist', keywords: ['python'], pages: 1 }],
+  ['cutshort', 'cutshort', { name: 'Cutshort', maxFetch: 40 }],
+  ['wellfound', 'wellfound', { name: 'Wellfound', roles: ['software-engineer'], pages: 1 }],
   ['offcampusjobs4u', 'offcampus-rss', { name: 'x', feed: 'https://offcampusjobs4u.com/feed/' }],
   ['freshersdunia', 'offcampus-rss', { name: 'x', feed: 'https://freshersdunia.in/feed/' }],
   ['freshershunt', 'offcampus-rss', { name: 'x', feed: 'https://freshershunt.in/feed/' }],
