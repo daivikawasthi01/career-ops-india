@@ -27,6 +27,7 @@ import { printScanSummaryHeader } from './lib/scan-summary-marker.mjs';
 import { validateFlags, flagValue, hasFlag } from './lib/cli-flags.mjs';
 import { yearOk, cleanUrl } from './scan-freehire.mjs';
 import { requirePipelineConfig } from './lib/pipeline-config.mjs';
+import { jobspySites } from './lib/jobspy-sites.mjs';
 import { seniorityVerdict } from './lib/seniority.mjs';
 import { addFlag } from './lib/offer-flags.mjs';
 import { scamFlags } from './lib/scam-flags.mjs';
@@ -124,8 +125,8 @@ function runHelper(request) {
 }
 
 /** The slow lane's settings: which sites, how many searches per site per batch, how long to pause between calls. */
-export function slowLane(cfg = {}) {
-  const sites = Array.isArray(cfg.sites) && cfg.sites.length ? cfg.sites : ['linkedin', 'glassdoor'];
+export function slowLane(cfg = {}, slowSites = []) {
+  const sites = slowSites;
   const perRun = Number.isInteger(cfg.per_run) && cfg.per_run > 0 ? cfg.per_run : 3;
   const pause = Array.isArray(cfg.jitter_seconds) && cfg.jitter_seconds.length === 2 ? cfg.jitter_seconds : [20, 45];
   return {
@@ -136,7 +137,8 @@ export function slowLane(cfg = {}) {
 
 async function main(args) {
   const slow = hasFlag(args, '--slow');
-  const lane = slow ? slowLane(PIPELINE.jobspy?.slow) : null;
+  const table = jobspySites(PIPELINE.jobspy?.sites);
+  const lane = slow ? slowLane(PIPELINE.jobspy?.slow, table.slow) : null;
   const days = lane ? lane.days : Number(flagValue(args, '--days') ?? 2);
   const results = Number(flagValue(args, '--results') ?? 100);
   const maxYears = Number(flagValue(args, '--max-years') ?? PIPELINE.max_min_experience_years ?? 0);
@@ -159,7 +161,7 @@ async function main(args) {
   const rotate = readRotation(rotationPath);
   const { rows, errors, meta } = await runHelper({
     sites, terms: TERMS, rotate,
-    budget: lane ? lane.budget : PIPELINE.jobspy?.request_budget, jitter: lane ? lane.jitter : PIPELINE.jobspy?.jitter_seconds, location: 'India', hours_old: days * 24, results_wanted: results,
+    budget: lane ? lane.budget : table.budget, jitter: lane ? lane.jitter : table.jitter, location: 'India', hours_old: days * 24, results_wanted: results,
     call_timeout: 60, retries: 2, backoff: [10, 30], breaker: 3, final_pass_wait: 90,
   });
 

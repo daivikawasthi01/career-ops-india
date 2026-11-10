@@ -441,11 +441,16 @@ def slow_lane_running(lock=SLOW_LOCK):
         return False
 
 
-def slow_plan(cfg):
-    """(batches, gap_minutes) for the automatic lane, or None when no site is configured."""
+def jobspy_sites(flag):
+    """Site names flagged in the config table (config/pipeline.yml jobspy.sites): first_pass or slow."""
+    table = pipeline_cfg.section("jobspy").get("sites") or {}
+    return [name for name, row in table.items() if (row or {}).get(flag)]
+
+
+def slow_plan(cfg, slow_sites=None):
+    """(batches, gap_minutes) for the automatic lane, or None when no site is flagged slow."""
     cfg = cfg or {}
-    sites = cfg.get("sites", ["linkedin", "glassdoor"])
-    if not sites:
+    if not (jobspy_sites("slow") if slow_sites is None else slow_sites):
         return None
     return max(int(cfg.get("batches", 8)), 1), max(int(cfg.get("gap_minutes", 60)), 1)
 
@@ -491,7 +496,7 @@ def run_slow_batches(batches, gap_minutes, lock=SLOW_LOCK, sleep=time.sleep):
 def build_parser():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--days", type=int, default=None, help="override the scan window; default is since each step's last success plus a day of overlap (config window:)")
-    ap.add_argument("--sites", default="naukri,indeed")  # linkedin (429) and glassdoor (blocked) need a proxy: pass --sites to add them
+    ap.add_argument("--sites", default=",".join(jobspy_sites("first_pass")), help="JobSpy sites for the first pass; the slow-flagged ones (LinkedIn, Glassdoor) run in the slow lane")
     ap.add_argument("--steps", default=",".join(default_step_ids()), help="comma list of steps to run")
     ap.add_argument("--ats-sources", default="greenhouse,lever,ashby", help="ATS directories for the reverse sweep")
     ap.add_argument("--ats-limit", type=int, default=0, help="max companies per ATS (0 = all)")

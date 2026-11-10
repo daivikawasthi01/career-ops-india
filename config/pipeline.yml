@@ -199,16 +199,20 @@ window:
   max_days: 14
 
 # ---- Phase 6: JobSpy (LinkedIn guest search etc.) ----
-# All terms stay available. request_budget caps scrape calls per site per run (retries count) so a long
-# term list cannot hammer one site; terms rotate so the ones skipped today go first next time.
+# All terms stay available. Each site's budget caps scrape calls per run (retries count) so a long term list cannot hammer
+# one site; terms rotate so the ones skipped today go first next time. The sites table is the one place a JobSpy site is
+# described: first_pass sites run in a default mine.py run, slow sites run only in the slow lane (they rate-limit).
 jobspy:
   terms: ["software engineer fresher", "software developer fresher", "sde 1", "associate software engineer", "graduate engineer trainee", "backend developer fresher", "full stack developer fresher", "python developer fresher", "java developer fresher", "data engineer fresher", "machine learning engineer fresher", "software engineer intern", "frontend developer fresher", "web developer fresher", "devops engineer fresher", "cloud engineer fresher", "junior software engineer", "software engineer trainee", "sde intern", "ai engineer fresher"]
-  request_budget: {linkedin: 40, indeed: 60, naukri: 60, glassdoor: 30}
-  jitter_seconds: {linkedin: [6, 15], indeed: [2, 6], naukri: [1, 4], glassdoor: [3, 8]}
+  sites:
+    naukri: {first_pass: true, budget: 60, jitter_seconds: [1, 4]}
+    indeed: {first_pass: true, budget: 60, jitter_seconds: [2, 6]}
+    linkedin: {slow: true, budget: 40, jitter_seconds: [6, 15]}
+    glassdoor: {slow: true, budget: 30, jitter_seconds: [3, 8]}
   run_every_days: {linkedin: 2}
   # The slow lane (mine.py --slow, started after the first pass): LinkedIn and Glassdoor rate-limit, so they run a few searches at a
   # time, widely spaced, for the last day only. 20 terms / per_run 3 = every term covered in about 7 batches.
-  slow: {sites: [linkedin, glassdoor], per_run: 3, days: 1, jitter_seconds: [20, 45], batches: 8, gap_minutes: 60}
+  slow: {per_run: 3, days: 1, jitter_seconds: [20, 45], batches: 8, gap_minutes: 60}
 term_report_days: 14
 
 # ---- Phase 7: quality and safety ----

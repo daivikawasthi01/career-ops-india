@@ -151,7 +151,9 @@ class SlowLane(unittest.TestCase):
     def test_plan_defaults_and_empty_sites(self):
         self.assertEqual(mine.slow_plan(None), (8, 60))
         self.assertEqual(mine.slow_plan({"batches": 3, "gap_minutes": 30}), (3, 30))
-        self.assertIsNone(mine.slow_plan({"sites": []}))
+        self.assertIsNone(mine.slow_plan({}, slow_sites=[]))
+        self.assertEqual(mine.jobspy_sites("first_pass"), ["naukri", "indeed"])
+        self.assertEqual(mine.jobspy_sites("slow"), ["linkedin", "glassdoor"])
         self.assertEqual(mine.slow_plan({"batches": 0, "gap_minutes": 0}), (1, 1))
 
     def test_lock_tracks_a_live_process(self):
