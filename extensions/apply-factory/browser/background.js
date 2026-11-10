@@ -150,7 +150,11 @@ const panel = {
     const order = [0, ...Object.keys(st.frames).map(Number).filter((f) => f !== 0)];
     for (const frameId of order) {
       const res = await chrome.tabs.sendMessage(tabId, { type: 'context' }, { frameId }).catch(() => null);
-      if (res?.ctx && res.ctx.jd_text.length > 400) return { ...res.ctx, url: tab?.url || '' };
+      if (res?.ctx && res.ctx.jd_text.length > 400) {
+        // A later step of the form shows no job text; the posting seen earlier on this site stands in for it.
+        const earlier = res.ctx.jd_text.length < 900 ? await session.get(`jd:${res.ctx.jd_key}`, '') : '';
+        return { ...res.ctx, jd_text: earlier.length > res.ctx.jd_text.length ? earlier : res.ctx.jd_text, url: tab?.url || '' };
+      }
     }
     const first = await chrome.tabs.sendMessage(tabId, { type: 'context' }, { frameId: 0 }).catch(() => null);
     return { ...(first?.ctx || { title: tab?.title || '', company: '', jd_text: '' }), url: tab?.url || '' };

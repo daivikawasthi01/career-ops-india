@@ -231,3 +231,15 @@ class CoverTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ScoreActionTest(unittest.TestCase):
+    def _r(self, g, match=4, dealbreakers=()):
+        return {"global": g, "dimensions": [{"key": "match", "score": match}], "dealbreakers": list(dealbreakers)}
+
+    def test_apply_tailor_skip_follow_career_ops_bands(self):
+        self.assertEqual(score.action(self._r(4.4, 5))["key"], "apply")
+        self.assertEqual(score.action(self._r(4.2, 3))["key"], "tailor")  # good job, weak wording match: tailor first
+        self.assertEqual(score.action(self._r(3.6))["key"], "tailor")
+        self.assertEqual(score.action(self._r(3.4))["key"], "skip")
+        self.assertEqual(score.action(self._r(4.6, 5, ["on-site only"]))["key"], "skip")  # a broken rule of yours always skips

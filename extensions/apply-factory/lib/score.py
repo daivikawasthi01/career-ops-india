@@ -56,6 +56,18 @@ def _clamp(v, lo, hi, default):
         return default
 
 
+def action(result: dict) -> dict:
+    """What to do about the job, from career-ops' own bands: below 3.5 or any broken rule of yours is a skip; 4.0 or more with a
+    strong CV match is apply as is; anything between is worth tailoring the CV first."""
+    g = result["global"]
+    match = next((d["score"] for d in result["dimensions"] if d["key"] == "match"), 3)
+    if result.get("dealbreakers") or g < 3.5:
+        return {"key": "skip", "label": "Skip", "why": "Breaks one of your rules." if result.get("dealbreakers") else "Below 3.5, career-ops recommends against applying."}
+    if g >= 4.0 and match >= 4:
+        return {"key": "apply", "label": "Apply", "why": "Strong match, your default CV is fine."}
+    return {"key": "tailor", "label": "Tailor first", "why": "Worth applying; the CV should speak to this job's wording."}
+
+
 def _normalise(raw: dict) -> dict:
     dims = []
     for key, name in DIMENSIONS:
@@ -73,10 +85,11 @@ def score(conn, title: str, company: str, jd_text: str) -> dict:
     key = hashlib.sha1((jd[:6000] + profile.cv_text()[:4000] + _targeting()).encode()).hexdigest()
     row = conn.execute("SELECT result_json FROM score_cache WHERE cache_key=?", (key,)).fetchone()
     if row:
-        return {**json.loads(row["result_json"]), "cached": True}
+        cached = json.loads(row["result_json"])
+        return {**cached, "action": action(cached), "cached": True}
     prompt = (f"CANDIDATE CV:\n{profile.cv_text()[:3500]}\n\nTARGETING:\n{_targeting()}\n\n"
               f"<job title=\"{title[:120]}\" company=\"{company[:80]}\">\n{jd[:5000]}\n</job>")
     result = _normalise(llm.call_json(prompt, system=SYSTEM, temperature=0.1, num_ctx=8192, timeout=300))
     result["thin"] = len(jd) < 800  # little text: say so, the evidence is weaker
     conn.execute("INSERT OR REPLACE INTO score_cache(cache_key, result_json) VALUES (?,?)", (key, json.dumps(result)))
-    return {**result, "cached": False}
+    return {**result, "action": action(result), "cached": False}

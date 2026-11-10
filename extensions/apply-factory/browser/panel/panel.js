@@ -129,7 +129,7 @@ function group(title, cards) {
 const callApi = (path, body) => send('api', { path, body });
 
 function resetJob(key) {
-  Object.assign(job, { key, ctx: null, pre: null, score: null, busy: '', confirm: false, result: '', error: '' });
+  Object.assign(job, { key, ctx: null, pre: null, score: null, busy: '', confirm: false, result: '', error: '', autoDone: false, showScore: false });
 }
 
 async function jobContext() {
@@ -147,14 +147,37 @@ async function runChecks() {
   render();
 }
 
-async function runScore() {
+// Scores are kept per job for this panel session, so moving between the steps of one application never scores it again.
+const scoreMemo = new Map();
+
+async function runScore({ auto = false } = {}) {
   job.busy = 'score'; job.error = ''; render();
   const ctx = await jobContext();
-  const res = await callApi('/score', { title: ctx.title, company: ctx.company, jd_text: ctx.jd_text });
+  const memoKey = ctx.jd_key + '|' + ctx.title;
+  if (auto && ctx.jd_text.length < 600) { job.busy = ''; job.autoDone = true; render(); return; } // not a job posting: stay quiet
+  const res = scoreMemo.get(memoKey) || await callApi('/score', { title: ctx.title, company: ctx.company, jd_text: ctx.jd_text });
+  if (!res.error) scoreMemo.set(memoKey, res);
   job.score = res.error ? null : res;
-  job.error = res.error || '';
+  job.error = auto ? '' : res.error || '';
+  job.autoDone = true;
   job.busy = '';
   render();
+}
+
+// Shown first in the panel for every job page: the number, what to do about it, and the one-line reason.
+function verdictBanner() {
+  const sc = job.score;
+  if (!sc && job.busy !== 'score') return null;
+  if (!sc) return h('section', { class: 'stock verdict', 'data-action': 'wait' }, h('p', { class: 'note', text: 'Reading this job against your CV...' }));
+  const a = sc.action || { key: 'tailor', label: 'Tailor first', why: '' };
+  return h('section', { class: 'stock verdict', 'data-action': a.key },
+    h('div', { class: 'count' }, h('span', { class: 'figure', text: sc.global.toFixed(1) }), h('span', { text: 'of 5' }), h('span', { class: `tone ${a.key === 'skip' ? 'stop' : a.key === 'apply' ? 'ok' : 'check'}`, text: a.label })),
+    h('p', { class: 'note', text: sc.summary || a.why }),
+    sc.dealbreakers?.length ? h('p', { class: 'why warn', text: `Breaks your rules: ${sc.dealbreakers.join('; ')}` }) : null,
+    h('div', { class: 'row' },
+      a.key === 'tailor' && h('button', { class: 'btn btn--ink btn--small', text: 'Tailor my CV', onclick: () => send('open-studio', { view: 'tailor' }) }),
+      h('button', { class: 'btn btn--card btn--small', text: 'Full breakdown', onclick: () => { job.showScore = !job.showScore; render(); } })),
+    job.showScore && scoreBlock(sc));
 }
 
 async function queueEvaluation() {
@@ -209,10 +232,10 @@ function jobCard() {
     h('h2', { text: 'This job' }),
     h('div', { class: 'actions' },
       h('button', { class: 'btn btn--card', text: busy === 'checks' ? 'Checking' : 'Check this job', disabled: !!busy, onclick: runChecks }),
-      h('button', { class: 'btn btn--card', text: busy === 'score' ? 'Scoring' : 'Score it', disabled: !!busy || !st.server?.llm?.ok, onclick: runScore })),
+      h('button', { class: 'btn btn--card', text: busy === 'score' ? 'Scoring' : 'Score it', disabled: !!busy || !st.server?.llm?.ok, onclick: () => runScore() })),
     job.error && h('p', { class: 'why warn', text: job.error }),
     job.pre && h('ul', { class: 'checks' }, checkRows(job.pre).map(([word, text, tone]) => h('li', {}, h('span', { class: `tone ${tone}`, text: word }), ' ', text))),
-    job.score && scoreBlock(job.score),
+    job.score && !job.showScore && h('p', { class: 'note', text: `Scored ${job.score.global.toFixed(1)} of 5, shown at the top.` }),
     h('div', { class: 'actions' },
       h('button', { class: 'btn btn--ink', text: 'Tailor my CV', onclick: () => send('open-studio', { view: 'tailor' }) }),
       h('button', { class: 'btn btn--card', text: 'Mark as applied', onclick: () => { job.confirm = true; render(); } })),
@@ -339,6 +362,7 @@ function render() {
   else if (!st.host) { nodes.push(h('p', { class: 'empty', text: 'Open an application form and I will pick it up.' })); }
   else {
     const all = items();
+    if (st.siteMode !== 'off' && st.injected) nodes.push(verdictBanner());
     nodes.push(siteCard());
     if (st.siteMode !== 'off' && st.injected) nodes.push(jobCard());
     if (st.siteMode === 'assist' && all.length) {
@@ -372,7 +396,8 @@ async function refresh() {
   if (!st || st.error === 'no reply') st = { error: 'server offline' };
   const key = `${st.host}|${(Object.values(st.frames || {})[0] || {}).url || ''}`;
   if (key !== job.key) resetJob(key);
-  const sig = JSON.stringify([key, st.siteMode, st.error, st.frames, st.server?.llm?.ok, st.server?.counts, st.server?.resumes, notice, siteNote, job.busy, job.confirm, job.result, !!job.pre, !!job.score, Object.keys(covers).map((k) => [k, !!covers[k].text, covers[k].busy, covers[k].done])]);
+  if (st.injected && st.siteMode !== 'off' && st.server?.llm?.ok && !job.score && !job.busy && !job.autoDone) runScore({ auto: true });
+  const sig = JSON.stringify([key, st.siteMode, st.error, st.frames, st.server?.llm?.ok, st.server?.counts, st.server?.resumes, notice, siteNote, job.busy, job.confirm, job.result, !!job.pre, !!job.score, job.showScore, job.score?.action?.key, Object.keys(covers).map((k) => [k, !!covers[k].text, covers[k].busy, covers[k].done])]);
   if (sig !== signature) { signature = sig; maybeRender(); }
 }
 

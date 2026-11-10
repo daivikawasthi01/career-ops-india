@@ -110,3 +110,9 @@ body {
 .score { display: grid; gap: var(--space-xs); }
 .dim p { margin: 0; }
 .dim .figure.small { font-size: var(--text-md); }
+
+.verdict { display: grid; gap: var(--space-xs); border-inline-start: 3px solid var(--color-accent); }
+.verdict[data-action="apply"] { border-inline-color: var(--color-success); }
+.verdict[data-action="skip"] { border-inline-color: var(--color-error); }
+.verdict .count { display: flex; align-items: baseline; gap: var(--space-xs); }
+.verdict .tone { margin-inline-start: auto; }
