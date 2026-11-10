@@ -40,7 +40,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PY = join(HERE, 'tools', '.venv-jobspy', 'bin', 'python');
 const HELPER = join(HERE, 'tools', 'jobspy_scan.py');
 
-const KNOWN_FLAGS = ['--help', '-h', '--days', '--results', '--sites', '--year', '--max-years', '--dry-run', '--json'];
+const KNOWN_FLAGS = ['--help', '-h', '--days', '--results', '--sites', '--year', '--max-years', '--dry-run', '--json', '--slow'];
 const USAGE = `Usage:
   node scan-jobspy.mjs                    # Naukri, last 2 days, 0 years required
   node scan-jobspy.mjs --days 7           # first scan or catching up
@@ -54,6 +54,8 @@ One-time setup (Python 3.10 or newer):
 Flags:
   --days N, --results N (per search term, default 100), --sites a,b, --year YYYY (default: batch_years in config/pipeline.yml),
   --max-years N (default 0), --dry-run, --json PATH, --help, -h
+  --slow  one small batch for the rate-limited sites (config jobspy.slow: sites, per_run searches per site, wide jitter, last
+          day only). Keeps its own rotation, so repeated batches walk through every term. Run it hourly or let mine.py spread it.
 
 Sites seen working: naukri (can time out), indeed (few India results), linkedin (guest search,
 no account used). google returned nothing in testing.`;
@@ -121,12 +123,25 @@ function runHelper(request) {
   });
 }
 
+/** The slow lane's settings: which sites, how many searches per site per batch, how long to pause between calls. */
+export function slowLane(cfg = {}) {
+  const sites = Array.isArray(cfg.sites) && cfg.sites.length ? cfg.sites : ['linkedin', 'glassdoor'];
+  const perRun = Number.isInteger(cfg.per_run) && cfg.per_run > 0 ? cfg.per_run : 3;
+  const pause = Array.isArray(cfg.jitter_seconds) && cfg.jitter_seconds.length === 2 ? cfg.jitter_seconds : [20, 45];
+  return {
+    sites, days: Number.isInteger(cfg.days) && cfg.days > 0 ? cfg.days : 1,
+    budget: Object.fromEntries(sites.map((x) => [x, perRun])), jitter: Object.fromEntries(sites.map((x) => [x, pause])),
+  };
+}
+
 async function main(args) {
-  const days = Number(flagValue(args, '--days') ?? 2);
+  const slow = hasFlag(args, '--slow');
+  const lane = slow ? slowLane(PIPELINE.jobspy?.slow) : null;
+  const days = lane ? lane.days : Number(flagValue(args, '--days') ?? 2);
   const results = Number(flagValue(args, '--results') ?? 100);
   const maxYears = Number(flagValue(args, '--max-years') ?? PIPELINE.max_min_experience_years ?? 0);
   const years = flagValue(args, '--year') ? [String(flagValue(args, '--year'))] : PIPELINE.batch_years.map(String);
-  const sites = String(flagValue(args, '--sites') ?? 'naukri').split(',').map((s) => s.trim()).filter(Boolean);
+  const sites = lane ? lane.sites : String(flagValue(args, '--sites') ?? 'naukri').split(',').map((s) => s.trim()).filter(Boolean);
   const dryRun = hasFlag(args, '--dry-run');
   if (![days, results].every((n) => Number.isInteger(n) && n > 0) || !Number.isInteger(maxYears) || maxYears < 0) {
     console.error('Error: --days and --results must be positive integers and --max-years a non-negative integer.');
@@ -140,11 +155,11 @@ async function main(args) {
   console.log(`Fetching ${sites.join(', ')} via JobSpy: ${TERMS.length} searches, last ${days}d...`);
   // Coverage and reliability over speed: every term runs on every site, and failed calls
   // retry with long backoff (see tools/jobspy_scan.py).
-  const rotationPath = join(DATA_ROOT, 'data', 'cache', 'jobspy-rotation.json');
+  const rotationPath = join(DATA_ROOT, 'data', 'cache', slow ? 'jobspy-slow-rotation.json' : 'jobspy-rotation.json');
   const rotate = readRotation(rotationPath);
   const { rows, errors, meta } = await runHelper({
     sites, terms: TERMS, rotate,
-    budget: PIPELINE.jobspy?.request_budget, jitter: PIPELINE.jobspy?.jitter_seconds, location: 'India', hours_old: days * 24, results_wanted: results,
+    budget: lane ? lane.budget : PIPELINE.jobspy?.request_budget, jitter: lane ? lane.jitter : PIPELINE.jobspy?.jitter_seconds, location: 'India', hours_old: days * 24, results_wanted: results,
     call_timeout: 60, retries: 2, backoff: [10, 30], breaker: 3, final_pass_wait: 90,
   });
 

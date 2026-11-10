@@ -5869,5 +5869,10 @@ if (isMainModule(import.meta.url)) {
     console.error('Fatal:', err.message);
     writeRunFailureRow('failed');
     process.exitCode = 1;
+  }).finally(() => {
+    // Everything is written by now. A board that keeps a socket open (seen with a CloudFront-hosted one: ten idle
+    // connections held a finished dry run alive for 20+ minutes) must not stall the caller, tools/mine.py waits on this
+    // process. After a short grace for stdout to drain, leave with the exit code already set. unref: never delays a normal exit.
+    setTimeout(() => process.exit(process.exitCode ?? 0), 10000).unref();
   });
 }

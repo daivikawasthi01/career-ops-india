@@ -147,5 +147,54 @@ class SitesAndWindows(unittest.TestCase):
         self.assertEqual(mine.receipt_fetched("internshala", None, {}, 9), 9)
 
 
+class SlowLane(unittest.TestCase):
+    def test_plan_defaults_and_empty_sites(self):
+        self.assertEqual(mine.slow_plan(None), (8, 60))
+        self.assertEqual(mine.slow_plan({"batches": 3, "gap_minutes": 30}), (3, 30))
+        self.assertIsNone(mine.slow_plan({"sites": []}))
+        self.assertEqual(mine.slow_plan({"batches": 0, "gap_minutes": 0}), (1, 1))
+
+    def test_lock_tracks_a_live_process(self):
+        with TemporaryDirectory() as d:
+            lock = Path(d) / "slow.pid"
+            self.assertFalse(mine.slow_lane_running(lock))
+            lock.write_text(str(mine.os.getpid()))
+            self.assertTrue(mine.slow_lane_running(lock))
+            lock.write_text("not a pid")
+            self.assertFalse(mine.slow_lane_running(lock))
+
+    def test_batches_sleep_between_runs_and_clear_the_lock(self):
+        with TemporaryDirectory() as d:
+            lock, naps, runs = Path(d) / "slow.pid", [], []
+
+            class Done:
+                returncode = 0
+
+            real = mine.subprocess.run
+            mine.subprocess.run = lambda cmd, **kw: (runs.append(cmd), Done())[1]
+            try:
+                self.assertEqual(mine.run_slow_batches(3, 10, lock=lock, sleep=naps.append), 0)
+            finally:
+                mine.subprocess.run = real
+            self.assertEqual(len(runs), 3)
+            self.assertEqual(naps, [600, 600])
+            self.assertFalse(lock.exists())
+
+    def test_two_failed_batches_in_a_row_stop_the_lane(self):
+        with TemporaryDirectory() as d:
+            runs = []
+
+            class Bad:
+                returncode = 1
+
+            real = mine.subprocess.run
+            mine.subprocess.run = lambda cmd, **kw: (runs.append(cmd), Bad())[1]
+            try:
+                self.assertEqual(mine.run_slow_batches(5, 1, lock=Path(d) / "s.pid", sleep=lambda s: None), 1)
+            finally:
+                mine.subprocess.run = real
+            self.assertEqual(len(runs), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

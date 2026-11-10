@@ -8,6 +8,15 @@ Excel workbook after every step so a crash never loses finished work.
   tools/.venv-jobspy/bin/python tools/mine.py --days 3 --sites naukri,indeed,linkedin
   tools/.venv-jobspy/bin/python tools/mine.py --dry-run
 
+Source feeders (tools/feeders.py) run first when due: they refresh the lists the scanners read (careers directory, verified
+directory boards, India ATS tenants, Telegram employer names, campus pages) and write reviewable files under data/.
+Skip them with --no-feeders; run one now with --steps <id>. Unstop and every portals.yml job_boards entry are read by the portals step.
+
+Slow lane: LinkedIn and Glassdoor rate-limit, so they are not part of the first pass. After a real default run has saved its jobs
+and sent the Telegram ping, mine.py starts a detached background lane (--slow, config jobspy.slow) that runs a few of their searches
+per batch, one batch an hour, last day only, each batch saving and pinging on its own. Run one batch by hand with --slow, or
+let cron do it hourly. --no-slow skips the automatic start.
+
 Outputs (under output/): mine-YYYY-MM-DD.xlsx and logs/mine-YYYYMMDD-HHMMSS.log
 """
 import argparse
@@ -29,6 +38,8 @@ from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import dedup  # noqa: E402
+import feeders  # noqa: E402
+import notify_telegram  # noqa: E402
 from canonical import canonical_url  # noqa: E402
 import health  # noqa: E402
 import pipeline_cfg  # noqa: E402
@@ -152,7 +163,7 @@ def norm_url(url):
 
 def site_of(offer):
     host = (urlparse(offer.get("url") or "").hostname or "").lower()
-    for key in ("linkedin", "naukri", "indeed", "internshala", "wellfound", "instahyre", "shine"):
+    for key in dedup.KNOWN_SITES:
         if key in host:
             return key
     return str(offer.get("source") or "unknown").split(":")[-1].lower()
@@ -365,10 +376,97 @@ def run_step(step, log, failures, position):
                     "fetched": fetched, "kept": len(offers), "errors": fails, "stats": stats}
 
 
+def run_feeder(feeder, log):
+    """Run one source feeder (a tool that refreshes the boards/companies/pages the scanners read). Never raises.
+    Returns a status dict like run_step's, with no offers."""
+    cmd = ["node", str(ROOT / "tools" / feeder["file"]), *feeder["args"]]
+    log.write(f"\n===== feeder {feeder['id']}: {' '.join(cmd)}\n")
+    started = time.time()
+    tail = []
+    try:
+        proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=feeder.get("timeout", 1800))
+        out = (proc.stdout or "") + (proc.stderr or "")
+        log.write(out + "\n")
+        tail = [l for l in out.splitlines() if l.strip()][-1:]
+        code = proc.returncode
+    except subprocess.TimeoutExpired:
+        code, tail = 124, ["timed out"]
+    except OSError as e:
+        code, tail = 127, [str(e)]
+    status = "ok" if code == 0 else "failed"
+    log.write(f"===== feeder {feeder['id']} done: {status} in {round(time.time() - started)}s\n")
+    return {"id": feeder["id"], "status": status, "secs": round(time.time() - started), "note": (tail[0] if tail else "")[:160]}
+
+
+SLOW_LOCK = ROOT / "data" / "cache" / "slow-lane.pid"
+
+
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def slow_lane_running(lock=SLOW_LOCK):
+    try:
+        return _alive(int(lock.read_text().strip()))
+    except (OSError, ValueError):
+        return False
+
+
+def slow_plan(cfg):
+    """(batches, gap_minutes) for the automatic lane, or None when no site is configured."""
+    cfg = cfg or {}
+    sites = cfg.get("sites", ["linkedin", "glassdoor"])
+    if not sites:
+        return None
+    return max(int(cfg.get("batches", 8)), 1), max(int(cfg.get("gap_minutes", 60)), 1)
+
+
+def start_slow_lane(lock=SLOW_LOCK):
+    """Start the detached slow lane unless one is already running. Returns a one-line note."""
+    plan = slow_plan(pipeline_cfg.section("jobspy").get("slow"))
+    if not plan:
+        return "mine: slow lane has no sites configured (jobspy.slow.sites)"
+    if slow_lane_running(lock):
+        return "mine: slow lane already running, not starting another"
+    batches, gap = plan
+    log = (OUT / "logs" / f"slow-lane-{datetime.now():%Y%m%d-%H%M%S}.log").open("w")
+    proc = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--slow", "--slow-batches", str(batches), "--slow-gap-min", str(gap)],
+                            cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
+    return f"mine: slow lane started in the background (pid {proc.pid}): {batches} batch(es), one every {gap} min, log {Path(log.name).relative_to(ROOT)}"
+
+
+def run_slow_batches(batches, gap_minutes, lock=SLOW_LOCK, sleep=time.sleep):
+    """Run --slow batches spread over time. Two failing batches in a row stop the lane (the sites are blocking us); the next
+    default run starts it again."""
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text(str(os.getpid()))
+    failed_in_a_row = 0
+    try:
+        for i in range(batches):
+            print(f"slow lane: batch {i + 1}/{batches} at {datetime.now():%H:%M}", flush=True)
+            code = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--slow"], cwd=ROOT).returncode
+            failed_in_a_row = failed_in_a_row + 1 if code not in (0,) else 0
+            if failed_in_a_row >= 2:
+                print("slow lane: two batches failed in a row, stopping", flush=True)
+                return 1
+            if i < batches - 1:
+                sleep(gap_minutes * 60)
+    finally:
+        try:
+            lock.unlink()
+        except OSError:
+            pass
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--days", type=int, default=None, help="override the scan window; default is since each step's last success plus a day of overlap (config window:)")
-    ap.add_argument("--sites", default="naukri,indeed,linkedin")
+    ap.add_argument("--sites", default="naukri,indeed")  # linkedin (429) and glassdoor (blocked) need a proxy: pass --sites to add them
     ap.add_argument("--steps", default="freehire,internshala,jobspy,portals,ats", help="comma list of steps to run")
     ap.add_argument("--ats-sources", default="greenhouse,lever,ashby", help="ATS directories for the reverse sweep")
     ap.add_argument("--ats-limit", type=int, default=0, help="max companies per ATS (0 = all)")
@@ -376,8 +474,15 @@ def main():
     ap.add_argument("--ats-every", type=int, default=7, help="days between ats runs in a default run; --steps ats always runs it. The sweep is slow and low yield (a 30 day sample of 300 Greenhouse boards found 2 India roles)")
     ap.add_argument("--freehire-pages", type=int, default=6, help="pages of 100 per freehire query")
     ap.add_argument("--internshala-pages", type=int, default=5, help="result pages per Internshala category")
+    ap.add_argument("--no-feeders", action="store_true", help="skip the source feeders (careers directory, directory boards, India ATS tenant probe, Telegram employer names, campus page watch). A default run runs those that are due; naming one in --steps runs it now")
     ap.add_argument("--dry-run", action="store_true", help="scanners print matches and write nothing to the pipeline")
+    ap.add_argument("--slow", action="store_true", help="run one small batch for the rate-limited sites (LinkedIn, Glassdoor; config jobspy.slow) instead of the normal steps")
+    ap.add_argument("--slow-batches", type=int, default=1, help="with --slow: how many batches to run, one every --slow-gap-min minutes")
+    ap.add_argument("--slow-gap-min", type=int, default=60, help="with --slow-batches: minutes between batches")
+    ap.add_argument("--no-slow", action="store_true", help="do not start the background slow lane after the first pass")
     args = ap.parse_args()
+    if args.slow and args.slow_batches > 1 and not args.dry_run:
+        return run_slow_batches(args.slow_batches, args.slow_gap_min)
 
     started = datetime.now()
     (OUT / "logs").mkdir(parents=True, exist_ok=True)
@@ -391,13 +496,26 @@ def main():
     args.sites, site_notes = select_sites(args.sites, state, explicit, started)
     steps = [x for x in build_steps(args, windows) if not (x["id"] == "jobspy" and not args.sites)]
     steps, notes = select_steps(steps, state, explicit, args.ats_every)
-    for note in notes + site_notes:
+    feeder_pick, feeder_notes = feeders.select_feeders(feeders.feeder_list(), state, [x.strip() for x in args.steps.split(",")] if explicit else [],
+                                                       args.dry_run, step_due, args.no_feeders)
+    if args.slow:  # only the slow lane's batch, no feeders
+        steps = [{"id": "jobspy-slow", "file": "scan-jobspy.mjs", "args": ["--slow", *(["--dry-run"] if args.dry_run else [])]}]
+        feeder_pick, feeder_notes = [], []
+    for note in notes + site_notes + feeder_notes:
         print(note)
     print(f"mine: {len(steps)} step(s), windows {windows if not args.days else f'{args.days}d (override)'}, "
           f"log {log_path.relative_to(ROOT)}, excel {xlsx_path.relative_to(ROOT)}")
     write_excel(xlsx_path, [], [], [], started)
     with log_path.open("w") as log:
         log.write(f"mine run {started.isoformat()} args={vars(args)}\n")
+        feeder_runs = []
+        for feeder in feeder_pick:
+            print(f"mine: feeder {feeder['id']} ...", flush=True)
+            fr = run_feeder(feeder, log)
+            feeder_runs.append(fr)
+            print(f"mine: feeder {fr['id']} {fr['status']} in {fr['secs']}s {fr['note']}", flush=True)
+            if record_run(state, fr, args.dry_run):
+                save_state(state)
         for i, step in enumerate(steps):
             offers, status = run_step(step, log, failures, i)
             status["window_days"] = windows.get(step["id"])
@@ -454,6 +572,11 @@ def main():
     dedup_path = OUT / "logs" / f"dedup-{started:%Y%m%d-%H%M%S}.md"
     stats, multi = dedup_report(per_step, dedup_path)
 
+    if new_rows and not args.dry_run:
+        _sent, ping_note = notify_telegram.send_new(new_rows, started.strftime("%d %b %H:%M"))
+        print(ping_note)
+    if not args.slow and not args.no_slow and not explicit:
+        print(start_slow_lane() if not args.dry_run else "mine: a real run would now start the background slow lane (LinkedIn, Glassdoor)")
     print(f"\n{len(merged)} unique offers ({len(new_rows)} new, {known} already known) from {len(steps)} step(s); "
           f"{len(failures)} failure/retry events")
     if history_note:
@@ -461,6 +584,9 @@ def main():
     print(health.summary_table([{"source": r["id"], "fetched": r["fetched"], "kept": r["kept"], "new": r["new"],
                                  "duplicates": r["duplicates"], "errors": r["errors"], "health": r["health"],
                                  "seconds": r["secs"]} for r in runs]))
+    for fr in feeder_runs:
+        if fr["status"] != "ok":
+            print(f"  feeder {fr['id']}: {fr['status']} {fr['note']} (retried at the next run)")
     for r in runs:
         if r["health"] != health.OK or r["note"]:
             print(f"  {r['id']}: {r['status']} {r['health']} {r['health_note']} {r['note']}".rstrip())

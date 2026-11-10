@@ -9,7 +9,7 @@ from itertools import combinations
 
 from canonical import canonical_url, company_key, config, fuzzy_key, host_matches, host_of, title_tokens
 
-KNOWN_SITES = ("linkedin", "naukri", "indeed", "internshala", "wellfound", "instahyre", "shine", "unstop", "cutshort")
+KNOWN_SITES = ("linkedin", "naukri", "indeed", "internshala", "wellfound", "instahyre", "shine", "unstop", "cutshort", "hirist", "glassdoor", "ycombinator", "remoteok", "remotive", "weworkremotely", "freshershunt", "freshersdunia", "freshersnow", "offcampusjobs4u")
 
 
 def source_label(offer, step=""):

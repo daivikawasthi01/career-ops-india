@@ -40,3 +40,18 @@ test('in a terminal the bar is redrawn under each log line and cleared at the en
   pg.done();
   assert.ok(out.at(-1).includes('finished 1/2'));
 });
+
+import { progress as mineProgressLine, fail as mineFailLine } from '../lib/progress.mjs';
+test('mine protocol lines go to stderr only when MINE_PROGRESS=1', () => {
+  const writes = [];
+  const orig = process.stderr.write;
+  process.stderr.write = (s) => { writes.push(String(s)); return true; };
+  try {
+    delete process.env.MINE_PROGRESS;
+    mineProgressLine(1, 4, 'a'); mineFailLine('a', 'boom');
+    assert.equal(writes.length, 0);
+    process.env.MINE_PROGRESS = '1';
+    mineProgressLine(2, 4, 'jobs:x'); mineFailLine('jobs:x', 'bad\nthing');
+  } finally { process.stderr.write = orig; delete process.env.MINE_PROGRESS; }
+  assert.deepEqual(writes, ['@@PROGRESS 2/4 jobs:x\n', '@@FAIL jobs:x\tbad thing\n']);
+});
