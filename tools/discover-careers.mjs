@@ -37,7 +37,7 @@ import {
   registrable, sameSite, isAggregator, checkDomain, checkL1, quoteInEvidence, compareAts, boardFingerprint, fingerprintFit, gate, queryPair, redact, unwrapBingUrl, SearchGovernor, failureBackoff,
 } from '../lib/careers-pipeline.mjs';
 
-const USAGE = `usage: discover-careers.mjs [--llm] [--limit N] [--only NAME,NAME] [--first FILE] [--list] [--slice1] [--workers N] [--search-lanes N] [--no-headed] [--all] [--companies FILE] [--golden FILE] [--out PATH]
+const USAGE = `usage: discover-careers.mjs [--llm] [--limit N] [--only NAME,NAME] [--first FILE] [--list] [--slice1] [--workers N] [--search-lanes N] [--no-headed] [--all] [--companies FILE] [--no-data-lists] [--golden FILE] [--out PATH]
   Layered pipeline (see the header of this file). Output: data/careers-discovery.tsv (append-only; rerun to resume).
   Inputs: config/protected-boards.txt, portals.yml entries with watch: true, data/check-by-hand.txt.
   --llm          run the Groq layers (L1 domain, L4 verifier); GROQ_API_KEY in .env, models GROQ_MODEL / GROQ_FALLBACK_MODEL
@@ -525,6 +525,18 @@ function checkGolden(cases, rows) {
   return fails;
 }
 
+/**
+ * Company names harvested by the feeders (tools/feeders.py), read from the data root so a feeder run feeds the next
+ * discovery run without any hand copying: Telegram channels, funding news, and the careersat.tech directory.
+ * `--no-data-lists` turns it off. A name already looked at is skipped by the resume logic like any other.
+ */
+export const DATA_LISTS = ['telegram-companies.txt', 'funding-companies.txt', 'careers-directory-new-companies.txt'];
+export function dataListNames(dataDir = join(ROOT, 'data')) {
+  const out = [];
+  for (const f of DATA_LISTS) for (const l of readText(join(dataDir, f)).split('\n')) { const n = l.replace(/#.*/, '').split('\t')[0].trim(); if (n) out.push(n); }
+  return out;
+}
+
 async function main() {
   if (has('--help') || has('-h')) { console.log(USAGE); return 0; }
   const portals = existsSync(PORTALS) ? (loadYaml(readText(PORTALS)) || {}) : {};
@@ -532,7 +544,7 @@ async function main() {
   const golden = arg('--golden') ? readGolden(arg('--golden')) : null;
   let inputs = golden
     ? golden.map((g) => ({ name: g.company, sources: [...(readText(PROTECTED).split('\n').some((l) => l.replace(/#.*/, '').trim().toLowerCase() === g.company.toLowerCase()) ? ['protected'] : []), 'golden'], entry: entries.find((e) => e.name?.toLowerCase() === g.company.toLowerCase()) || null }))
-    : buildInputs({ protectedText: readText(PROTECTED), portalsEntries: entries, checkByHandText: readText(CHECK_BY_HAND), extraNames: [...(has('--slice1') ? slice1Names() : []), ...(arg('--companies') ? readText(arg('--companies')).split('\n').map((l) => l.replace(/#.*/, '').split('\t')[0].trim()).filter(Boolean) : []), ...(has('--all') ? entries.filter((e) => e && typeof e.name === 'string' && e.enabled !== false).map((e) => e.name) : [])], only: (arg('--only') || '').split(',').map((s) => s.trim()).filter(Boolean) });
+    : buildInputs({ protectedText: readText(PROTECTED), portalsEntries: entries, checkByHandText: readText(CHECK_BY_HAND), extraNames: [...(has('--slice1') ? slice1Names() : []), ...(has('--no-data-lists') ? [] : dataListNames()), ...(arg('--companies') ? readText(arg('--companies')).split('\n').map((l) => l.replace(/#.*/, '').split('\t')[0].trim()).filter(Boolean) : []), ...(has('--all') ? entries.filter((e) => e && typeof e.name === 'string' && e.enabled !== false).map((e) => e.name) : [])], only: (arg('--only') || '').split(',').map((s) => s.trim()).filter(Boolean) });
   if (arg('--first')) {
     const first = readText(arg('--first')).split('\n').map((l) => l.replace(/#.*/, '').split('\t')[0].trim()).filter(Boolean);
     const rank = new Map(first.map((n, i) => [n.toLowerCase(), i]));

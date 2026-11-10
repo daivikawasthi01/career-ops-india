@@ -46,7 +46,9 @@ const REPO = join(dirname(new URL(import.meta.url).pathname), '..');
 const COMPANY_DEADLINE_MS = Number(process.env.CAREER_OPS_COMPANY_DEADLINE_MS || 300000);
 const COLS = ['company', 'final_status', 'outcome', 'careers_url', 'ats', 'jobs_total', 'jobs_india', 'sample_titles', 'rounds', 'tests', 'via', 'tried', 'queries', 'models', 'notes', 'alternatives'];
 const rowLine = (r) => COLS.map((c) => redact(String(r[c] ?? '')).replace(/[\t\r\n]+/g, ' ').trim()).join('\t');
-export const readDone2 = (text) => new Set(text.split('\n').slice(1).map((l) => l.split('\t')[0].trim().toLowerCase()).filter(Boolean));
+// Rows that ended in a transient state are not "done": a rerun tries them again. The export reads the LAST row per company, so the retry wins.
+export const RETRY_STATUSES = new Set(['error', 'bot-blocked']);
+export const readDone2 = (text) => new Set(text.split('\n').slice(1).map((l) => l.split('\t')).filter((c) => c[0]?.trim() && !RETRY_STATUSES.has((c[1] || '').trim())).map((c) => c[0].trim().toLowerCase()));
 
 const env = {}; // providers etc., set in main
 

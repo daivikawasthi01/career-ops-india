@@ -412,3 +412,12 @@ test('limitedUntil is 0 while a key can answer', async () => {
   const llm = await makeLlm({ keys: ['k1', 'k2'], model: 'groq:openai/gpt-oss-120b', fallback: 'groq:openai/gpt-oss-20b' });
   assert.equal(llm.limitedUntil(), 0);
 });
+
+test('dataListNames reads feeder lists from the data dir and skips comments and blanks', async () => {
+  const { dataListNames } = await import('../tools/discover-careers.mjs');
+  const d = mkdtempSync(join(tmpdir(), 'lists-'));
+  writeFileSync(join(d, 'telegram-companies.txt'), 'Acme\n# note\n\nBeta Labs\t extra\n');
+  writeFileSync(join(d, 'funding-companies.txt'), 'Gamma\n');
+  assert.deepEqual(dataListNames(d), ['Acme', 'Beta Labs', 'Gamma']);
+  assert.deepEqual(dataListNames(join(d, 'missing')), []);
+});
