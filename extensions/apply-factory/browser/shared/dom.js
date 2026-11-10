@@ -12,3 +12,6 @@ window.h = (tag, props = {}, ...kids) => {
   for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
   return el;
 };
+
+// replaceChildren turns a null or false child into the text "null" or "false"; this drops them like h() does.
+window.fill = (parent, ...kids) => parent.replaceChildren(...kids.flat().filter((k) => k != null && k !== false));

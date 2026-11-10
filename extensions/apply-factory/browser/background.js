@@ -122,7 +122,7 @@ const panel = {
     const siteMode = rules && host ? await modeFor(rules, host) : 'off';
     const origins = host ? [`https://${host}/*`] : [];
     const granted = origins.length ? await chrome.permissions.contains({ origins }).catch(() => false) : false;
-    return { host, siteMode, auto: settings.auto !== false, frames: st.frames, server, error, injected: Object.keys(st.frames).length > 0, granted };
+    return { host, siteMode, auto: settings.auto !== false, autoOpen: settings.autoOpen !== false, frames: st.frames, server, error, injected: Object.keys(st.frames).length > 0, granted };
   },
   async 'set-mode'({ tabId, host, mode }) {
     const overrides = await local.get('siteModes', {});
@@ -131,7 +131,11 @@ const panel = {
     await toFrames(tabId, { type: 'set-mode', mode });
     return { ok: true };
   },
-  async 'set-auto'({ auto }) { await local.set('settings', { auto }); return { ok: true }; },
+  async 'set-auto'({ auto, autoOpen }) {
+    const now = await local.get('settings', {});
+    await local.set('settings', { ...now, ...(auto !== undefined && { auto }), ...(autoOpen !== undefined && { autoOpen }) });
+    return { ok: true };
+  },
   rescan: async ({ tabId }) => { await toFrames(tabId, { type: 'rescan' }); return { ok: true }; },
   'fill-known': async ({ tabId }) => { await toFrames(tabId, { type: 'fill-known' }); return { ok: true }; },
   'draft-all': async ({ tabId }) => { await toFrames(tabId, { type: 'draft-all' }); return { ok: true }; },

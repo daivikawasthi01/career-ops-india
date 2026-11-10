@@ -86,7 +86,7 @@ async function compileNow() {
 function drawPreview() {
   const box = document.getElementById('preview');
   if (!box) return;
-  box.replaceChildren(
+  fill(box, 
     S.errors.length ? h('ul', { class: 'errors' }, S.errors.map((e) => h('li', {}, h('button', { text: e.line ? `Line ${e.line}: ${e.msg}` : e.msg, onclick: () => jumpTo(e.line) })))) : null,
     S.pages.length ? pages(S.pages, 'Compiled CV') : h('p', { class: 'empty', text: 'The compiled CV appears here.' }));
 }
@@ -123,7 +123,7 @@ function drawEdit() {
   editor = h('textarea', { class: 'tex', spellcheck: 'false', 'aria-label': 'CV tex source', oninput: (e) => {
     S.tex = e.target.value; clearTimeout(compileTimer); compileTimer = setTimeout(compileNow, 1000);
   } }, S.tex);
-  viewEl.replaceChildren(
+  fill(viewEl, 
     imported && h('section', { class: 'stock' },
       h('h2', { text: 'Imported from a PDF: check it before you publish' }),
       h('p', { class: 'note', text: 'The local model read your PDF and a template wrote this tex. Compare the preview with your original, fix anything wrong, then publish.' })),
@@ -158,7 +158,7 @@ async function runImport(file) {
 function drawImport() {
   const imp = S.imp;
   const input = h('input', { type: 'file', accept: 'application/pdf', class: 'visually-hidden', 'aria-label': 'Choose a CV PDF', onchange: (e) => runImport(e.target.files[0]) });
-  viewEl.replaceChildren(
+  fill(viewEl, 
     h('section', { class: 'stock' },
       h('h2', { text: `Turn a PDF into tex for the ${slotLabel()}` }),
       h('p', { class: 'note', text: 'The local model reads the text of your PDF, a template writes the tex, tectonic compiles it, and the model fixes compile errors. Nothing replaces your CV until you publish from the editor.' }),
@@ -204,7 +204,7 @@ function drawTailor() {
   const jd = S.jd;
   const tailorBtn = h('button', { class: 'btn btn--ink', text: t?.busy ? 'Working' : 'Tailor my CV', disabled: !!t?.busy || jd.text.trim().length < 200, onclick: runTailor });
   const sync = () => { tailorBtn.disabled = !!t?.busy || jd.text.trim().length < 200; };
-  viewEl.replaceChildren(
+  fill(viewEl, 
     h('section', { class: 'stock' },
       h('h2', { text: `Tailor the ${slotLabel()} to a job` }),
       h('div', { class: 'fields' },
@@ -260,4 +260,13 @@ function draw() {
   }
   await loadTex();
   draw();
+})();
+
+// Theme toggle: dark by default, the label says what the button will switch to.
+(() => {
+  const btn = document.getElementById('theme');
+  if (!btn) return;
+  const label = () => { btn.textContent = window.AFTheme.current() === 'dark' ? 'Light theme' : 'Dark theme'; };
+  btn.addEventListener('click', () => { window.AFTheme.toggle(); label(); });
+  label();
 })();

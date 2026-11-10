@@ -89,6 +89,7 @@
       state.warnings = res.warnings || [];
       if (state.auto) await fillKnown(); else report();
       predraft();
+      announce();
     } catch (e) {
       state.diag = { ...state.diag, error: String(e.message || e).slice(0, 120) }; report();
     } finally {
@@ -106,6 +107,24 @@
     if (res.error) { item.status = 'draftable'; item.reason = res.error; }
     else Object.assign(item, { status: res.status, value: res.value ?? '', source: res.source || item.source, reason: res.reason, confidence: res.confidence });
     report();
+  }
+
+  // ---- tell the person a job or form was found ----
+  // The panel opens itself inside the page once per page load (a setting in the panel's footer can turn that off); closing it
+  // leaves a small button to bring it back, and that button can be hidden for the site.
+  const stored = (key) => new Promise((r) => { try { chrome.storage.local.get(key, (v) => r(v?.[key])); } catch { r(undefined); } });
+  async function announce() {
+    if (window !== window.top || AF.dockOpen() || AF.launcherShown() || state.announced || state.items.size < 3) return;
+    state.announced = true;
+    const hidden = await stored(`pill:${location.hostname}`);
+    if (hidden) return;
+    const showPill = () => AF.launcher({
+      text: 'Form found. Open Apply',
+      onOpen: () => AF.dock({ onClose: showPill }),
+      onDismiss: () => { try { chrome.storage.local.set({ [`pill:${location.hostname}`]: true }); } catch { /* shown again next time */ } },
+    });
+    const settings = (await stored('settings')) || {};
+    if (settings.autoOpen === false) showPill(); else AF.dock({ onClose: showPill });
   }
 
   // ---- suggestions you approve ----

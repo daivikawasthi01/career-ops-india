@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CV studio</title>
   <meta name="description" content="Edit your CV as tex with a live preview, turn a PDF into tex, and tailor a CV to a job description.">
+  <script src="../shared/theme.js"></script>
   <link rel="stylesheet" href="studio.css">
 </head>
 <body>
@@ -13,6 +14,7 @@
     <nav class="tabs" id="tabs" role="tablist" aria-label="Studio views"></nav>
     <label class="slot">CV <select id="slot"></select></label>
     <span class="note" id="status" role="status"></span>
+    <button type="button" class="btn btn--card btn--small" id="theme">Light theme</button>
   </header>
   <main id="view" class="view"></main>
   <script src="../shared/dom.js"></script>

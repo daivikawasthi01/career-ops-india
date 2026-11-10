@@ -37,6 +37,17 @@
   "optional_host_permissions": [
     "https://*/*"
   ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "panel/*",
+        "shared/*"
+      ],
+      "matches": [
+        "https://*/*"
+      ]
+    }
+  ],
   "content_scripts": [
     {
       "matches": [

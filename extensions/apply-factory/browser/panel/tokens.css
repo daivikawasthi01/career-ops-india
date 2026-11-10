@@ -26,3 +26,20 @@
   --press-groove: inset 1px 1.5px 2px oklch(var(--shade) / 0.16), inset -1px -1px 0 oklch(var(--lit) / 0.9), 0 0 0 0.5px oklch(var(--shade) / 0.2);
   --tracking-display: -0.03em; --display-weight: 600;
 }
+
+/* Dark is the default: warm charcoal, never pure black, coral kept as the one signal. The light theme is the :root block above, chosen with data-theme="light". */
+:root:not([data-theme="light"]) {
+  color-scheme: dark;
+  --color-error: oklch(72% 0.16 27); --color-success: oklch(76% 0.13 150);
+  --color-paper: oklch(20% 0.01 40); --color-paper-2: oklch(23% 0.011 40); --color-paper-3: oklch(26.5% 0.012 40);
+  --color-ink: oklch(93% 0.008 60); --color-ink-2: oklch(86% 0.009 58); --color-muted: oklch(70% 0.012 55);
+  --color-rule: oklch(31% 0.011 42); --color-rule-2: oklch(38% 0.012 42);
+  --color-accent: oklch(74% 0.125 30); --color-accent-ink: oklch(20% 0.012 38); --color-accent-2: oklch(76% 0.13 30); --color-focus: oklch(78% 0.14 30);
+  --color-cotton: oklch(25.5% 0.012 42); --color-desk: oklch(17.5% 0.01 40); --color-print: oklch(94% 0.007 60);
+  --color-board: oklch(74% 0.125 30); --color-board-type: oklch(20% 0.012 38); --color-paid: oklch(77% 0.14 35);
+  --shadow-card: 0 1px 2px oklch(0% 0 0 / 0.4);
+  --edge-stock: inset 0 1px 0 oklch(100% 0 0 / 0.07), 0 0 0 0.5px oklch(0% 0 0 / 0.55), 0 1px 0 oklch(0% 0 0 / 0.35);
+  --cast-stock: 6px 5px 12px -6px oklch(0% 0 0 / 0.6); --cast-stock-lift: 12px 10px 20px -8px oklch(0% 0 0 / 0.6);
+  --press-groove: inset 1px 1.5px 3px oklch(0% 0 0 / 0.5), inset -1px -1px 0 oklch(100% 0 0 / 0.06), 0 0 0 0.5px oklch(0% 0 0 / 0.5);
+}
+:root:not([data-theme="light"]) .btn--ink, :root:not([data-theme="light"]) .settled, :root:not([data-theme="light"]) .btn--card { text-shadow: none; }

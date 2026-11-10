@@ -47,6 +47,7 @@ def manifest() -> dict:
         "permissions": ["storage", "sidePanel", "scripting", "tabs", "webNavigation", "activeTab"],
         "host_permissions": [f"http://127.0.0.1:{port}/*"],
         "optional_host_permissions": ["https://*/*"],
+        "web_accessible_resources": [{"resources": ["panel/*", "shared/*"], "matches": ["https://*/*"]}],  # the in-page copy of the panel
         "content_scripts": [{"matches": match_patterns(), "js": CONTENT_FILES, "run_at": "document_idle", "all_frames": True}],
     }
 
