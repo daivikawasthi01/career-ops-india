@@ -129,6 +129,17 @@ function group(title, cards) {
 const callApi = (path, body) => send('api', { path, body });
 
 // A reloaded extension does not update tabs that were already open: they keep the old page script until refreshed.
+// Chrome keeps the manifest it loaded until the extension is reloaded, while the panel files are read fresh from disk. When the two
+// differ, new features silently do not run, so say so plainly.
+const oldManifest = () => window.AF_BUILD && chrome.runtime.getManifest().version !== window.AF_BUILD;
+
+function oldManifestCard() {
+  return h('section', { class: 'stock' },
+    h('h2', { text: 'Chrome is running an old copy' }),
+    h('p', { class: 'note', text: `Chrome has version ${chrome.runtime.getManifest().version} loaded, the files are ${window.AF_BUILD}. New features do not run until it reloads.` }),
+    h('p', { class: 'note', text: 'Open chrome://extensions, find Apply and press its reload arrow. If this card stays, remove the extension and use Load unpacked on the browser folder again.' }));
+}
+
 function staleTab() {
   const mine = chrome.runtime.getManifest().version;
   return Object.values(st?.frames || {}).some((f) => f.diag?.v !== mine);
@@ -376,6 +387,7 @@ function render() {
     h('h1', { text: 'Apply' }),
     st && !st.error && h('span', { class: 'link', 'data-ok': String(!!llm?.ok), text: llm?.ok ? `Local model ready: ${llm.chat_model}` : 'Local model off' })));
 
+  if (oldManifest()) nodes.push(oldManifestCard());
   if (!st || st.error) { nodes.push(setupCard()); }
   else if (!st.host) { nodes.push(h('p', { class: 'empty', text: 'Open an application form and I will pick it up.' })); }
   else {

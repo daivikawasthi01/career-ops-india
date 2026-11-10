@@ -118,7 +118,7 @@
   // leaves a small button to bring it back, and that button can be hidden for this tab.
   const stored = (key) => new Promise((r) => { try { chrome.storage.local.get(key, (v) => r(v?.[key])); } catch { r(undefined); } });
   async function announce() {
-    if (window !== window.top || AF.dockOpen() || AF.launcherShown() || state.announced || state.items.size < 3) return;
+    if (!AF.dock || window !== window.top || AF.dockOpen() || AF.launcherShown() || state.announced || state.items.size < 3) return;
     state.announced = true;
     let hidden = false;
     try { hidden = sessionStorage.getItem('af-pill-hidden') === '1'; } catch { /* storage blocked: show it */ }
@@ -134,6 +134,7 @@
 
   // ---- chips beside the questions ----
   function syncChips() {
+    if (!AF.chip) return; // an old manifest may not have loaded suggest.js: the rest of the page script must still work
     const live = new Set();
     if (state.mode === 'assist') {
       for (const it of state.items.values()) {
@@ -178,6 +179,7 @@
   }
 
   function showSuggestion(it) {
+    if (!AF.suggestCard) return;
     const anchor = AF.handles.get(it.id)?.els[0];
     if (!anchor || dismissed.has(it.id)) return;
     const actions = {
