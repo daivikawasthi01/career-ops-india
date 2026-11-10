@@ -194,6 +194,17 @@ borderline:
 # Rejected rows are logged (title, company, source, url, reason) and kept this long.
 rejected_log_days: 30
 
+# Retention for data/jobs.db (tools/store.py expire_jobs), run after every real mine.py run.
+#   job_ttl_days     a job nobody marked (status new or ignore) that no scan has listed for this long is deleted. A job still
+#                    listed keeps refreshing its last_seen, so an open employer posting stays. Jobs marked interested or applied
+#                    are never deleted.
+#   tombstone_days   a deleted job's URLs stay in `seen` this long, so the same posting is not reported as new again
+#   backups_kept     newest jobs.db.bak-* files kept
+retention:
+  job_ttl_days: 30
+  tombstone_days: 365
+  backups_kept: 7
+
 # ---- Phase 3: cross-source dedup (tools/canonical.py, tools/dedup.py) ----
 dedup: {"tracking_params": ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "gclid", "fbclid", "msclkid", "ref", "referrer", "refid", "trk", "trackingid", "tracking_id", "src", "source", "lever-source", "lever-origin", "gh_src", "ccuid", "vjs", "from", "campaign", "sid", "ebp", "ebp_src", "eml", "cid", "mc_cid", "mc_eid", "_ga", "_gl"], "company_suffixes": ["pvt", "private", "ltd", "limited", "inc", "incorporated", "llc", "llp", "corp", "corporation", "co", "company", "gmbh", "plc", "pte", "india", "opc", "technologies", "technology", "tech", "solutions", "software", "systems", "labs", "services", "softwares"], "title_noise": ["urgent", "hiring", "opening", "openings", "immediate", "joiner", "joiners", "fresher", "freshers", "wanted", "required", "remote", "hybrid", "onsite", "wfo", "wfh"], "city_aliases": {"bangalore": "bengaluru", "bengaluru": "bengaluru", "gurgaon": "gurugram", "gurugram": "gurugram", "bombay": "mumbai", "navi mumbai": "mumbai", "madras": "chennai", "calcutta": "kolkata", "new delhi": "delhi", "noida": "noida", "greater noida": "noida"}, "generic_locations": ["india", "remote", "anywhere", "work from home", "wfh", "pan india", "multiple locations", "hybrid", "onsite"], "employer_hosts": ["greenhouse.io", "lever.co", "ashbyhq.com", "myworkdayjobs.com", "smartrecruiters.com", "icims.com", "bamboohr.com", "paylocity.com", "workable.com", "recruitee.com", "jobvite.com", "teamtailor.com", "breezy.hr", "keka.com", "zohorecruit.com", "zohorecruit.in", "darwinbox.in", "freshteam.com", "eightfold.ai"], "aggregator_hosts": ["linkedin.com", "naukri.com", "indeed.com", "internshala.com", "glassdoor.com", "foundit.in", "monster.com", "shine.com", "wellfound.com", "angel.co", "instahyre.com", "cutshort.io", "ziprecruiter.com", "simplyhired.com", "jooble.org", "adzuna.in", "unstop.com", "freshersworld.com", "apna.co", "hirist.tech", "freshershunt.in", "freshersdunia.in", "offcampusjobs4u.com", "freshersnow.com", "fresheropenings.com", "freshersarea.in", "remoteok.com", "remotive.com", "ycombinator.com", "iimjobs.com", "t.me", "telegram.me"], "similar_title_overlap": 0.6}
 

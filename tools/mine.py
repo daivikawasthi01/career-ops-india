@@ -553,6 +553,7 @@ class Saved:
     known: int
     history_note: str
     dropped: dict  # rows the freshness gate refused: {"stale": n, "undated": n, "experience": n}
+    expired: dict  # retention: {"expired": n, "kept_acted_on": n, "forgotten": n}
 
 
 def save_results(args, started, per_step, runs, failures, xlsx_path):
@@ -561,7 +562,7 @@ def save_results(args, started, per_step, runs, failures, xlsx_path):
     if args.dry_run:
         conn = store.dry_run_connection()  # 'new' is computed against a copy; data/jobs.db is neither created nor changed
     else:
-        store.backup_db()
+        store.backup_db(keep=(pipeline_cfg.section("retention") or {}).get("backups_kept"))
         conn = store.connect()
     history_note = None
     if conn.execute("SELECT COUNT(*) FROM seen").fetchone()[0] == 0 and (ROOT / "data" / "scan-history.tsv").exists():
@@ -587,8 +588,10 @@ def save_results(args, started, per_step, runs, failures, xlsx_path):
                                 window_days=r.get("window_days"), dry_run=int(args.dry_run))
     store.record_failures(conn, run_id, failures)
     record_term_yield(conn, run_id, runs, per_step, new_urls, started)
+    retention = cfg.get("retention") or {}
+    expired = store.expire_jobs(conn, retention.get("job_ttl_days", 30), retention.get("tombstone_days", 365)) if retention else {}
     write_excel(xlsx_path, db_rows(conn, run_id), runs, failures, started)
-    return Saved(merged, new_rows, known, history_note, dict(dropped))
+    return Saved(merged, new_rows, known, history_note, dict(dropped), expired)
 
 
 def announce(args, plan, started, new_rows):
@@ -607,6 +610,9 @@ def print_report(args, plan, saved, feeder_runs, runs, failures, per_step, paths
           f"{len(failures)} failure/retry events")
     if saved.history_note:
         print(saved.history_note)
+    if saved.expired.get("expired"):
+        print(f"retention: {saved.expired['expired']} jobs unseen for {(pipeline_cfg.section('retention') or {}).get('job_ttl_days', 30)} days removed "
+              f"({saved.expired['kept_acted_on']} you acted on kept, {saved.expired['forgotten']} old tombstones forgotten)")
     if saved.dropped:
         print("freshness gate dropped: " + ", ".join(f"{n} {why}" for why, n in sorted(saved.dropped.items())))
     print(health.summary_table([{"source": r["id"], "fetched": r["fetched"], "kept": r["kept"], "new": r["new"],

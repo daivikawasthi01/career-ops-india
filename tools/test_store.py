@@ -40,7 +40,7 @@ class Ingest(unittest.TestCase):
         self.assertEqual(row["last_run_id"], "r2")
 
     def test_url_in_seen_memory_is_not_new(self):
-        self.db.execute("INSERT INTO seen VALUES (?, ?)", ("https://www.linkedin.com/jobs/view/3912345678", "2026-10-01"))
+        self.db.execute("INSERT INTO seen (canonical_url, first_seen) VALUES (?, ?)", ("https://www.linkedin.com/jobs/view/3912345678", "2026-10-01"))
         new, known = self.run_once("r1", {"jobspy": [LI]})
         self.assertEqual((len(new), known), (0, 1))
 
@@ -149,6 +149,87 @@ class DryRun(unittest.TestCase):
             self.assertEqual((len(new), known), (1, 1))
             check = store.connect(path)
             self.assertEqual(check.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 1)
+
+
+class Retention(unittest.TestCase):
+    NOW = datetime(2026, 12, 20, 12, 0)
+
+    def setUp(self):
+        self.db = store.connect(":memory:")
+
+    def add(self, offer, day, step="jobspy"):
+        return store.ingest(self.db, merge_offers({step: [offer]}), "r-" + day, today=day)
+
+    def test_old_unseen_job_is_deleted_but_never_reported_new_again(self):
+        self.add(LI, "2026-11-01")
+        out = store.expire_jobs(self.db, 30, 365, now=self.NOW)
+        self.assertEqual(out["expired"], 1)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 0)
+        new, known = self.add(LI, "2026-12-20")                      # same posting listed again
+        self.assertEqual((len(new), known), (0, 1))
+        new, known = self.add(GH, "2026-12-20", "ats")                # same job on another board: matched by company+title+city
+        self.assertEqual((len(new), known), (0, 1))
+
+    def test_applied_and_interested_jobs_are_never_expired(self):
+        self.add(LI, "2026-10-01")
+        self.add(OTHER, "2026-10-01")
+        store.set_status(self.db, LI["url"], "applied")
+        store.set_status(self.db, OTHER["url"], "interested")
+        out = store.expire_jobs(self.db, 30, 365, now=self.NOW)
+        self.assertEqual((out["expired"], out["kept_acted_on"]), (0, 2))
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 2)
+
+    def test_a_job_still_being_listed_stays(self):
+        self.add(LI, "2026-11-01")
+        self.add(LI, "2026-12-15")                                     # seen again: last_seen moves up
+        self.assertEqual(store.expire_jobs(self.db, 30, 365, now=self.NOW)["expired"], 0)
+
+    def test_ignored_jobs_expire_with_a_tombstone(self):
+        self.add(LI, "2026-10-01")
+        store.set_status(self.db, LI["url"], "ignore")
+        self.assertEqual(store.expire_jobs(self.db, 30, 365, now=self.NOW)["expired"], 1)
+        self.assertEqual(len(self.add(LI, "2026-12-20")[0]), 0)
+
+    def test_tombstones_are_forgotten_after_their_own_ttl_but_imported_history_is_not(self):
+        self.db.execute("INSERT INTO seen (canonical_url, first_seen) VALUES ('old.example/history', '2020-01-01')")
+        self.add(LI, "2026-11-01")
+        store.expire_jobs(self.db, 30, 365, now=self.NOW)
+        later = datetime(2028, 1, 1)
+        out = store.expire_jobs(self.db, 30, 365, now=later)
+        self.assertGreaterEqual(out["forgotten"], 1)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM seen WHERE canonical_url='old.example/history'").fetchone()[0], 1)
+        self.assertEqual(len(self.add(LI, "2028-01-02")[0]), 1)       # a year later the posting counts as new again
+
+    def test_nothing_to_expire_is_a_clean_noop(self):
+        self.assertEqual(store.expire_jobs(self.db, 30, 365, now=self.NOW), {"expired": 0, "kept_acted_on": 0, "forgotten": 0})
+
+
+class Migration(unittest.TestCase):
+    def test_an_old_database_gets_the_new_seen_columns(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "jobs.db"
+            import sqlite3
+            old = sqlite3.connect(path)
+            old.execute("CREATE TABLE seen (canonical_url TEXT PRIMARY KEY, first_seen TEXT)")
+            old.execute("INSERT INTO seen VALUES ('x', '2026-01-01')")
+            old.commit(); old.close()
+            db = store.connect(path)
+            cols = {r[1] for r in db.execute("PRAGMA table_info(seen)")}
+            self.assertTrue({"fuzzy_key", "expired_at"} <= cols)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM seen").fetchone()[0], 1)
+
+
+class Backups(unittest.TestCase):
+    def test_only_the_newest_backups_are_kept(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "jobs.db"
+            path.write_text("db")
+            for n in range(5):
+                (Path(d) / f"jobs.db.bak-2026010{n}-000000").write_text("old")
+            store.backup_db(path, keep=3)
+            left = sorted(p.name for p in Path(d).glob("jobs.db.bak-*"))
+            self.assertEqual(len(left), 3)
+            self.assertNotIn("jobs.db.bak-20260100-000000", left)
 
 
 if __name__ == "__main__":

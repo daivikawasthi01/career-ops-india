@@ -1,9 +1,11 @@
 # Daily mine.py run on your own machine (self-hosted runner): your data, .env, venv and IP stay local.
-# Setup: docs/SCHEDULE.md. Cron below is UTC: 04:00 UTC = 09:30 IST.
+# There is no schedule here: cron-job.org calls GitHub's repository_dispatch API once a day (setup: docs/SCHEDULE.md), which
+# is more punctual than GitHub's own cron. A run started that way is real. A manual run from the Actions tab is a dry run
+# unless you untick the box.
 name: mine-daily
 on:
-  schedule:
-    - cron: "0 4 * * *"
+  repository_dispatch:
+    types: [mine-daily]
   workflow_dispatch:
     inputs:
       dry_run:

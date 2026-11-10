@@ -6,7 +6,9 @@ rejected  every dropped row with its reason; kept `rejected_log_days` days
 runs      one row per source per mine.py run
 failures  classified failures of a run
 term_yield  new rows per search term per run
-Everything here is plain sqlite3; no row is ever deleted except old rejected rows.
+Everything here is plain sqlite3. Rows are deleted only by retention: old rejected rows (prune_rejected) and jobs nobody has
+looked at (expire_jobs), which leaves a tombstone in `seen` so the same job is never reported as new again. A job you marked
+interested or applied is never expired.
 """
 import csv
 import json
@@ -29,7 +31,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   fuzzy_key TEXT, first_run_id TEXT, last_run_id TEXT, live_checked TEXT, stale INTEGER DEFAULT 0, urls TEXT
 );
 CREATE INDEX IF NOT EXISTS jobs_fuzzy ON jobs(fuzzy_key);
-CREATE TABLE IF NOT EXISTS seen (canonical_url TEXT PRIMARY KEY, first_seen TEXT);
+CREATE TABLE IF NOT EXISTS seen (canonical_url TEXT PRIMARY KEY, first_seen TEXT, fuzzy_key TEXT, expired_at TEXT);
 CREATE TABLE IF NOT EXISTS rejected (
   title TEXT, company TEXT, source TEXT, url TEXT, reject_reason TEXT, seen_at TEXT,
   UNIQUE(url, reject_reason, seen_at)
@@ -44,6 +46,16 @@ CREATE TABLE IF NOT EXISTS term_yield (run_id TEXT, term TEXT, site TEXT, fetche
 """
 
 
+def _migrate(conn):
+    """Bring an older jobs.db up to the current schema (seen gained fuzzy_key and expired_at for tombstones)."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(seen)")}
+    for col in ("fuzzy_key", "expired_at"):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE seen ADD COLUMN {col} TEXT")
+    conn.execute("CREATE INDEX IF NOT EXISTS seen_fuzzy ON seen(fuzzy_key)")
+    conn.commit()
+
+
 def connect(path=None):
     path = str(path or DB_PATH)
     if path != ":memory:":
@@ -51,6 +63,7 @@ def connect(path=None):
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
 
 
@@ -64,6 +77,7 @@ def dry_run_connection(path=None):
         src.backup(mem)
         src.close()
     mem.executescript(SCHEMA)
+    _migrate(mem)
     return mem
 
 
@@ -75,12 +89,16 @@ def memory_copy(conn):
     return copy
 
 
-def backup_db(path=None):
+def backup_db(path=None, keep=None):
+    """Copy jobs.db to jobs.db.bak-<time>. With `keep`, only that many newest backups are left afterwards."""
     path = Path(path or DB_PATH)
     if not path.exists():
         return None
     out = path.with_name(f"{path.name}.bak-{datetime.now():%Y%m%d-%H%M%S}")
     shutil.copy2(path, out)
+    if keep:
+        for old in sorted(path.parent.glob(f"{path.name}.bak-*"))[:-keep]:
+            old.unlink()
     return out
 
 
@@ -131,7 +149,8 @@ def ingest(conn, merged, run_id, today=None):
                  ";".join(dict.fromkeys(old_flags + flags)), json.dumps(all_urls), row.get("confidence", "aggregator"),
                  row["url"] if row.get("confidence") == "employer-confirmed" else None, hit["canonical_url"]))
             continue
-        if any(conn.execute("SELECT 1 FROM seen WHERE canonical_url=?", (u,)).fetchone() for u in urls):
+        if any(conn.execute("SELECT 1 FROM seen WHERE canonical_url=?", (u,)).fetchone() for u in urls) or (
+                fkey and conn.execute("SELECT 1 FROM seen WHERE fuzzy_key=?", (fkey,)).fetchone()):
             known += 1
             continue
         key = row.get("canonical_url") or urls[0]
@@ -167,6 +186,34 @@ def ingest_rejected_tsv(conn, path):
         return 0
     with path.open(newline="", encoding="utf-8") as f:
         return add_rejected(conn, list(csv.DictReader(f, delimiter="\t")))
+
+
+EXPIRABLE = ("new", "ignore")  # interested and applied are your records of what you did: never expired
+
+
+def expire_jobs(conn, ttl_days, tombstone_days, now=None):
+    """Retention for jobs.db. A job nobody acted on (status new or ignore) that no scan has seen for `ttl_days` is deleted, but its
+    URLs and fuzzy key go to `seen` first, so if the posting reappears it is still "already known", not new. Jobs you marked
+    interested or applied are kept for good. Tombstones older than `tombstone_days` are forgotten (imported scan history, which
+    has no expired_at, is never forgotten). Returns {"expired", "kept_acted_on", "forgotten"}."""
+    now = now or datetime.now()
+    today = now.date().isoformat()
+    cutoff = (now - timedelta(days=ttl_days)).date().isoformat()
+    marks = ",".join("?" * len(EXPIRABLE))
+    rows = conn.execute(f"SELECT * FROM jobs WHERE status IN ({marks}) AND COALESCE(last_seen, first_seen, '') < ?",
+                        (*EXPIRABLE, cutoff)).fetchall()
+    for r in rows:
+        urls = set(json.loads(r["urls"] or "[]")) | {r["canonical_url"], canonical_url(r["url"] or "")}
+        for u in filter(None, urls):
+            conn.execute("INSERT OR IGNORE INTO seen (canonical_url, first_seen, fuzzy_key, expired_at) VALUES (?,?,?,?)",
+                         (u, r["first_seen"], r["fuzzy_key"], today))
+        conn.execute("DELETE FROM jobs WHERE canonical_url=?", (r["canonical_url"],))
+    forget = (now - timedelta(days=tombstone_days)).date().isoformat()
+    forgotten = conn.execute("DELETE FROM seen WHERE expired_at IS NOT NULL AND expired_at < ?", (forget,)).rowcount
+    kept = conn.execute("SELECT COUNT(*) FROM jobs WHERE status NOT IN (%s) AND COALESCE(last_seen, first_seen, '') < ?" % marks,
+                        (*EXPIRABLE, cutoff)).fetchone()[0]
+    conn.commit()
+    return {"expired": len(rows), "kept_acted_on": kept, "forgotten": forgotten}
 
 
 def prune_rejected(conn, days, now=None):
@@ -246,7 +293,7 @@ def migrate_scan_history(conn, tsv_path):
                 rej_rows.append({"title": r.get("title"), "company": r.get("company"), "source": r.get("portal"),
                                  "url": r["url"], "reason": status.removeprefix("skipped_"),
                                  "timestamp": (r.get("first_seen") or "") + "T00:00:00"})
-    conn.executemany("INSERT OR IGNORE INTO seen VALUES (?,?)", seen_rows)
+    conn.executemany("INSERT OR IGNORE INTO seen (canonical_url, first_seen) VALUES (?,?)", seen_rows)
     conn.commit()
     add_rejected(conn, rej_rows)
     return report

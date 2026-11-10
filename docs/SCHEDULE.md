@@ -5,10 +5,12 @@ the jobs run on your Mac, with your `data/`, `.env`, `portals.yml`, jobspy venv 
 used: they start empty (no jobs.db, no portals.yml), their data-centre IPs are refused by Naukri, Indeed and LinkedIn, and they
 stop a job after 6 hours (careers discovery takes longer).
 
-| Workflow | When (UTC cron) | IST | What it runs |
+| Workflow | Triggered by (event type) | Suggested time (IST) | What it runs |
 |---|---|---|---|
-| `mine-daily.yml` | `0 4 * * *` | daily 09:30 | the whole of `mine.py`, every time: all feeders (directory, boards, ATS tenants, board review, Telegram and funding names, campus watch), freehire, Internshala, Naukri and Indeed, portals, the full ATS sweep, then the Telegram ping, then the background slow lane for LinkedIn and Glassdoor (8 batches, one an hour) |
-| `discovery-weekly.yml` | `30 20 * * 6` | Sunday 02:00 | `tools/overnight-supervisor.sh`: careers discovery for companies not seen yet, resuming where it stopped, then phase 2 and the export |
+| `mine-daily.yml` | cron-job.org, `mine-daily` | daily 09:30 | the whole of `mine.py`, every time: all feeders (directory, boards, ATS tenants, board review, Telegram and funding names, campus watch), freehire, Internshala, Naukri and Indeed, portals, the full ATS sweep, the Telegram ping, retention, then the background slow lane for LinkedIn and Glassdoor (8 batches, one an hour) |
+| `discovery-weekly.yml` | cron-job.org, `discovery-weekly` | Sunday 02:00 | `tools/overnight-supervisor.sh`: careers discovery for companies not seen yet, resuming where it stopped, then phase 2 and the export |
+
+The workflows have no `schedule:` of their own. The timing lives in cron-job.org, which calls GitHub's `repository_dispatch` API.
 
 There is no per-step schedule inside `mine.py`: nothing is skipped as "not due".
 
@@ -28,10 +30,26 @@ Scheduled runs are real. A manual run (Actions tab, Run workflow) is a dry run u
 
 Telegram and Groq keys stay in `career-ops/.env` on the Mac; nothing goes into GitHub secrets.
 
+## cron-job.org
+
+1. **Token.** GitHub, Settings, Developer settings, Fine-grained tokens: one token limited to your private repo, permission
+   **Contents: Read and write** (that is what `repository_dispatch` needs). Copy it.
+2. **Cron job** (one per workflow):
+   - URL: `https://api.github.com/repos/<you>/<repo>/dispatches`
+   - Method: `POST`
+   - Headers: `Authorization: Bearer <token>`, `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`,
+     `Content-Type: application/json`, `User-Agent: cron-job.org`
+   - Body: `{"event_type":"mine-daily"}` (use `{"event_type":"discovery-weekly"}` for the weekly one)
+   - Schedule: daily at 09:30, time zone Asia/Kolkata (weekly: Sunday 02:00)
+3. A successful call answers `204 No Content`; the run then appears in the repo's Actions tab. A `404` means the token cannot see the
+   repo or the repo name is wrong; a `401` means the token is wrong or expired.
+4. `repository_dispatch` runs the workflow file on the repo's **default branch**, so push the branch you want to run as the
+   default (or merge it there).
+5. The token is the only secret. Keep it in cron-job.org, not in the repo.
+
 ## Things to know
 
-- GitHub may delay a scheduled run by minutes, and drops some when it is busy. On a repo with no pushes for 60 days it switches
-  schedules off; run any workflow by hand to turn them back on.
+- Runs queue per workflow: if yesterday's daily run is still going, today's waits instead of overlapping.
 - Never run the old cron watchdog and the weekly workflow together: both start the same supervisor. The watchdog line in your
   crontab is commented out (`#PAUSED`); leave it that way.
 - Not verified here: no workflow has run yet, because this checkout has no repository of yours to run them in.

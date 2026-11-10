@@ -1,10 +1,11 @@
 # Weekly careers discovery: finds career pages and ATS boards for companies not seen yet (the company lists are refreshed by
 # the daily mine.py feeders). It resumes where the last run stopped and waits out rate limits itself, so it can run for many
-# hours: this needs a self-hosted runner (hosted runners stop a job after 6 hours). Cron is UTC: Saturday 20:30 = Sunday 02:00 IST.
+# hours: this needs a self-hosted runner (hosted runners stop a job after 6 hours).
+# No schedule here: cron-job.org calls repository_dispatch once a week (setup: docs/SCHEDULE.md).
 name: discovery-weekly
 on:
-  schedule:
-    - cron: "30 20 * * 6"
+  repository_dispatch:
+    types: [discovery-weekly]
   workflow_dispatch:
 concurrency:
   group: discovery
