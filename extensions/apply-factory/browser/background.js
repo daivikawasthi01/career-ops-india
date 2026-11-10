@@ -105,6 +105,7 @@ const handlers = {
   pick: async ({ answer, options }) => { const r = await api('/pick', { answer, options }); return { option: r.option, queries: r.queries }; },
   resume: ({ title, jd_text }) => api('/resume', { title, jd_text }),
   capture: (body) => api('/capture', body),
+  async 'side-panel-open'(_msg, sender) { return { open: sidePanelWindows.has(sender.tab?.windowId) }; },
   async 'jd-cache'({ key, text }) { await session.set(`jd:${key}`, text); return { ok: true }; },
   async 'frame-report'(msg, sender) { await saveFrame(sender.tab.id, sender.frameId, msg); return { ok: true }; },
 };
@@ -197,6 +198,25 @@ const panel = {
     return { ok: true };
   },
 };
+
+// Which windows have Chrome's own side panel open. The panel holds a port while it is open, so a closed panel (or a restarted worker)
+// is noticed by the disconnect. The in-page copy of the panel stays out of the way whenever this says a window's panel is open.
+const sidePanelWindows = new Map();
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'sidepanel') return;
+  let windowId = null;
+  port.onMessage.addListener(async (m) => {
+    windowId = m.windowId;
+    sidePanelWindows.set(windowId, (sidePanelWindows.get(windowId) || 0) + 1);
+    const [tab] = await chrome.tabs.query({ active: true, windowId }).catch(() => []);
+    if (tab) chrome.tabs.sendMessage(tab.id, { type: 'close-dock' }).catch(() => {}); // the real panel just opened: drop the in-page one
+  });
+  port.onDisconnect.addListener(() => {
+    if (windowId == null) return;
+    const n = (sidePanelWindows.get(windowId) || 1) - 1;
+    n > 0 ? sidePanelWindows.set(windowId, n) : sidePanelWindows.delete(windowId);
+  });
+});
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   const fromPage = sender.tab && !sender.url?.startsWith(chrome.runtime.getURL('')); // the panel may itself be open in a tab

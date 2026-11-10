@@ -1,5 +1,18 @@
 // Side panel. Everything shown on screen comes from page text, so nodes are built with textContent only.
 const app = document.getElementById('app');
+
+// Tell the background this window's side panel is open (the copy drawn inside a web page is an iframe and does not count).
+// The port also reconnects if the background worker was restarted.
+if (window === window.top) {
+  const announceOpen = async () => {
+    const win = await chrome.windows.getCurrent().catch(() => null);
+    if (!win) return;
+    const port = chrome.runtime.connect({ name: 'sidepanel' });
+    port.postMessage({ windowId: win.id });
+    port.onDisconnect.addListener(() => setTimeout(announceOpen, 500));
+  };
+  announceOpen();
+}
 let tabId = null;
 let st = null;
 let pending = false;

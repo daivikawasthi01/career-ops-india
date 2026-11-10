@@ -16,7 +16,7 @@
     });
   AF.bg = bg;
 
-  const state = { mode: 'off', auto: true, warnings: [], items: new Map(), rules: null, neverRead: () => false, submitRe: null, signature: '', busy: false, again: false, diag: { v: chrome.runtime.getManifest().version } };
+  const state = { mode: 'off', auto: true, warnings: [], items: new Map(), rules: null, neverRead: () => false, submitRe: null, signature: '', busy: false, again: false, drafts: new Map(), diag: { v: chrome.runtime.getManifest().version } };
 
   const compile = (list) => new RegExp(list.map((p) => `(?:${p})`).join('|'), 'i');
   const text = (f) => [f.label, f.name, f.placeholder].filter(Boolean).join(' | ');
@@ -85,7 +85,10 @@
       for (const f of fields) {
         const r = res.results.find((x) => x.id === f.id) || { status: 'unknown' };
         const prev = state.items.get(f.id);
-        next.set(f.id, { ...f, ...r, filled: prev?.filled && prev.value === r.value ? true : false, value: r.value ?? '' , current: f.value });
+        const item = { ...f, ...r, filled: prev?.filled && prev.value === r.value ? true : false, value: r.value ?? '' , current: f.value };
+        const kept = state.drafts.get(f.id); // a draft that finished earlier is not thrown away when the page re-scans
+        if (kept && item.status === 'draftable') Object.assign(item, kept);
+        next.set(f.id, item);
       }
       state.items = next;
       state.warnings = res.warnings || [];
@@ -107,7 +110,10 @@
     const field = { id, label: item.label, type: item.type, options: item.options, maxlength: item.maxlength, name: item.name, placeholder: item.placeholder };
     const res = await bg('draft', { field, ctx: AF.pageContext(), url: location.href });
     if (res.error) { item.status = 'draftable'; item.reason = res.error; }
-    else Object.assign(item, { status: res.status, value: res.value ?? '', source: res.source || item.source, reason: res.reason, confidence: res.confidence });
+    else {
+      Object.assign(item, { status: res.status, value: res.value ?? '', source: res.source || item.source, reason: res.reason, confidence: res.confidence });
+      if (res.status === 'draft') state.drafts.set(id, { status: 'draft', value: item.value, source: item.source, reason: item.reason, confidence: item.confidence });
+    }
     report();
     const box = AF.handles.get(id)?.els[0];
     if (box && document.activeElement === box && AF.isEmpty(id)) showSuggestion(item); // you are already in the box: show it now
@@ -120,6 +126,7 @@
   async function announce() {
     if (!AF.dock || window !== window.top || AF.dockOpen() || AF.launcherShown() || state.announced || state.items.size < 3) return;
     state.announced = true;
+    if ((await bg('side-panel-open')).open) return; // Chrome's own side panel is already showing: no second copy on the page
     let hidden = false;
     try { hidden = sessionStorage.getItem('af-pill-hidden') === '1'; } catch { /* storage blocked: show it */ }
     if (hidden) return;
@@ -139,11 +146,11 @@
     if (state.mode === 'assist') {
       for (const it of state.items.values()) {
         const anchor = AF.handles.get(it.id)?.els[0];
-        if (!anchor || it.kind === 'option' || dismissed.has(it.id) || it.filled || !AF.isEmpty(it.id)) continue;
+        if (!anchor || dismissed.has(it.id) || it.filled || !AF.isEmpty(it.id)) continue;
         const open = () => showSuggestion(it);
-        if (it.status === 'draftable') AF.chip(it.id, anchor, { text: 'Suggest answer', tone: 'idle', onClick: async () => { await draft(it.id); showSuggestion(it); } });
+        if (it.status === 'draftable') AF.chip(it.id, anchor, { text: tried.has(it.id) ? 'Write now' : 'Queued. Write now', tone: 'idle', onClick: async () => { tried.add(it.id); await draft(it.id); showSuggestion(it); } });
         else if (it.status === 'drafting') AF.chip(it.id, anchor, { text: 'Writing from your CV...', tone: 'idle' });
-        else if (it.status === 'draft' && it.value) AF.chip(it.id, anchor, { text: 'Suggestion ready', tone: 'ready', onClick: open });
+        else if (it.status === 'draft' && it.value) AF.chip(it.id, anchor, { text: 'Suggestion ready', tone: 'ready', title: String(it.value).slice(0, 200), onClick: open });
         else if (['text', 'textarea'].includes(it.type) && ['unknown', 'offline'].includes(it.status)) {
           // never silent: say why there is no suggestion, and let it be tried again
           const why = it.status === 'offline' ? 'Server not reachable' : (it.reason || 'The CV does not answer this');
@@ -159,16 +166,20 @@
   // Fields nothing could fill are drafted in the background, a few at a time, so the answer is ready when you reach the box.
   // Nothing is written to the page until you press Use in the card.
   const dismissed = new Set();
+  const tried = new Set(); // one automatic attempt per question; the chip offers another
   let predrafting = false;
+  const topOf = (it) => AF.handles.get(it.id)?.els[0]?.getBoundingClientRect().top ?? Infinity;
   async function predraft() {
     if (predrafting || state.mode !== 'assist') return;
     predrafting = true;
     try {
-      let n = 0;
-      for (const it of [...state.items.values()]) {
-        if (n >= 6) break;
-        if (it.status !== 'draftable' || it.kind === 'option' || dismissed.has(it.id) || !AF.isEmpty(it.id)) continue;
-        n++; await draft(it.id);
+      for (;;) {
+        const next = [...state.items.values()]
+          .filter((it) => it.status === 'draftable' && !tried.has(it.id) && !dismissed.has(it.id) && AF.isEmpty(it.id))
+          .sort((a, b) => topOf(a) - topOf(b))[0]; // top of the page first, so the answers you reach first are ready first
+        if (!next) break;
+        tried.add(next.id);
+        await draft(next.id);
       }
     } finally { predrafting = false; }
   }
@@ -196,7 +207,7 @@
   document.addEventListener('focusin', (e) => {
     if (state.mode !== 'assist' || !(e.target instanceof Element) || e.target.closest('.af-card')) return;
     const it = itemForElement(e.target);
-    if (it && AF.isEmpty(it.id) && it.kind !== 'option') showSuggestion(it); else if (!e.target.closest('.af-card')) AF.closeSuggest?.();
+    if (it && AF.isEmpty(it.id)) showSuggestion(it); else if (!e.target.closest('.af-card')) AF.closeSuggest?.();
   }, true);
 
   // ---- learning your answers ----
@@ -238,6 +249,7 @@
       else if (msg.type === 'draft-all') { for (const it of [...state.items.values()]) if (it.status === 'draftable') await draft(it.id); }
       else if (msg.type === 'attach') { const out = await AF.attachFile(msg.id, msg.name, msg.base64, true); const it = state.items.get(msg.id); if (it && out.ok) { it.filled = true; it.value = msg.name; } report(); return reply(out); }
       else if (msg.type === 'context') return reply({ ok: true, ctx: AF.pageContext() });
+      else if (msg.type === 'close-dock') { AF.closeDock?.(); }
       else if (msg.type === 'focus') {
         const el = AF.handles.get(msg.id)?.els[0];
         if (el) { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); el.focus?.({ preventScroll: true }); }

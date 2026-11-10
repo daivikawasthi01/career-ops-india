@@ -75,7 +75,7 @@
     c.node.style.top = `${window.scrollY + r.top + Math.max(0, (r.height - c.node.offsetHeight) / 2)}px`;
     c.node.style.left = `${window.scrollX + Math.max(4, left)}px`;
   };
-  AF.chip = (id, anchor, { text, tone, onClick }) => {
+  AF.chip = (id, anchor, { text, tone, onClick, title = '' }) => {
     let c = chips.get(id);
     if (!c) {
       const node = el('button', { type: 'button', class: 'af-chip' });
@@ -86,6 +86,7 @@
     c.anchor = anchor;
     c.node.textContent = text;
     c.node.dataset.tone = tone;
+    c.node.title = title;
     c.node.disabled = !onClick;
     c.node.onclick = onClick || null;
     place(c);
@@ -112,6 +113,7 @@
   // its own side panel without a click. It is the same panel page, so everything in it works the same.
   let dock = null;
   AF.dockOpen = () => !!dock;
+  AF.closeDock = () => { dock?.remove(); dock = null; pill?.remove(); pill = null; };
   AF.dock = ({ onClose }) => {
     if (dock) return;
     const frame = el('iframe', { src: chrome.runtime.getURL('panel/index.html'), title: 'Apply', allow: '' });
