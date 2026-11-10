@@ -1,0 +1,33 @@
+paths:
+  # Local to apply-factory
+  kb_db: "kb.sqlite"
+
+  # Career-ops files (relative to this config, i.e. from extensions/apply-factory/)
+  profile: "../../config/profile.yml"
+  reports_dir: "../../reports"
+  output_dir: "../../output"
+  pipeline_tsv: "../../data/pipeline.tsv"
+
+llm:
+  # ollama keeps everything on this Mac. Set fallback to "groq" (needs GROQ_API_KEY) to use it when ollama is down.
+  backend: "ollama"
+  fallback: "none"
+  model: "qwen2.5:7b-instruct"
+  embed_model: "nomic-embed-text"
+  host: "http://127.0.0.1:11434"
+  temperature: 0.1
+
+server:
+  host: "127.0.0.1"
+  port: 8765
+
+paths_extra:
+  facts: "facts.yml"
+  cv: "../../cv.md"
+  cv_tex: "data/cv-tex"
+
+# Which PDF is attached, chosen by the role. Add a key here and a matching entry in rules/rules.json resume_roles.
+resumes:
+  default: "../../output/resumes/Daivik-Awasthi-Resume.pdf"
+  devops: "../../output/resumes/Daivik-Awasthi-DevopsResume.pdf"
+  ai: "../../output/resumes/Daivik-Awasthi-AIResume.pdf"   # until this exists, AI roles use the default CV

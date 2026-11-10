@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Backend Engineer at Acme</title></head>
+<body>
+<main>
+<h1>Backend Engineer, Acme</h1>
+<p>Acme builds payment infrastructure used by thousands of merchants across India. You will own services in Go and Python, write unit and integration tests, review code, and work with a small team that ships every week. We value clear writing, ownership and curiosity. Freshers with strong fundamentals in data structures, operating systems, databases and computer networks are welcome to apply for this role. The internship is paid, hybrid in Bengaluru, and can lead to a full time offer after six months for people who do well.</p>
+<form id="app" action="#" onsubmit="event.preventDefault(); window.submitted = true;">
+  <div><label for="fn">First Name *</label><input id="fn" name="first_name" type="text" required></div>
+  <div><label for="ln">Last Name</label><input id="ln" name="last_name" type="text"></div>
+  <div><label for="em">Email</label><input id="em" name="email" type="email"></div>
+  <div><label for="ph">Phone</label><input id="ph" name="phone" type="tel" maxlength="10"></div>
+  <div><label for="nat">Nationality</label>
+    <select id="nat" name="nationality"><option value="">Select...</option><option>American</option><option>Indian</option><option>Other</option></select></div>
+  <div><label for="clg">College</label>
+    <select id="clg" name="college"><option value="">Select...</option><option>IIT Delhi</option><option>NSIT</option><option>DTU</option></select></div>
+  <fieldset><legend>Are you legally authorized to work in India?</legend>
+    <label><input type="radio" name="auth" value="y"> Yes, I am authorized</label>
+    <label><input type="radio" name="auth" value="n"> No, I need sponsorship</label></fieldset>
+  <div><label for="gen">Gender</label><select id="gen" name="gender"><option value="">Select...</option><option>Male</option><option>Female</option></select></div>
+  <div><label for="ctc">Expected CTC</label><input id="ctc" name="ctc" type="text"></div>
+  <div><label for="why">Why do you want to work at Acme?</label><textarea id="why" name="why"></textarea></div>
+  <div><label for="fav">Favourite programming language</label><input id="fav" name="fav" type="text"></div>
+  <div><label for="cv">Resume/CV</label><input id="cv" name="cv" type="file"></div>
+  <div><label for="cl">Cover letter</label><input id="cl" name="cl" type="file"></div>
+  <div><label for="pr">Paste your resume</label><textarea id="pr" name="pr"></textarea></div>
+  <div><label><input type="checkbox" name="terms"> I agree to the terms and conditions</label></div>
+  <button type="submit">Submit application</button>
+</form>
+</main>
+</body></html>

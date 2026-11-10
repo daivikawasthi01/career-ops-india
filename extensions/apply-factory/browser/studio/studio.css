@@ -1,0 +1,79 @@
+/* Hallmark · shape: Workbench · genre: modern-minimal · theme: Coral (deal 3/3, seed browser-extension-side-panel-d0c6·cb773b43·2026-11-10·r0) · job: try · draw: manual
+ * hero: Desk, the editor and its live preview side by side · nav: tabs in a groove · footer: none · imagery: none, the compiled CV is the picture · signature: the live preview of your own CV beside the tex
+ * axes: light/grotesk-sans/warm · posture: restrained · contrast: pass · fold: pass · v2.0.0 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 · weakest: V, the studio has no photography by design; the compiled pages of the CV are the only picture and carry the page */
+@import url("../panel/tokens.css");
+@import url("../panel/base.css");
+
+:root { --container: 88rem; --gutter: 24px; }
+
+body {
+  min-height: 100vh;
+  background-color: var(--color-desk);
+  background-image: radial-gradient(90% 60% at 0% 0%, var(--color-cotton), transparent 70%);
+  padding-bottom: var(--space-xl);
+}
+
+.bar { display: flex; align-items: center; gap: var(--space-md); flex-wrap: wrap; max-width: var(--container); margin-inline: auto; padding: var(--space-md) var(--gutter); }
+.bar h1 { font-size: var(--text-xl); margin-right: var(--space-sm); }
+.slot { display: flex; align-items: center; gap: var(--space-xs); color: var(--color-muted); }
+.slot select, .field-input, textarea.tex, textarea.jd {
+  min-height: 44px; padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-muted); border-radius: var(--radius-input);
+  background: var(--color-paper); color: var(--color-ink);
+}
+.slot select:focus-visible, .field-input:focus-visible, textarea:focus-visible { outline-offset: 0; border-color: var(--color-focus); }
+.note { color: var(--color-muted); font-size: var(--text-sm); }
+.warn { color: var(--color-error); }
+.ok { color: var(--color-success); }
+
+.groove { display: inline-grid; grid-auto-flow: column; gap: var(--space-3xs); padding: var(--space-3xs); border-radius: 12px; background: var(--color-paper-2); box-shadow: var(--press-groove); }
+.groove button {
+  min-height: 40px; padding: 0 var(--space-md); border: 0; border-radius: var(--radius-stock); background: transparent; color: var(--color-muted);
+  font-weight: 500; cursor: pointer; transition: color var(--dur-micro) var(--ease-out);
+}
+.groove button[aria-selected="true"] { background-color: var(--color-cotton); color: var(--color-print); box-shadow: var(--edge-stock), var(--cast-stock); text-shadow: 0.5px 0.75px 0 var(--color-cotton); }
+.groove button:hover:not([aria-selected="true"]) { color: var(--color-ink); }
+
+.view { max-width: var(--container); margin-inline: auto; padding: 0 var(--gutter); display: grid; gap: var(--space-md); grid-template-columns: minmax(0, 1fr); }
+.split { display: grid; gap: var(--space-md); grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+@media (max-width: 60rem) { .split { grid-template-columns: minmax(0, 1fr); } }
+
+.stock {
+  background-color: var(--color-cotton);
+  background-image: linear-gradient(100deg, var(--color-cotton), transparent 45%);
+  color: var(--color-print); border-radius: var(--radius-stock); box-shadow: var(--edge-stock), var(--cast-stock);
+  padding: var(--space-md); display: grid; gap: var(--space-sm); min-width: 0;
+}
+.stock > h2 { font-size: var(--text-md); font-weight: 600; letter-spacing: 0; }
+
+textarea.tex { width: 100%; min-height: 36rem; font-family: var(--font-outlier); font-size: var(--text-sm); line-height: 1.5; resize: vertical; white-space: pre; overflow: auto; tab-size: 2; }
+textarea.jd { width: 100%; min-height: 14rem; resize: vertical; }
+.field-input { width: 100%; }
+.fields { display: grid; gap: var(--space-sm); grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.fields label { display: grid; gap: var(--space-3xs); color: var(--color-muted); font-size: var(--text-sm); }
+
+.row { display: flex; gap: var(--space-xs); flex-wrap: wrap; align-items: center; }
+.btn {
+  min-height: 44px; padding: 0 var(--space-md); border: 0; border-radius: var(--radius-stock); font-weight: 500; cursor: pointer;
+  transition: transform var(--dur-short) var(--ease-out), box-shadow var(--dur-short) var(--ease-out);
+}
+.btn--card { background-color: var(--color-cotton); color: var(--color-print); text-shadow: 0.5px 0.75px 0 var(--color-cotton); box-shadow: var(--edge-stock), var(--cast-stock); }
+.btn--ink { background: var(--color-board); color: var(--color-board-type); text-shadow: 0 -0.75px 0 var(--color-ink); box-shadow: var(--cast-stock); }
+.btn:hover:not(:disabled) { transform: translateY(-1px); }
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:disabled { background: var(--color-paper-2); color: var(--color-muted); text-shadow: none; box-shadow: none; cursor: not-allowed; }
+
+.pages { display: grid; gap: var(--space-sm); }
+.pages img { width: 100%; height: auto; border-radius: var(--radius-input); box-shadow: var(--edge-stock), var(--cast-stock); background: var(--color-cotton); }
+.errors { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2xs); }
+.errors button, .linkish { background: none; border: 0; padding: 0; text-align: left; color: var(--color-error); cursor: pointer; text-decoration: underline; text-underline-offset: 0.2em; }
+
+.chips { display: flex; flex-wrap: wrap; gap: var(--space-xs); padding: 0; margin: 0; list-style: none; }
+.chips li { padding: var(--space-3xs) var(--space-sm); border-radius: var(--radius-pill); background: var(--color-paper-2); box-shadow: var(--press-groove); font-size: var(--text-sm); }
+
+.diff { margin: 0; padding: var(--space-sm); border-radius: var(--radius-input); background: var(--color-paper); border: 1px solid var(--color-rule); font-family: var(--font-outlier); font-size: var(--text-sm); white-space: pre-wrap; overflow-wrap: anywhere; display: grid; }
+.diff .add { background: color-mix(in oklab, var(--color-success) 14%, transparent); }
+.diff .del { background: color-mix(in oklab, var(--color-error) 12%, transparent); text-decoration: line-through; text-decoration-color: var(--color-muted); }
+.diff .ctx { color: var(--color-muted); }
+
+.empty { color: var(--color-muted); padding: var(--space-md) 0; }

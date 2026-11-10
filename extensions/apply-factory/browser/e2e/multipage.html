@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Platform Engineer at Acme</title></head>
+<body><main>
+<h1>Platform Engineer, Acme</h1>
+<div id="step1">
+  <h2>Step 1 of 2</h2>
+  <div><label for="fn">First Name</label><input id="fn" type="text"></div>
+  <div><label for="em">Email</label><input id="em" type="email"></div>
+  <div><label for="db">Which database do you know best?</label><input id="db" type="text"></div>
+  <div role="button" id="go" tabindex="0">Proceed</div>
+</div>
+<div id="step2" hidden>
+  <h2>Step 2 of 2</h2>
+  <div><label for="ln">Last Name</label><input id="ln" type="text"></div>
+  <div><label for="ph">Phone</label><input id="ph" type="tel"></div>
+  <div><label for="cl">Which cloud do you use most?</label><input id="cl" type="text"></div>
+</div>
+</main>
+<script>
+  document.getElementById('go').addEventListener('click', () => {
+    setTimeout(() => { document.getElementById('step1').hidden = true; document.getElementById('step2').hidden = false; }, 50);
+  });
+</script>
+</body></html>

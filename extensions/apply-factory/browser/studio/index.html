@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CV studio</title>
+  <meta name="description" content="Edit your CV as tex with a live preview, turn a PDF into tex, and tailor a CV to a job description.">
+  <link rel="stylesheet" href="studio.css">
+</head>
+<body>
+  <header class="bar">
+    <h1>CV studio</h1>
+    <nav class="tabs" id="tabs" role="tablist" aria-label="Studio views"></nav>
+    <label class="slot">CV <select id="slot"></select></label>
+    <span class="note" id="status" role="status"></span>
+  </header>
+  <main id="view" class="view"></main>
+  <script src="../shared/dom.js"></script>
+  <script src="studio.js"></script>
+</body>
+</html>
