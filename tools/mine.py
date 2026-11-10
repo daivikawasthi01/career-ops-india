@@ -28,6 +28,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -487,7 +488,7 @@ def run_slow_batches(batches, gap_minutes, lock=SLOW_LOCK, sleep=time.sleep):
     return 0
 
 
-def main():
+def build_parser():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--days", type=int, default=None, help="override the scan window; default is since each step's last success plus a day of overlap (config window:)")
     ap.add_argument("--sites", default="naukri,indeed")  # linkedin (429) and glassdoor (blocked) need a proxy: pass --sites to add them
@@ -504,18 +505,21 @@ def main():
     ap.add_argument("--slow-batches", type=int, default=1, help="with --slow: how many batches to run, one every --slow-gap-min minutes")
     ap.add_argument("--slow-gap-min", type=int, default=60, help="with --slow-batches: minutes between batches")
     ap.add_argument("--no-slow", action="store_true", help="do not start the background slow lane after the first pass")
-    args = ap.parse_args()
-    if args.slow and args.slow_batches > 1 and not args.dry_run:
-        return run_slow_batches(args.slow_batches, args.slow_gap_min)
+    return ap
 
-    started = datetime.now()
-    (OUT / "logs").mkdir(parents=True, exist_ok=True)
-    log_path = OUT / "logs" / f"mine-{started:%Y%m%d-%H%M%S}.log"
-    xlsx_path = OUT / f"mine-{started:%Y-%m-%d-%H%M%S}.xlsx"
 
-    per_step, runs, failures = {}, [], []
-    state = load_state()
-    explicit = steps_given(sys.argv[1:])
+@dataclass
+class RunPlan:
+    explicit: bool   # the user named --steps, so exactly those run and nothing is skipped as "not due"
+    windows: dict    # scan window in days per windowed step
+    steps: list
+    feeders: list
+    notes: list
+
+
+def plan_run(args, state, started, argv):
+    """Decide what this run does: which steps, which feeders, which scan windows. Prints nothing and runs nothing."""
+    explicit = steps_given(argv)
     windows = {sid: health.window_days((_entry(state, sid)[0]), args.days, started) for sid in windowed_ids()}
     args.sites, site_notes = select_sites(args.sites, state, explicit, started)
     steps = [x for x in build_steps(args, windows) if not (x["id"] == "jobspy" and not args.sites)]
@@ -525,33 +529,59 @@ def main():
     if args.slow:  # only the slow lane's batch, no feeders
         steps = [make_step(e, args) for e in step_registry() if e.get("standalone") and e.get("cli") == "--slow"]
         feeder_pick, feeder_notes = [], []
-    for note in notes + site_notes + feeder_notes:
-        print(note)
-    print(f"mine: {len(steps)} step(s), windows {windows if not args.days else f'{args.days}d (override)'}, "
-          f"log {log_path.relative_to(ROOT)}, excel {xlsx_path.relative_to(ROOT)}")
-    write_excel(xlsx_path, [], [], [], started)
-    with log_path.open("w") as log:
-        log.write(f"mine run {started.isoformat()} args={vars(args)}\n")
-        feeder_runs = []
-        for feeder in feeder_pick:
-            print(f"mine: feeder {feeder['id']} ...", flush=True)
-            fr = run_feeder(feeder, log)
-            feeder_runs.append(fr)
-            print(f"mine: feeder {fr['id']} {fr['status']} in {fr['secs']}s {fr['note']}", flush=True)
-            if record_run(state, fr, args.dry_run):
-                save_state(state)
-        for i, step in enumerate(steps):
-            offers, status = run_step(step, log, failures, i)
-            status["window_days"] = windows.get(step["id"])
-            per_step[step["id"]] = offers
-            runs.append(status)
-            if record_run(state, status, args.dry_run):
-                if step["id"] == "jobspy" and "linkedin" in args.sites.split(","):
-                    state["linkedin"] = state[step["id"]]
-                save_state(state)
-            write_excel(xlsx_path, merge(per_step), runs, failures, started)
+    return RunPlan(explicit, windows, steps, feeder_pick, notes + site_notes + feeder_notes)
 
-    # ---- store, health, summary ----
+
+def execute_plan(plan, args, state, log, xlsx_path, started):
+    """Run the feeders, then each step, saving the schedule and the workbook as it goes. Returns (feeder_runs, runs, per_step, failures)."""
+    per_step, runs, failures, feeder_runs = {}, [], [], []
+    for feeder in plan.feeders:
+        print(f"mine: feeder {feeder['id']} ...", flush=True)
+        fr = run_feeder(feeder, log)
+        feeder_runs.append(fr)
+        print(f"mine: feeder {fr['id']} {fr['status']} in {fr['secs']}s {fr['note']}", flush=True)
+        if record_run(state, fr, args.dry_run):
+            save_state(state)
+    for i, step in enumerate(plan.steps):
+        offers, status = run_step(step, log, failures, i)
+        status["window_days"] = plan.windows.get(step["id"])
+        per_step[step["id"]] = offers
+        runs.append(status)
+        if record_run(state, status, args.dry_run):
+            if step["id"] == "jobspy" and "linkedin" in args.sites.split(","):
+                state["linkedin"] = state[step["id"]]
+            save_state(state)
+        write_excel(xlsx_path, merge(per_step), runs, failures, started)
+    return feeder_runs, runs, per_step, failures
+
+
+def record_term_yield(conn, run_id, runs, per_step, new_urls, started):
+    """Per search term and site: how many postings it fetched and how many were new. Feeds the term report."""
+    jobspy_stats = next((r["stats"] for r in runs if r["id"] == "jobspy"), {})
+    if not jobspy_stats.get("terms"):
+        return
+    by_term = {}
+    for o in per_step.get("jobspy", []):
+        if canonical_url(o.get("url")) in new_urls and o.get("term"):
+            by_term[o["term"]] = by_term.get(o["term"], 0) + 1
+    for key, fetched in jobspy_stats["terms"].items():
+        site, _, term = key.partition("|")
+        conn.execute("INSERT INTO term_yield VALUES (?,?,?,?,?,?)", (run_id, term, site, fetched, 0, started.date().isoformat()))
+    for term, n in by_term.items():
+        conn.execute("UPDATE term_yield SET new_rows=? WHERE run_id=? AND term=? AND rowid=(SELECT MIN(rowid) FROM term_yield WHERE run_id=? AND term=?)", (n, run_id, term, run_id, term))
+    conn.commit()
+
+
+@dataclass
+class Saved:
+    merged: list
+    new_rows: list
+    known: int
+    history_note: str
+
+
+def save_results(args, started, per_step, runs, failures, xlsx_path):
+    """Write the run to the database (a copy in a dry run), score each source's health and refresh the workbook."""
     run_id = store.start_run(None)
     if args.dry_run:
         conn = store.dry_run_connection()  # 'new' is computed against a copy; data/jobs.db is neither created nor changed
@@ -580,31 +610,27 @@ def main():
                                 error=r["note"] if r["status"] == "failed" else "", seconds=r["secs"], health=r["health"],
                                 window_days=r.get("window_days"), dry_run=int(args.dry_run))
     store.record_failures(conn, run_id, failures)
-    jobspy_stats = next((r["stats"] for r in runs if r["id"] == "jobspy"), {})
-    if jobspy_stats.get("terms"):
-        by_term = {}
-        for o in per_step.get("jobspy", []):
-            if canonical_url(o.get("url")) in new_urls and o.get("term"):
-                by_term[o["term"]] = by_term.get(o["term"], 0) + 1
-        for key, fetched in jobspy_stats["terms"].items():
-            site, _, term = key.partition("|")
-            conn.execute("INSERT INTO term_yield VALUES (?,?,?,?,?,?)", (run_id, term, site, fetched, 0, started.date().isoformat()))
-        for term, n in by_term.items():
-            conn.execute("UPDATE term_yield SET new_rows=? WHERE run_id=? AND term=? AND rowid=(SELECT MIN(rowid) FROM term_yield WHERE run_id=? AND term=?)", (n, run_id, term, run_id, term))
-        conn.commit()
+    record_term_yield(conn, run_id, runs, per_step, new_urls, started)
     write_excel(xlsx_path, db_rows(conn, run_id), runs, failures, started)
-    dedup_path = OUT / "logs" / f"dedup-{started:%Y%m%d-%H%M%S}.md"
-    stats, multi = dedup_report(per_step, dedup_path)
+    return Saved(merged, new_rows, known, history_note)
 
+
+def announce(args, plan, started, new_rows):
+    """After a real run: the Telegram ping, then the background slow lane. A dry run only says what would happen."""
     if new_rows and not args.dry_run:
         _sent, ping_note = notify_telegram.send_new(new_rows, started.strftime("%d %b %H:%M"))
         print(ping_note)
-    if not args.slow and not args.no_slow and not explicit:
+    if not args.slow and not args.no_slow and not plan.explicit:
         print(start_slow_lane() if not args.dry_run else "mine: a real run would now start the background slow lane (LinkedIn, Glassdoor)")
-    print(f"\n{len(merged)} unique offers ({len(new_rows)} new, {known} already known) from {len(steps)} step(s); "
+
+
+def print_report(args, plan, saved, feeder_runs, runs, failures, per_step, paths):
+    xlsx_path, log_path, dedup_path = paths
+    stats, multi = dedup_report(per_step, dedup_path)
+    print(f"\n{len(saved.merged)} unique offers ({len(saved.new_rows)} new, {saved.known} already known) from {len(plan.steps)} step(s); "
           f"{len(failures)} failure/retry events")
-    if history_note:
-        print(history_note)
+    if saved.history_note:
+        print(saved.history_note)
     print(health.summary_table([{"source": r["id"], "fetched": r["fetched"], "kept": r["kept"], "new": r["new"],
                                  "duplicates": r["duplicates"], "errors": r["errors"], "health": r["health"],
                                  "seconds": r["secs"]} for r in runs]))
@@ -617,6 +643,33 @@ def main():
     print(f"{multi} jobs were found by more than one source; collapsed per pair: "
           + (", ".join(f"{a}+{b} {n}" for (a, b), n in sorted(stats.items(), key=lambda kv: -kv[1])) or "none"))
     print(f"Excel: {xlsx_path}\nLog:   {log_path}\nDedup: {dedup_path}" + ("\n(dry run: data/jobs.db not changed)" if args.dry_run else f"\nDB:    {store.DB_PATH}"))
+
+
+def main():
+    args = build_parser().parse_args()
+    if args.slow and args.slow_batches > 1 and not args.dry_run:
+        return run_slow_batches(args.slow_batches, args.slow_gap_min)
+
+    started = datetime.now()
+    (OUT / "logs").mkdir(parents=True, exist_ok=True)
+    log_path = OUT / "logs" / f"mine-{started:%Y%m%d-%H%M%S}.log"
+    xlsx_path = OUT / f"mine-{started:%Y-%m-%d-%H%M%S}.xlsx"
+    dedup_path = OUT / "logs" / f"dedup-{started:%Y%m%d-%H%M%S}.md"
+
+    state = load_state()
+    plan = plan_run(args, state, started, sys.argv[1:])
+    for note in plan.notes:
+        print(note)
+    print(f"mine: {len(plan.steps)} step(s), windows {plan.windows if not args.days else f'{args.days}d (override)'}, "
+          f"log {log_path.relative_to(ROOT)}, excel {xlsx_path.relative_to(ROOT)}")
+    write_excel(xlsx_path, [], [], [], started)
+    with log_path.open("w") as log:
+        log.write(f"mine run {started.isoformat()} args={vars(args)}\n")
+        feeder_runs, runs, per_step, failures = execute_plan(plan, args, state, log, xlsx_path, started)
+
+    saved = save_results(args, started, per_step, runs, failures, xlsx_path)
+    announce(args, plan, started, saved.new_rows)
+    print_report(args, plan, saved, feeder_runs, runs, failures, per_step, (xlsx_path, log_path, dedup_path))
     return health.exit_code(runs)
 
 
