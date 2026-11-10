@@ -65,7 +65,7 @@
     if (pill) { pill.firstChild.textContent = text; return; }
     pill = el('div', { class: 'af-pill', role: 'region', 'aria-label': 'Apply helper' },
       el('button', { type: 'button', class: 'af-pill-open', text, onclick: () => { onOpen(); pill?.remove(); } }),
-      el('button', { type: 'button', class: 'af-pill-x', 'aria-label': 'Hide for this site', text: 'x', onclick: () => { onDismiss(); pill?.remove(); } }));
+      el('button', { type: 'button', class: 'af-pill-x', 'aria-label': 'Hide for this tab', text: 'x', onclick: () => { onDismiss(); pill?.remove(); } }));
     document.body.append(pill);
   };
   AF.launcherShown = () => !!pill;

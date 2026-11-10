@@ -46,7 +46,7 @@
   async function fillKnown() {
     for (const item of state.items.values()) {
       if (item.filled || (item.status !== 'fill' && item.status !== 'resume')) continue;
-      await fillItem(item);
+      try { await fillItem(item); } catch (e) { item.reason = String(e.message || e).slice(0, 100); }
       await AF.sleep(60);
     }
     report();
@@ -74,6 +74,7 @@
       if (state.mode !== 'assist') { // watch mode only learns; nothing is suggested or filled
         state.items = new Map(fields.map((f) => [f.id, { ...f, status: 'watching' }]));
         report();
+        announce();
         return;
       }
       const res = await bg('suggest', { url: location.href, title: document.title, fields });
@@ -87,9 +88,9 @@
       }
       state.items = next;
       state.warnings = res.warnings || [];
+      announce(); // before filling: one field that fails to fill must never stop the panel from appearing
       if (state.auto) await fillKnown(); else report();
       predraft();
-      announce();
     } catch (e) {
       state.diag = { ...state.diag, error: String(e.message || e).slice(0, 120) }; report();
     } finally {
@@ -111,17 +112,18 @@
 
   // ---- tell the person a job or form was found ----
   // The panel opens itself inside the page once per page load (a setting in the panel's footer can turn that off); closing it
-  // leaves a small button to bring it back, and that button can be hidden for the site.
+  // leaves a small button to bring it back, and that button can be hidden for this tab.
   const stored = (key) => new Promise((r) => { try { chrome.storage.local.get(key, (v) => r(v?.[key])); } catch { r(undefined); } });
   async function announce() {
     if (window !== window.top || AF.dockOpen() || AF.launcherShown() || state.announced || state.items.size < 3) return;
     state.announced = true;
-    const hidden = await stored(`pill:${location.hostname}`);
+    let hidden = false;
+    try { hidden = sessionStorage.getItem('af-pill-hidden') === '1'; } catch { /* storage blocked: show it */ }
     if (hidden) return;
     const showPill = () => AF.launcher({
       text: 'Form found. Open Apply',
       onOpen: () => AF.dock({ onClose: showPill }),
-      onDismiss: () => { try { chrome.storage.local.set({ [`pill:${location.hostname}`]: true }); } catch { /* shown again next time */ } },
+      onDismiss: () => { try { sessionStorage.setItem('af-pill-hidden', '1'); } catch { /* shown again on the next page */ } }, // this tab only, never the whole site
     });
     const settings = (await stored('settings')) || {};
     if (settings.autoOpen === false) showPill(); else AF.dock({ onClose: showPill });

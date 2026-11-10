@@ -33,7 +33,23 @@ class SuggestTest(unittest.TestCase):
         r = self.run_suggest([F("a", "Mobile number", maxlength=10), F("b", "Phone", placeholder="+91 98765 43210"), F("c", "Contact number")])
         self.assertEqual(r["a"]["value"], "9311067931")
         self.assertEqual(r["b"]["value"], "+919311067931")
-        self.assertEqual(r["c"]["value"], "+919311067931")
+        self.assertEqual(r["c"]["value"], "9311067931")  # a plain box gets the national number
+
+    def test_full_name_question_in_a_sentence(self):
+        r = self.run_suggest([F("a", "What's your full name?"), F("b", "Your name")])
+        self.assertEqual((r["a"]["value"], r["b"]["value"]), ("Daivik Awasthi", "Daivik Awasthi"))
+
+    def test_a_learned_phone_in_another_format_does_not_override_facts(self):
+        with db.tx(self.db) as conn:
+            knowledge.upsert(conn, "phone", "093110 67931", question_text="Phone", source="manual")
+        r = self.run_suggest([F("a", "What's your phone number?")])
+        self.assertEqual((r["a"]["value"], r["a"]["source"]), ("9311067931", "fact"))
+
+    def test_job_search_boxes_are_never_read(self):
+        from lib import rules
+        self.assertTrue(rules.never_read(F("a", "Search job title")))
+        self.assertTrue(rules.never_read(F("a", "Search jobs")))
+        self.assertFalse(rules.never_read(F("a", "Job title")))
 
     def test_private_consent_and_sensitive_are_never_filled(self):
         r = self.run_suggest([F("a", "Password", "password"), F("b", "I agree to the terms and conditions", "checkbox"),

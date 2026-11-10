@@ -5,7 +5,8 @@
     "pass(word|code)", "\\botp\\b", "one[- ]?time", "verification code", "\\bcvv\\b", "\\bcvc\\b",
     "card (number|no)", "credit card", "debit card", "aadhaar|aadhar", "\\bpan (card|number|no)\\b",
     "passport", "\\bssn\\b", "social security", "bank account", "\\bifsc\\b", "routing number",
-    "captcha", "security (question|answer)", "secret"
+    "captcha", "security (question|answer)", "secret",
+    "^search\\b", "search (for|by|jobs?|job title)", "^find (a )?jobs?\\b"
   ],
 
   "manual_only": [
@@ -65,7 +66,7 @@
   "fact_patterns": [
     { "fact": "first_name", "re": "^(legal |preferred )?(first|given) name\\b|^forename" },
     { "fact": "last_name", "re": "^(legal )?(last|family|sur) ?name\\b" },
-    { "fact": "full_name", "re": "^(full|legal|your) name\\b|^name$|^candidate name" },
+    { "fact": "full_name", "re": "\\b(full|legal|your) name\\b|^(candidate )?name$" },
     { "fact": "email", "re": "e-?mail" },
     { "fact": "phone", "re": "phone|mobile|contact (no|number)|whatsapp" },
     { "fact": "linkedin", "re": "linkedin" },
@@ -76,7 +77,7 @@
     { "fact": "state", "re": "^(current )?(state|province)\\b" },
     { "fact": "country", "re": "^country( of residence)?$|country you (live|reside)" },
     { "fact": "nationality", "re": "nationality|citizen(ship)? of|are you an? .*citizen" },
-    { "fact": "college", "re": "(college|university|institute|school) name|^(college|university|institution)\\b|name of (your )?(college|university)|where did you (study|graduate)" },
+    { "fact": "college", "re": "^(?!are you|do you|have you|did you|is your)(.*\\b(college|university|institute|institution)\\b|.*where did you (study|graduate))" },
     { "fact": "degree", "re": "^degree\\b|highest (level of )?(education|qualification)|qualification|level of education" },
     { "fact": "branch", "re": "branch|major|field of study|specializ|discipline|stream" },
     { "fact": "graduation_year", "re": "(graduation|passing|pass[- ]?out|completion) year|year of (graduation|passing|completion)|expected graduation" },

@@ -54,10 +54,14 @@ def _answer_for(conn, field: dict, label: str) -> dict | None:
 
     fact = rules.fact_for(field)
     if fact:
+        # Who you are (name, email, phone, links) comes from facts.yml first: a value learned from a page can be a browser
+        # autofill in another format. Answers that change per application (pay, notice, authorisation) keep the learned wording first.
+        val = profile.fact_value(fact, field)
+        if val is not None and not sensitive:
+            return {"answer": val, "source": "fact", "intent_key": fact, "confidence": 0.95}
         stored = knowledge.lookup_by_intent(conn, fact)
         if stored:
             return {"answer": stored["answer"], "source": "kb", "intent_key": fact, "confidence": stored["confidence"]}
-        val = profile.fact_value(fact, field)
         if val is not None:
             return {"answer": val, "source": "fact", "intent_key": fact, "confidence": 0.95}
 

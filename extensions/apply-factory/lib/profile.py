@@ -42,7 +42,8 @@ def fact_value(name: str, field: dict) -> str | None:
             return None
         ph = (field.get("placeholder") or "").strip()
         maxlen = int(field.get("maxlength") or 0)
-        if national and ((ph and not ph.startswith("+") and re.match(r"^[\d\s()-]+$", ph)) or 0 < maxlen < 13):
+        wants_code = bool(re.search(r"\+|country code|international|e\.?164|with (the )?(country )?code", f"{ph} {field.get('label') or ''}", re.I))
+        if national and not wants_code:  # a plain phone box takes the number as people write it; the +91 form only when the field asks for it
             return national
         return e164 or national
     return f.get(name)
