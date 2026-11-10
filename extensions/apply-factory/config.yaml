@@ -16,6 +16,7 @@ llm:
   embed_model: "nomic-embed-text"
   host: "http://127.0.0.1:11434"
   temperature: 0.1
+  keep_alive: "30m"   # how long ollama keeps the model in memory after a call; the default 5 minutes means slow cold starts
 
 server:
   host: "127.0.0.1"

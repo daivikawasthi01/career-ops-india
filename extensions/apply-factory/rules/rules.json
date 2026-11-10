@@ -131,6 +131,8 @@
 
   "open_questions": "achievement|accomplish|proud|strength|weakness|biggest|greatest|best (project|work|thing)|about yourself|tell us about you|why (do you|are you|should|this|us|our)|motivat|message (to|for)|note to|anything else|additional (information|comments)|challenge|describe (a|your) (project|time)|what makes you|career goals?|where do you see",
 
+  "drafting": { "_doc": "How many suggestions the page asks for at once. Ollama itself decides how many run together (OLLAMA_NUM_PARALLEL); the rest wait in its queue.", "parallel": 6 },
+
   "answer_length": [
     { "re": "cover letter|message (to|for) (the )?(hiring|recruit)|note to (the )?(hiring|recruit)|introduce yourself|tell us about yourself|about yourself|anything else|additional information|why (do you want|are you interested|should we|this (role|company))|motivation", "min": 100, "max": 180 },
     { "re": "experience|project|describe|explain|achievement|challenge|accomplish|responsibilit|walk us through|tell us about|worked on|skills", "min": 70, "max": 150 },

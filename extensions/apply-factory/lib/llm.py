@@ -48,6 +48,11 @@ post: Callable[..., dict] = _post
 get: Callable[..., dict] = _get
 
 
+# Every chat call asks for this context size. Ollama reloads the model whenever the size changes between calls, which costs
+# 15 to 20 seconds each time, so the size is fixed rather than chosen per call.
+CTX = 8192
+
+
 def _cfg() -> dict:
     return config.load()["llm"]
 
@@ -73,9 +78,9 @@ def chat_model() -> str:
     return pick
 
 
-def _ollama(prompt: str, system: str | None, temperature: float, json_mode: bool, num_ctx: int = 4096, timeout: int = _TIMEOUT, num_predict: int = 0) -> str:
+def _ollama(prompt: str, system: str | None, temperature: float, json_mode: bool, num_ctx: int = CTX, timeout: int = _TIMEOUT, num_predict: int = 0) -> str:
     body: dict[str, Any] = {
-        "model": chat_model(), "stream": False, "think": False,
+        "model": chat_model(), "stream": False, "think": False, "keep_alive": _cfg().get("keep_alive", "30m"),
         "options": {"temperature": temperature, "num_ctx": num_ctx, **({"num_predict": num_predict} if num_predict else {})},
         "messages": ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}],
     }
@@ -114,7 +119,7 @@ BACKENDS: dict[str, Callable[..., str]] = {"ollama": _ollama, "groq": _groq, "op
 
 
 def call(prompt: str, *, system: str | None = None, temperature: float | None = None, json_mode: bool = False,
-         num_ctx: int = 4096, timeout: int = _TIMEOUT, num_predict: int = 0) -> str:
+         num_ctx: int = CTX, timeout: int = _TIMEOUT, num_predict: int = 0) -> str:
     cfg = _cfg()
     temp = cfg["temperature"] if temperature is None else temperature
     order = [cfg["backend"]] + ([cfg["fallback"]] if cfg.get("fallback") not in (None, "none", cfg["backend"]) else [])
@@ -129,7 +134,7 @@ def call(prompt: str, *, system: str | None = None, temperature: float | None = 
     raise LLMUnavailable(str(last))
 
 
-def call_json(prompt: str, *, system: str | None = None, temperature: float | None = None, num_ctx: int = 4096,
+def call_json(prompt: str, *, system: str | None = None, temperature: float | None = None, num_ctx: int = CTX,
               timeout: int = _TIMEOUT, num_predict: int = 0) -> Any:
     raw = call(prompt, system=system, temperature=temperature, json_mode=True, num_ctx=num_ctx, timeout=timeout, num_predict=num_predict)
     clean = raw.replace("```json", "").replace("```", "").strip()
@@ -142,7 +147,7 @@ def call_json(prompt: str, *, system: str | None = None, temperature: float | No
 def embed(texts: list[str]) -> list[list[float]]:
     """One vector per text from the local embedding model. Raises LLMUnavailable when ollama is down."""
     cfg = _cfg()
-    out = post(f"{cfg['host']}/api/embed", {"model": cfg["embed_model"], "input": texts})
+    out = post(f"{cfg['host']}/api/embed", {"model": cfg["embed_model"], "input": texts, "keep_alive": cfg.get("keep_alive", "30m")})
     vecs = out.get("embeddings")
     if not vecs or len(vecs) != len(texts):
         raise LLMUnavailable("embedding response had the wrong shape")

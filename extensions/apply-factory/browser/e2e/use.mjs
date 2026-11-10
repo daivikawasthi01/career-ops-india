@@ -18,9 +18,11 @@ const html = `<!doctype html><title>Form</title><main><form>
 await ctx.route('https://docs.google.com/forms/**', (r) => r.fulfill({ contentType: 'text/html', body: html }));
 const p = await ctx.newPage();
 await p.setViewportSize({ width: 1300, height: 900 });
+const t0 = Date.now();
 await p.goto('https://docs.google.com/forms/d/e/ABC/viewform');
 await p.waitForFunction(() => [...document.querySelectorAll('.af-chip')].filter((c) => c.dataset.tone === 'ready').length >= 2, null, { timeout: 170000 })
   .catch(() => console.log('not both ready in time'));
+console.log('seconds until the suggestions were ready:', Math.round((Date.now() - t0) / 1000));
 console.log('chips:', await p.$$eval('.af-chip', (n) => n.map((x) => x.textContent)));
 console.log('before any click, textarea:', JSON.stringify(await p.$eval('#m', (e) => e.value)), '| input:', JSON.stringify(await p.$eval('#b6', (e) => e.value)));
 

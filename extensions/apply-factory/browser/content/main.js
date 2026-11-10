@@ -93,8 +93,8 @@
       state.items = next;
       state.warnings = res.warnings || [];
       announce(); // before filling: one field that fails to fill must never stop the panel from appearing
+      predraft(); // also before filling: a slow upload must not hold the suggestions back
       if (state.auto) await fillKnown(); else report();
-      predraft();
     } catch (e) {
       state.diag = { ...state.diag, error: String(e.message || e).slice(0, 120) }; report();
     } finally {
@@ -150,7 +150,7 @@
         const open = () => showSuggestion(it);
         const use = () => acceptSuggestion(it, it.value);
         const preview = (t) => { const one = String(t).replace(/\s+/g, ' ').trim(); return one.length > 52 ? `${one.slice(0, 52)}...` : one; };
-        if (it.status === 'draftable') AF.chip(it.id, anchor, { text: tried.has(it.id) ? `${it.reason && it.reason !== 'no saved answer' ? `Failed: ${String(it.reason).slice(0, 40)}. ` : ''}Write now` : 'Queued. Write now', tone: 'idle', onClick: async () => { tried.add(it.id); await draft(it.id); } });
+        if (it.status === 'draftable') AF.chip(it.id, anchor, { text: !tried.has(it.id) ? (waiting().some((w) => w.id === it.id) ? `Queued (${waiting().findIndex((w) => w.id === it.id) + 1}). Write now` : 'Will draft when you scroll here. Write now') : `${it.reason && it.reason !== 'no saved answer' ? `Failed: ${String(it.reason).slice(0, 40)}. ` : ''}Write now`, tone: 'idle', onClick: async () => { tried.add(it.id); await draft(it.id); } });
         else if (it.status === 'drafting') AF.chip(it.id, anchor, { text: 'Writing from your CV...', tone: 'idle' });
         else if (it.status === 'draft' && it.value) {
           // An AI suggestion is a pill that shows the answer; nothing is written until you click it. Edit opens it for changes.
@@ -174,20 +174,35 @@
   const dismissed = new Set();
   const tried = new Set(); // one automatic attempt per question; the chip offers another
   let predrafting = false;
-  const topOf = (it) => AF.handles.get(it.id)?.els[0]?.getBoundingClientRect().top ?? Infinity;
+  // What is on screen is drafted first, then the rest from the top of the page.
+  const orderKey = (it) => {
+    const top = AF.handles.get(it.id)?.els[0]?.getBoundingClientRect().top ?? Infinity;
+    return (top >= 0 && top < window.innerHeight ? 0 : 1e6) + Math.abs(top);
+  };
+  const undrafted = () => [...state.items.values()].filter((it) => it.status === 'draftable' && !tried.has(it.id) && !dismissed.has(it.id) && AF.isEmpty(it.id));
+  // A form of up to 12 open questions is drafted in full. A longer one only far enough ahead of where you are (about 2 screens),
+  // and the rest as you scroll to it, so 100 questions never means 100 model calls up front.
+  const waiting = () => {
+    const all = undrafted();
+    const near = all.length <= 12 ? all : all.filter((it) => {
+      const top = AF.handles.get(it.id)?.els[0]?.getBoundingClientRect().top;
+      return top !== undefined && top > -window.innerHeight && top < window.innerHeight * 2.5;
+    });
+    return near.sort((a, b) => orderKey(a) - orderKey(b));
+  };
+  let scrollTimer;
+  window.addEventListener('scroll', () => { clearTimeout(scrollTimer); scrollTimer = setTimeout(() => { predraft(); syncChips(); }, 400); }, { passive: true });
+
+  // Several drafts at a time (rules.json drafting.parallel): a long form is not one long queue. How many really run together is
+  // up to Ollama (OLLAMA_NUM_PARALLEL); the rest wait in its queue, in page order.
   async function predraft() {
     if (predrafting || state.mode !== 'assist') return;
     predrafting = true;
-    try {
-      for (;;) {
-        const next = [...state.items.values()]
-          .filter((it) => it.status === 'draftable' && !tried.has(it.id) && !dismissed.has(it.id) && AF.isEmpty(it.id))
-          .sort((a, b) => topOf(a) - topOf(b))[0]; // top of the page first, so the answers you reach first are ready first
-        if (!next) break;
-        tried.add(next.id);
-        await draft(next.id);
-      }
-    } finally { predrafting = false; }
+    const worker = async () => {
+      for (let next = waiting()[0]; next; next = waiting()[0]) { tried.add(next.id); await draft(next.id); }
+    };
+    const n = Math.max(1, Math.min(12, state.rules?.drafting?.parallel || 4));
+    try { await Promise.all(Array.from({ length: n }, worker)); } finally { predrafting = false; }
   }
 
   // The one way a suggestion is accepted (the pill and the card both come here): write it, then the suggestion is finished for good.
