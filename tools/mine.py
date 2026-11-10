@@ -141,10 +141,16 @@ STEP_ARGS = {
     "freehire": lambda a, w: ["--days", str(w), "--max-pages", str(a.freehire_pages)],
     "internshala": lambda a, w: ["--days", str(w + 1), "--max-pages", str(a.internshala_pages)],
     "jobspy": lambda a, w: ["--days", str(w), "--sites", a.sites],
-    "portals": lambda a, w: ["--since", str(w)],
+    "portals": lambda a, w: ["--since", str(max(w, employer_window_days()))],
     "ats": lambda a, w: ["--since", str(a.ats_days), "--ats", a.ats_sources, *(["--limit", str(a.ats_limit)] if a.ats_limit else [])],
     "slow": lambda a, w: [],
 }
+
+
+def employer_window_days():
+    """Scan window for company career pages and ATS boards: wide, because they keep postings open for months (freshness.employer_max_age_days).
+    Board and aggregator rows older than freshness.max_age_days are dropped by the freshness gate."""
+    return int((pipeline_cfg.section("freshness") or {}).get("employer_max_age_days") or 0)
 
 
 def step_registry():
@@ -501,7 +507,7 @@ def build_parser():
     ap.add_argument("--steps", default=",".join(default_step_ids()), help="comma list of steps to run")
     ap.add_argument("--ats-sources", default="greenhouse,lever,ashby", help="ATS directories for the reverse sweep")
     ap.add_argument("--ats-limit", type=int, default=0, help="max companies per ATS (0 = all)")
-    ap.add_argument("--ats-days", type=int, default=8, help="posting window for the ats step (it runs weekly, so it needs a wider window than --days; keep it just above freshness.max_age_days)")
+    ap.add_argument("--ats-days", type=int, default=employer_window_days() or 14, help="posting window for the ats step: company boards keep postings open for months (freshness.employer_max_age_days)")
     ap.add_argument("--ats-every", type=int, default=7, help="days between ats runs in a default run; --steps ats always runs it. The sweep is slow and low yield (a 30 day sample of 300 Greenhouse boards found 2 India roles)")
     ap.add_argument("--freehire-pages", type=int, default=6, help="pages of 100 per freehire query")
     ap.add_argument("--internshala-pages", type=int, default=5, help="result pages per Internshala category")

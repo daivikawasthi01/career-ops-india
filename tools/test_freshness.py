@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import freshness  # noqa: E402
 
-RULES = {"max_age_days": 7, "undated_ok_steps": ["jobspy", "internshala"], "undated_ok_sources": ["instahyre"]}
+RULES = {"max_age_days": 7, "employer_max_age_days": 180, "undated_ok_steps": ["jobspy", "internshala"], "undated_ok_sources": ["instahyre"]}
 TODAY = date(2026, 11, 10)
 
 
@@ -38,6 +38,13 @@ class Verdict(unittest.TestCase):
         self.assertIsNone(self.v(row(posted=None, steps={"jobspy"})))
         self.assertIsNone(self.v(row(posted="", steps={"portals", "internshala"})))
         self.assertIsNone(self.v(row(posted=None, found_by=["instahyre"])))
+
+    def test_employer_rows_get_a_long_soft_limit_and_may_be_undated(self):
+        self.assertIsNone(self.v(row(confidence="employer-confirmed", posted="2026-08-01")))  # still hiring since August
+        self.assertEqual(self.v(row(confidence="employer-confirmed", posted="2026-02-01")), "stale")
+        self.assertIsNone(self.v(row(confidence="employer-confirmed", posted=None)))
+        self.assertEqual(self.v(row(confidence="aggregator", posted="2026-08-01")), "stale")  # a board listing is judged strictly
+        self.assertEqual(self.v(row(confidence="employer-confirmed", title="Dev (3-5 Years)")), "experience")
 
     def test_unreadable_date_counts_as_undated(self):
         self.assertEqual(self.v(row(posted="soon")), "undated")

@@ -1,0 +1,50 @@
+# Boards that board-india-check never disables: always enabled, always `watch: true`.
+# One name per line (case-insensitive). Lines starting with # are comments. User layer: not shipped by updates.
+#
+# Named by hand:
+TIDE
+Sagent
+Everstage
+#
+# Indian-HQ companies in companies.txt slice 1 that are tracked in portals.yml:
+Groww
+Cred
+Paytm
+Zeta
+Lendingkart
+Upstox
+Swiggy
+Zepto
+Meesho
+NoBroker
+Cars24
+Glance
+InMobi
+ixigo
+Unacademy
+Instahyre
+Sigmoid
+#
+# Founded in India but headquartered elsewhere (or dual-headquartered); counted as Indian-HQ:
+Freshworks
+Druva
+Whatfix
+Zenoti
+Mindtickle
+Atlan
+Contentstack
+HighRadius
+#
+# Indian companies added after the first preview (no India posting at the time, but they are Indian-HQ):
+Jar
+Porter
+Vogo
+Bounce
+Bluestone
+Eternal
+Gramophone
+Shine
+Navi
+IndiGo
+Pronto
+Radix

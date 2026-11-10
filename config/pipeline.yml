@@ -161,12 +161,15 @@ title_filter:
 batch_years: [2027]
 
 # Only recent jobs are kept (tools/freshness.py, applied to every row whichever scanner found it).
-#   max_age_days       a posting dated older than this is dropped as stale
+#   max_age_days       a board or aggregator posting dated older than this is dropped as stale
+#   employer_max_age_days  the same for company career pages and ATS boards, which hire over long windows (a July posting can
+#                      still be open): a soft limit, and an undated employer posting is kept
 #   undated_ok_steps   scan steps whose query already limits the age (their window / hours_old), so an undated row is trusted
-#   undated_ok_sources newest-first feeds without dates, capped to their newest N rows (instahyre: `newest`)
+#   undated_ok_sources feeds that list the newest jobs first but carry no dates (instahyre)
 # Any other undated row is dropped: its age cannot be checked.
 freshness:
   max_age_days: 7
+  employer_max_age_days: 180
   undated_ok_steps: [freehire, internshala, jobspy, jobspy-slow]
   undated_ok_sources: [instahyre]
 

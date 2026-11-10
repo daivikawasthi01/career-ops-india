@@ -25,12 +25,10 @@ import { coerceId } from './_ids.mjs';
 //   skills     one skill tag, e.g. "python" (empty = no skill filter)
 //   cities     list of city names to keep, e.g. [Delhi, Gurgaon, Noida]; "NCR" expands to the Delhi NCR cities. Empty = keep all.
 //   maxPages   default 25, hard ceiling 60 (35 rows a page)
-//   newest     keep only the N highest ids (the newest), default 100. The feed has no dates, so this is the recency limit.
 
 const ENDPOINT = 'https://www.instahyre.com/api/v1/job_search';
 const PAGE_SIZE = 35;
 const DEFAULT_MAX_PAGES = 25;
-const DEFAULT_NEWEST = 100;
 const MAX_PAGES_CAP = 60;
 const PAGE_DELAY_MS = 1500; // Instahyre limits roughly 20 searches a minute per address
 const NCR = ['delhi', 'new delhi', 'gurgaon', 'gurugram', 'noida', 'greater noida', 'faridabad', 'ghaziabad'];
@@ -44,9 +42,7 @@ export function resolveOptions(entry) {
   const cities = raw.flatMap((c) => (c === 'ncr' || c === 'delhi ncr' ? NCR : [c]));
   const mp = Number(entry?.maxPages ?? entry?.max_pages);
   const maxPages = Number.isInteger(mp) && mp > 0 ? Math.min(mp, MAX_PAGES_CAP) : DEFAULT_MAX_PAGES;
-  const nw = Number(entry?.newest);
-  const newest = Number.isInteger(nw) && nw > 0 ? nw : DEFAULT_NEWEST;
-  return { years, skills, cities, maxPages, newest };
+  return { years, skills, cities, maxPages };
 }
 
 const str = (v) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : '');
@@ -88,7 +84,7 @@ export default {
   id: 'instahyre',
   detect(_entry) { return null; },
   async fetch(entry, ctx) {
-    const { years, skills, cities, maxPages, newest } = resolveOptions(entry);
+    const { years, skills, cities, maxPages } = resolveOptions(entry);
     const probing = Number(ctx?.maxPages) > 0;
     const pages = probing ? Math.min(maxPages, Number(ctx.maxPages)) : maxPages;
     const out = []; const seen = new Set();
@@ -108,6 +104,6 @@ export default {
       for (const j of parsed.jobs) if (!seen.has(j.url)) { seen.add(j.url); out.push(j); }
       if (!parsed.next) break;
     }
-    return out.sort((a, b) => Number(b.externalId) - Number(a.externalId)).slice(0, newest); // newest first: ids rise with posting time
+    return out.sort((a, b) => Number(b.externalId) - Number(a.externalId)); // newest first: ids rise with posting time
   },
 };
