@@ -280,17 +280,31 @@ def _free_text(conn, field: dict, label: str, job: str, ctx: dict) -> dict:
     if hi >= 40 and rules.is_open_question(label) and (not text or text.upper().startswith(UNKNOWN)):  # your own story: always a best-effort draft from the CV
         text = _clean(llm.call(prompt + f"\n\nThis is an open question, so UNKNOWN is not an answer. Using the strongest real evidence in the CV "
                                f"(roles, projects, results), write {lo} to {hi} words. Do not invent anything.", **kw))
-    flaws = rules.answer_flaws(text) if text and not text.upper().startswith(UNKNOWN) else []
-    if flaws:  # a check after the write, because the model does not reliably follow a banned list in its prompt
-        fixed = _clean(llm.call(f"{prompt}\n\nDRAFT:\n{text}\n\nRewrite the draft with the same facts and length. Remove or replace: "
-                                f"{', '.join(flaws)}. Reply with the answer only.", **kw))
-        if fixed and len(rules.answer_flaws(fixed)) < len(flaws):
-            text = fixed
+    if text and not text.upper().startswith(UNKNOWN):
+        text = _enforce_writing_rules(text, prompt, lo, kw)
     if not text or text.upper().startswith(UNKNOWN):
         return _result(field, "unknown", reason="the CV does not answer this")
     if limit and len(text) > limit:
         text = text[:limit].rsplit(" ", 1)[0]
     return _result(field, "draft", value=text, source="draft", confidence=0.6)
+
+
+def _enforce_writing_rules(text: str, prompt: str, lo: int, kw: dict) -> str:
+    """The model does not reliably follow a banned list in its prompt, so the answer is checked after the write: two rewrite
+    attempts naming the offenders, then the offending sentences are cut when enough answer is left. Banned wording never reaches you."""
+    for _ in range(2):
+        flaws = rules.answer_flaws(text)
+        if not flaws:
+            return text
+        fixed = _clean(llm.call(f"{prompt}\n\nDRAFT:\n{text}\n\nRewrite the draft with the same facts and length. Do not use any of these: "
+                                f"{', '.join(flaws)}. Reply with the answer only.", **kw))
+        if fixed and len(rules.answer_flaws(fixed)) <= len(flaws) and fixed != text:
+            text = fixed
+    if not rules.answer_flaws(text):
+        return text
+    kept = [x for x in re.split(r"(?<=[.!?])\s+", text) if not rules.answer_flaws(x)]
+    cut = " ".join(kept).strip()
+    return cut if len(cut.split()) >= max(8, int(lo * 0.5)) else text
 
 
 def _clean(text: str) -> str:

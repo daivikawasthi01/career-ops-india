@@ -155,6 +155,15 @@ class SuggestTest(unittest.TestCase):
         r = self.run_suggest([F("a", "Your best achievement in one line", "text", maxlength=50)])
         self.assertEqual(r["a"]["status"], "draftable")
 
+    def test_banned_wording_is_cut_when_the_model_keeps_repeating_it(self):
+        bad = "I am excited to join X because it fits me. " + " ".join(["I built services in Go on AWS for developers."] * 14)  # long enough that no expansion call is made
+        self.fake.chat_replies = ['{"words": 60}', bad, bad, bad]  # the write, then two rewrites that still carry the phrase
+        with db.tx(self.db) as conn:
+            d = suggest.draft(conn, F("a", "Why do you want to work here?", "textarea"), {})
+        self.assertEqual(d["status"], "draft")
+        self.assertNotIn("excited to", d["value"].lower())
+        self.assertIn("I built services in Go", d["value"])
+
     def test_draft_refuses_sensitive(self):
         with db.tx(self.db) as conn:
             d = suggest.draft(conn, F("a", "What is your expected salary?", "textarea"), {})
