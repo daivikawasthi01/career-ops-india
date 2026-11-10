@@ -143,7 +143,11 @@
         if (it.status === 'draftable') AF.chip(it.id, anchor, { text: 'Suggest answer', tone: 'idle', onClick: async () => { await draft(it.id); showSuggestion(it); } });
         else if (it.status === 'drafting') AF.chip(it.id, anchor, { text: 'Writing from your CV...', tone: 'idle' });
         else if (it.status === 'draft' && it.value) AF.chip(it.id, anchor, { text: 'Suggestion ready', tone: 'ready', onClick: open });
-        else continue;
+        else if (['text', 'textarea'].includes(it.type) && ['unknown', 'offline'].includes(it.status)) {
+          // never silent: say why there is no suggestion, and let it be tried again
+          const why = it.status === 'offline' ? 'Server not reachable' : (it.reason || 'The CV does not answer this');
+          AF.chip(it.id, anchor, { text: `No suggestion: ${why.slice(0, 48)}. Try again`, tone: 'idle', onClick: async () => { await draft(it.id); showSuggestion(it); } });
+        } else continue;
         live.add(it.id);
       }
     }
