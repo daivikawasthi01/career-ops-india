@@ -19,10 +19,12 @@
     .af-dock iframe{flex:1;width:100%;border:0;background:#1d1917;color-scheme:dark}
     .af-dock .af-dock-x{all:unset;cursor:pointer;align-self:flex-end;margin:6px 10px 0;padding:3px 8px;border-radius:6px;color:#bdb0a7;font:12px system-ui,sans-serif}
     .af-dock .af-dock-x:hover{color:#f0e9e3}.af-dock .af-dock-x:focus-visible{outline:2px solid #f0a493}`;
-  const CHIP = `.af-chip{all:unset;cursor:pointer;position:absolute;z-index:2147482000;box-sizing:border-box;padding:4px 10px;border-radius:999px;white-space:nowrap;
-    background:#2b2522;color:#f0e9e3;font:12px/1.3 system-ui,sans-serif;box-shadow:0 0 0 1px #3a312d}
-    .af-chip[data-tone="ready"]{background:#e8907a;color:#2a1a15;font-weight:600}.af-chip[disabled]{cursor:default;color:#bdb0a7}
-    .af-chip:focus-visible{outline:2px solid #f0a493;outline-offset:2px}`;
+  const CHIP = `.af-chip{position:absolute;z-index:2147482000;display:inline-flex;max-width:min(420px,60vw);border-radius:999px;overflow:hidden;background:#2b2522;
+    box-shadow:0 0 0 1px #3a312d;font:12px/1.3 system-ui,sans-serif}
+    .af-chip button{all:unset;cursor:pointer;box-sizing:border-box;padding:4px 10px;color:#f0e9e3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .af-chip[data-tone="ready"] .af-chip-main{background:#e8907a;color:#2a1a15;font-weight:600}
+    .af-chip button[disabled]{cursor:default;color:#bdb0a7}.af-chip .af-chip-side{color:#bdb0a7;padding-inline:8px;border-inline-start:1px solid #3a312d}
+    .af-chip .af-chip-side:hover{color:#f0e9e3}.af-chip button:focus-visible{outline:2px solid #f0a493;outline-offset:-2px}`;
   const style = document.createElement('style');
   style.textContent = CSS + PILL + DOCK + CHIP;
   (document.head || document.documentElement).appendChild(style);
@@ -75,22 +77,24 @@
     c.node.style.top = `${window.scrollY + r.top + Math.max(0, (r.height - c.node.offsetHeight) / 2)}px`;
     c.node.style.left = `${window.scrollX + Math.max(4, left)}px`;
   };
-  AF.chip = (id, anchor, { text, tone, onClick, title = '' }) => {
+  // actions: extra small buttons after the main one, [{ text, label, onClick }]
+  AF.chip = (id, anchor, { text, tone, onClick, title = '', actions = [] }) => {
     let c = chips.get(id);
     if (!c) {
-      const node = el('button', { type: 'button', class: 'af-chip' });
+      const node = el('span', { class: 'af-chip' });
       document.body.append(node);
       c = { node, anchor };
       chips.set(id, c);
     }
     c.anchor = anchor;
-    c.node.textContent = text;
     c.node.dataset.tone = tone;
-    c.node.title = title;
-    c.node.disabled = !onClick;
-    c.node.onclick = onClick || null;
+    const main = el('button', { type: 'button', class: 'af-chip-main', text, title });
+    main.disabled = !onClick;
+    if (onClick) main.addEventListener('click', onClick);
+    c.node.replaceChildren(main, ...actions.map((a) => el('button', { type: 'button', class: 'af-chip-side', text: a.text, 'aria-label': a.label || a.text, onclick: a.onClick })));
     place(c);
   };
+  AF.dropChip = (id) => { const c = chips.get(id); if (c) { c.node.remove(); chips.delete(id); } };
   AF.keepChips = (ids) => { for (const [id, c] of chips) if (!ids.has(id)) { c.node.remove(); chips.delete(id); } };
   const replace = () => chips.forEach(place);
   window.addEventListener('scroll', replace, true);

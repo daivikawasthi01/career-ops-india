@@ -148,13 +148,19 @@
         const anchor = AF.handles.get(it.id)?.els[0];
         if (!anchor || dismissed.has(it.id) || it.filled || !AF.isEmpty(it.id)) continue;
         const open = () => showSuggestion(it);
-        if (it.status === 'draftable') AF.chip(it.id, anchor, { text: tried.has(it.id) ? 'Write now' : 'Queued. Write now', tone: 'idle', onClick: async () => { tried.add(it.id); await draft(it.id); showSuggestion(it); } });
+        const use = () => acceptSuggestion(it, it.value);
+        const preview = (t) => { const one = String(t).replace(/\s+/g, ' ').trim(); return one.length > 52 ? `${one.slice(0, 52)}...` : one; };
+        if (it.status === 'draftable') AF.chip(it.id, anchor, { text: tried.has(it.id) ? `${it.reason && it.reason !== 'no saved answer' ? `Failed: ${String(it.reason).slice(0, 40)}. ` : ''}Write now` : 'Queued. Write now', tone: 'idle', onClick: async () => { tried.add(it.id); await draft(it.id); } });
         else if (it.status === 'drafting') AF.chip(it.id, anchor, { text: 'Writing from your CV...', tone: 'idle' });
-        else if (it.status === 'draft' && it.value) AF.chip(it.id, anchor, { text: 'Suggestion ready', tone: 'ready', title: String(it.value).slice(0, 200), onClick: open });
+        else if (it.status === 'draft' && it.value) {
+          // An AI suggestion is a pill that shows the answer; nothing is written until you click it. Edit opens it for changes.
+          AF.chip(it.id, anchor, { text: `Use: ${preview(it.value)}`, tone: 'ready', title: String(it.value).slice(0, 400), onClick: use,
+            actions: [{ text: 'Edit', label: 'Edit the suggestion first', onClick: open }, { text: 'x', label: 'Dismiss the suggestion', onClick: () => { dismissed.add(it.id); report(); } }] });
+        }
         else if (['text', 'textarea'].includes(it.type) && ['unknown', 'offline'].includes(it.status)) {
           // never silent: say why there is no suggestion, and let it be tried again
           const why = it.status === 'offline' ? 'Server not reachable' : (it.reason || 'The CV does not answer this');
-          AF.chip(it.id, anchor, { text: `No suggestion: ${why.slice(0, 48)}. Try again`, tone: 'idle', onClick: async () => { await draft(it.id); showSuggestion(it); } });
+          AF.chip(it.id, anchor, { text: `No suggestion: ${why.slice(0, 48)}. Try again`, tone: 'idle', onClick: async () => { await draft(it.id); } });
         } else continue;
         live.add(it.id);
       }
@@ -184,6 +190,18 @@
     } finally { predrafting = false; }
   }
 
+  // The one way a suggestion is accepted (the pill and the card both come here): write it, then the suggestion is finished for good.
+  async function acceptSuggestion(it, text) {
+    const ok = await fillItem(it, text, 'draft');
+    if (!ok) { it.reason = it.reason || 'could not write into this box'; report(); return; }
+    it.status = 'draft'; it.value = text; it.filled = true;
+    state.drafts.delete(it.id);
+    dismissed.add(it.id);
+    AF.dropChip?.(it.id);
+    AF.closeSuggest?.();
+    report();
+  }
+
   function itemForElement(target) {
     for (const it of state.items.values()) if (AF.handles.get(it.id)?.els.some((e) => e === target || e.contains?.(target))) return it;
     return null;
@@ -194,7 +212,7 @@
     const anchor = AF.handles.get(it.id)?.els[0];
     if (!anchor || dismissed.has(it.id)) return;
     const actions = {
-      use: async (text) => { await fillItem(it, text, 'draft'); it.status = 'draft'; it.value = text; report(); },
+      use: (text) => acceptSuggestion(it, text),
       draft: async () => { AF.suggestCard(anchor, { state: 'drafting' }, actions); await draft(it.id); showSuggestion(it); },
       dismiss: () => dismissed.add(it.id),
     };
@@ -291,7 +309,7 @@
     state.mode = hello.mode;
     if (state.mode === 'off') return;
     AF.watchSubmit({ submitRe: state.submitRe, onCapture });
-    document.addEventListener('input', (e) => { if (e.isTrusted) rememberSoon(); }, true);
+    document.addEventListener('input', (e) => { if (e.isTrusted) { rememberSoon(); setTimeout(syncChips, 150); } }, true);
     document.addEventListener('change', (e) => { if (e.isTrusted) rememberSoon(); }, true);
     document.addEventListener('click', (e) => { if (e.isTrusted && e.target.closest?.('button,[role=button],a,input[type=submit],input[type=button]')) remember(); }, true);
     window.addEventListener('pagehide', () => flush('leave'));
