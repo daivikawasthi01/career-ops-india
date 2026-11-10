@@ -16,7 +16,7 @@
     });
   AF.bg = bg;
 
-  const state = { mode: 'off', auto: true, warnings: [], items: new Map(), rules: null, neverRead: () => false, submitRe: null, signature: '', busy: false, again: false, diag: {} };
+  const state = { mode: 'off', auto: true, warnings: [], items: new Map(), rules: null, neverRead: () => false, submitRe: null, signature: '', busy: false, again: false, diag: { v: chrome.runtime.getManifest().version } };
 
   const compile = (list) => new RegExp(list.map((p) => `(?:${p})`).join('|'), 'i');
   const text = (f) => [f.label, f.name, f.placeholder].filter(Boolean).join(' | ');
@@ -58,7 +58,7 @@
     state.busy = true;
     try {
       const fields = AF.collect(state.neverRead);
-      state.diag = { inputs: document.querySelectorAll('input,select,textarea').length, readable: fields.length, url: location.pathname + location.search.slice(0, 60) };
+      state.diag = { v: state.diag.v, inputs: document.querySelectorAll('input,select,textarea').length, readable: fields.length, url: location.pathname + location.search.slice(0, 60) };
       const nonPassword = fields.length;
       const hasResume = fields.some((f) => f.type === 'file' && /resume|cv/i.test(f.label));
       if (nonPassword < 3 && !hasResume) { state.items.clear(); report(); return; }

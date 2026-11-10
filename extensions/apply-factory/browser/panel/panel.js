@@ -128,6 +128,19 @@ function group(title, cards) {
 // ---- job card: checks, quick score, tailor, mark applied ----
 const callApi = (path, body) => send('api', { path, body });
 
+// A reloaded extension does not update tabs that were already open: they keep the old page script until refreshed.
+function staleTab() {
+  const mine = chrome.runtime.getManifest().version;
+  return Object.values(st?.frames || {}).some((f) => f.diag?.v !== mine);
+}
+
+function staleCard() {
+  return h('section', { class: 'stock' },
+    h('h2', { text: 'This tab needs a refresh' }),
+    h('p', { class: 'note', text: 'The extension was updated after this page opened, so the page is still running the old version without the new features.' }),
+    h('div', { class: 'row' }, h('button', { class: 'btn btn--ink btn--small', text: 'Refresh this tab', onclick: () => chrome.tabs.reload(tabId) })));
+}
+
 function resetJob(key) {
   Object.assign(job, { key, ctx: null, pre: null, score: null, busy: '', confirm: false, result: '', error: '', autoDone: false, showScore: false });
 }
@@ -346,9 +359,10 @@ function footer() {
       h('input', { type: 'checkbox', checked: st.auto, onchange: async (e) => { await send('set-auto', { auto: e.target.checked }); } }),
       h('span', { text: 'Fill known answers when a form opens' })),
     h('label', { class: 'switch' },
-      h('input', { type: 'checkbox', checked: st.autoOpen, onchange: async (e) => { await send('set-auto', { autoOpen: e.target.checked }); } }),
+      h('input', { type: 'checkbox', checked: st.autoOpen !== false, onchange: async (e) => { await send('set-auto', { autoOpen: e.target.checked }); } }),
       h('span', { text: 'Open this panel on the page when a form is found' })),
     h('button', { class: 'btn btn--card btn--small', text: window.AFTheme.current() === 'dark' ? 'Switch to light theme' : 'Switch to dark theme', onclick: () => { window.AFTheme.toggle(); render(); } }),
+    h('p', { text: `Version ${chrome.runtime.getManifest().version}` }),
     c && h('p', { text: `${c.answers} answers learned, ${c.samples} writing samples.` }),
     c?.pending > 0 && h('p', {}, `${c.pending} to learn when the model is back. `, h('button', { class: 'label', text: 'Retry now', onclick: async () => { await send('retry'); refresh(); } })),
     st.server?.last_capture?.new != null && h('p', { text: `Last save: ${st.server.last_capture.new} new, ${st.server.last_capture.reinforced} confirmed, ${st.server.last_capture.corrected} changed.` }),
@@ -366,6 +380,7 @@ function render() {
   else if (!st.host) { nodes.push(h('p', { class: 'empty', text: 'Open an application form and I will pick it up.' })); }
   else {
     const all = items();
+    if (st.injected && staleTab()) nodes.push(staleCard());
     if (st.siteMode !== 'off' && st.injected) nodes.push(verdictBanner());
     nodes.push(siteCard());
     if (st.siteMode !== 'off' && st.injected) nodes.push(jobCard());
