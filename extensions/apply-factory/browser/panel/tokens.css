@@ -27,19 +27,22 @@
   --tracking-display: -0.03em; --display-weight: 600;
 }
 
-/* Dark is the default: warm charcoal, never pure black, coral kept as the one signal. The light theme is the :root block above, chosen with data-theme="light". */
+/* Dark is the default and the same Coral design re-derived by Hallmark's dark-mode recipe: paper 12-18% L, ink 92-96% L, elevation by
+ * lightness (cards lighter than the ground), shadows replaced by hairline rings, accent hue unchanged with lower chroma. The light theme
+ * is the :root block above, chosen with data-theme="light". */
 :root:not([data-theme="light"]) {
   color-scheme: dark;
-  --color-error: oklch(72% 0.16 27); --color-success: oklch(76% 0.13 150);
-  --color-paper: oklch(20% 0.01 40); --color-paper-2: oklch(23% 0.011 40); --color-paper-3: oklch(26.5% 0.012 40);
-  --color-ink: oklch(93% 0.008 60); --color-ink-2: oklch(86% 0.009 58); --color-muted: oklch(70% 0.012 55);
-  --color-rule: oklch(31% 0.011 42); --color-rule-2: oklch(38% 0.012 42);
-  --color-accent: oklch(74% 0.125 30); --color-accent-ink: oklch(20% 0.012 38); --color-accent-2: oklch(76% 0.13 30); --color-focus: oklch(78% 0.14 30);
-  --color-cotton: oklch(25.5% 0.012 42); --color-desk: oklch(17.5% 0.01 40); --color-print: oklch(94% 0.007 60);
-  --color-board: oklch(74% 0.125 30); --color-board-type: oklch(20% 0.012 38); --color-paid: oklch(77% 0.14 35);
-  --shadow-card: 0 1px 2px oklch(0% 0 0 / 0.4);
-  --edge-stock: inset 0 1px 0 oklch(100% 0 0 / 0.07), 0 0 0 0.5px oklch(0% 0 0 / 0.55), 0 1px 0 oklch(0% 0 0 / 0.35);
-  --cast-stock: 6px 5px 12px -6px oklch(0% 0 0 / 0.6); --cast-stock-lift: 12px 10px 20px -8px oklch(0% 0 0 / 0.6);
-  --press-groove: inset 1px 1.5px 3px oklch(0% 0 0 / 0.5), inset -1px -1px 0 oklch(100% 0 0 / 0.06), 0 0 0 0.5px oklch(0% 0 0 / 0.5);
+  --color-error: oklch(74% 0.13 27); --color-success: oklch(78% 0.11 150);
+  --color-paper: oklch(16% 0.01 40); --color-paper-2: oklch(19.5% 0.011 40); --color-paper-3: oklch(23% 0.012 40);
+  --color-ink: oklch(94% 0.008 60); --color-ink-2: oklch(87% 0.009 58); --color-muted: oklch(68% 0.012 55);
+  --color-rule: oklch(29% 0.011 42); --color-rule-2: oklch(35% 0.012 42);
+  --color-accent: oklch(80% 0.095 30); --color-accent-ink: oklch(18% 0.012 38); --color-accent-2: oklch(78% 0.1 29); --color-focus: oklch(80% 0.11 30);
+  --color-cotton: oklch(22% 0.012 42); --color-desk: oklch(14% 0.009 40); --color-print: oklch(94% 0.008 60);
+  --color-board: oklch(92% 0.008 60); --color-board-type: oklch(18% 0.012 38); --color-paid: oklch(78% 0.11 33);
+  --shadow-card: none;
+  --edge-stock: inset 0 0 0 1px var(--color-rule);
+  --cast-stock: none; --cast-stock-lift: none;
+  --press-groove: inset 0 0 0 1px var(--color-rule-2), inset 0 2px 3px oklch(0% 0 0 / 0.35);
 }
-:root:not([data-theme="light"]) .btn--ink, :root:not([data-theme="light"]) .settled, :root:not([data-theme="light"]) .btn--card { text-shadow: none; }
+:root:not([data-theme="light"]) .btn--ink, :root:not([data-theme="light"]) .settled, :root:not([data-theme="light"]) .btn--card, :root:not([data-theme="light"]) .groove button { text-shadow: none; }
+:root:not([data-theme="light"]) body { font-weight: 350; }
