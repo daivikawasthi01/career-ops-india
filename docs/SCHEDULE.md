@@ -47,9 +47,7 @@ Telegram and Groq keys stay in `career-ops/.env` on the Mac; nothing goes into G
    - Weekly discovery: same, with `.../workflows/discovery-weekly.yml/dispatches`, body `{"ref":"main"}`, Sunday 02:00
 3. A successful call answers `204 No Content`; the run then appears in the repo's Actions tab. `404`: the token cannot see the repo
    or the workflow name is wrong. `401`: wrong or expired token. `422`: the `ref` branch or an input name is wrong.
-4. To check the token without starting a run, POST `{"event_type":"ping"}` to
-   `https://api.github.com/repos/daivikawasthi01/career-ops-india/dispatches`. No workflow listens to `ping`, so it only answers `204`
-   if the token works. (That endpoint needs Contents: Read and write, so with the Actions-only token expect `403`; the real URL above is the test.)
+4. To test the token, use cron-job.org's "Test run" on the dry-run body (`{"ref":"main","inputs":{"dry_run":"true"}}`) first, then switch to `"false"`.
 5. Alternative: `repository_dispatch` (`POST .../dispatches`, body `{"event_type":"mine-daily"}`) also starts the workflows, but its
    token needs Contents: Read and write, which can also change code in the repo. The Actions-only token above is safer.
 6. The token is the only secret. Keep it in cron-job.org, not in the repo.
