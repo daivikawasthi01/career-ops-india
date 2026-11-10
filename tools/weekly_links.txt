@@ -15,3 +15,9 @@
 # Cutshort | https://cutshort.io/jobs
 # Instahyre | https://www.instahyre.com/
 # YC Work at a Startup | https://www.workatastartup.com/jobs
+
+# Careers pages with no provider (portals.yml scans them by web search only):
+Salesforce careers | https://careers.salesforce.com
+Bosch careers | https://jobs.bosch.com
+TCS careers | https://www.tcs.com/careers
+Wipro careers | https://careers.wipro.com

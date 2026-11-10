@@ -31,9 +31,13 @@ class Format(unittest.TestCase):
 class Send(unittest.TestCase):
     def test_no_credentials_is_a_silent_noop(self):
         import os
-        for k in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
-            os.environ.pop(k, None)
-        self.assertEqual(n.send_new(rows(3))[0], 0)
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as empty_root, mock.patch.dict(os.environ, {"CAREER_OPS_ROOT": empty_root}):
+            for k in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
+                os.environ.pop(k, None)
+            # the data root has no .env here, so a developer's real credentials can never make this test send a message
+            self.assertEqual(n.send_new(rows(3), opener=self.fail)[0], 0)
 
     def test_sends_and_never_raises(self):
         class R(io.BytesIO):

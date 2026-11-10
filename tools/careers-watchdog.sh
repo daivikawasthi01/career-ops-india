@@ -1,6 +1,6 @@
 #!/bin/zsh
 # Run from cron every 30 minutes. Starts tools/overnight-supervisor.sh when it is not running, unless the last run finished.
-#   */30 * * * * /Users/daivikawasthi/TechnicalProjects/JobApply/wt-fixes/tools/careers-watchdog.sh
+#   */30 * * * * /Users/daivikawasthi/TechnicalProjects/JobApply/career-ops/tools/careers-watchdog.sh
 cd "$(dirname "$0")/.." || exit 1
 export PATH=$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin   # claude lives in ~/.local/bin: the last-resort LLM tier needs it
 export CAREER_OPS_CLAUDE_FALLBACK=0          # keep the Claude plan free: no claude -p tier

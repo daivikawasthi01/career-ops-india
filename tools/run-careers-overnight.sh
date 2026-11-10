@@ -1,7 +1,7 @@
 #!/bin/zsh
 # Unattended run of phases 1 and 2 plus the export. Start it in a terminal and leave it:
 #
-#   cd /Users/daivikawasthi/TechnicalProjects/JobApply/wt-fixes
+#   cd /Users/daivikawasthi/TechnicalProjects/JobApply/career-ops
 #   tools/run-careers-overnight.sh                  # everything, retries when a phase halts
 #   tools/run-careers-overnight.sh 2                # only phase 2 (for example after phase 1 is done)
 #
