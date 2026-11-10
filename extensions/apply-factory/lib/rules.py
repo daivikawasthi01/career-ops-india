@@ -59,6 +59,12 @@ def _fact_rules() -> list[tuple[str, re.Pattern]]:
     return [(r["fact"], re.compile(r["re"], re.I)) for r in load()["fact_patterns"]]
 
 
+def is_open_question(label: str) -> bool:
+    """A question about the candidate's own story (achievement, strengths, why this role, a message) that a CV always answers in part.
+    A question about a specific skill or fact is not one: the CV either has it or does not."""
+    return bool(re.search(load().get("open_questions", "$^"), label or "", re.I))
+
+
 def answer_flaws(text: str) -> list[str]:
     """Phrases in a drafted answer that career-ops' writing rules ban (listed in banned_in_answers), plus long dashes."""
     low = (text or "").lower()

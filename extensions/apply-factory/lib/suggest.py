@@ -155,13 +155,13 @@ def _wants_draft(field: dict) -> bool:
     ftype = field.get("type", "text")
     if ftype == "textarea":
         return True
-    return ftype == "text" and bool(field.get("label")) and int(field.get("maxlength") or 500) >= 60
+    return ftype == "text" and bool(field.get("label"))
 
 
 _SYSTEM = """You write answers to job application questions in the first person as the candidate.
 Rules:
 - Use only facts present in CANDIDATE CV. Never invent employers, numbers, tools, dates or awards.
-- If the question cannot be answered from the CV, reply with exactly UNKNOWN.
+- Reply with exactly UNKNOWN only when the question asks for a specific fact the CV does not contain (a date, number, name, licence). Open questions (best achievement, strengths, why this role, a project, a message) are never UNKNOWN: build the answer from the strongest evidence in the CV.
 - Follow WRITING RULES: no cliché phrases, specifics over abstractions, varied sentence length.
 - Match the voice of STYLE EXAMPLES when given: sentence length, word choice, directness.
 - Plain words. No filler phrases, no em dashes, no buzzwords. Do not repeat the question.
@@ -258,6 +258,9 @@ def _free_text(conn, field: dict, label: str, job: str, ctx: dict) -> dict:
     if hi >= 40 and text and not text.upper().startswith(UNKNOWN) and len(text.split()) < lo * 0.85:
         text = _clean(llm.call(prompt + f"\n\nDRAFT (too short, {len(text.split())} words):\n{text}\n\nRewrite it fully at {lo} to {hi} words, "
                                f"adding concrete detail from the CV. Reply with the answer only.", **kw)) or text
+    if hi >= 40 and rules.is_open_question(label) and (not text or text.upper().startswith(UNKNOWN)):  # your own story: always a best-effort draft from the CV
+        text = _clean(llm.call(prompt + f"\n\nThis is an open question, so UNKNOWN is not an answer. Using the strongest real evidence in the CV "
+                               f"(roles, projects, results), write {lo} to {hi} words. Do not invent anything.", **kw))
     flaws = rules.answer_flaws(text) if text and not text.upper().startswith(UNKNOWN) else []
     if flaws:  # a check after the write, because the model does not reliably follow a banned list in its prompt
         fixed = _clean(llm.call(f"{prompt}\n\nDRAFT:\n{text}\n\nRewrite the draft with the same facts and length. Remove or replace: "

@@ -49,7 +49,7 @@
     } else if (view.state === 'drafting') {
       card.append(el('b', { text: 'Suggested answer' }), el('p', { text: 'Writing from your CV...' }), el('div', { class: 'af-row' }, dismiss));
     } else if (view.state === 'offer') {
-      card.append(el('b', { text: 'No saved answer for this' }),
+      card.append(el('b', { text: 'No saved answer for this' }), view.note ? el('p', { text: view.note }) : null,
         el('div', { class: 'af-row' }, el('button', { type: 'button', class: 'af-use', text: 'Suggest from my CV', onclick: actions.draft }), dismiss));
     } else {
       card.append(el('b', { text: 'No suggestion' }), el('p', { text: view.note || 'Your CV does not answer this.' }), el('div', { class: 'af-row' }, dismiss));

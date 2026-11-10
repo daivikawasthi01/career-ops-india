@@ -108,6 +108,8 @@
     if (res.error) { item.status = 'draftable'; item.reason = res.error; }
     else Object.assign(item, { status: res.status, value: res.value ?? '', source: res.source || item.source, reason: res.reason, confidence: res.confidence });
     report();
+    const box = AF.handles.get(id)?.els[0];
+    if (box && document.activeElement === box && AF.isEmpty(id)) showSuggestion(item); // you are already in the box: show it now
   }
 
   // ---- tell the person a job or form was found ----
@@ -162,7 +164,7 @@
     };
     if (it.status === 'drafting') return AF.suggestCard(anchor, { state: 'drafting' }, actions);
     if (it.status === 'draft' && it.value && !it.filled) return AF.suggestCard(anchor, { state: 'ready', text: it.value }, actions);
-    if (it.status === 'draftable') return AF.suggestCard(anchor, { state: 'offer' }, actions);
+    if (it.status === 'draftable') return AF.suggestCard(anchor, { state: 'offer', note: it.reason && it.reason !== 'no saved answer' ? `Last try: ${it.reason}` : '' }, actions);
     if (it.status === 'unknown') return AF.suggestCard(anchor, { state: 'none', note: it.reason }, actions);
   }
 

@@ -132,6 +132,18 @@ class SuggestTest(unittest.TestCase):
             d = suggest.draft(conn, F("a", "Tell us about a project", "textarea"), {})
         self.assertEqual(d["value"], "I built a platform in Go.")
 
+    def test_unknown_on_an_open_question_is_retried_as_best_effort(self):
+        best = " ".join(["built"] * 70)
+        self.fake.chat_replies = ['{"words": 80}', "UNKNOWN", best]
+        with db.tx(self.db) as conn:
+            d = suggest.draft(conn, F("a", "What is your best achievement till date?", "textarea"), {})
+        self.assertEqual(d["status"], "draft")
+        self.assertEqual(self.fake.chat_calls, 3)
+
+    def test_short_limited_text_boxes_are_still_offered(self):
+        r = self.run_suggest([F("a", "Your best achievement in one line", "text", maxlength=50)])
+        self.assertEqual(r["a"]["status"], "draftable")
+
     def test_draft_refuses_sensitive(self):
         with db.tx(self.db) as conn:
             d = suggest.draft(conn, F("a", "What is your expected salary?", "textarea"), {})
