@@ -347,7 +347,9 @@ function render() {
       const needs = all.filter((i) => ['draftable', 'drafting', 'draft', 'unknown', 'manual', 'offline', 'cover'].includes(i.status));
       nodes.push(group('Needs you', needs.map(needsCard)), group('Ready', ready.map(filledCard)));
     } else if (st.siteMode === 'assist') {
+      const d = Object.values(st.frames || {}).map((f) => f.diag).find((x) => x && x.inputs !== undefined);
       nodes.push(h('p', { class: 'empty', text: st.injected ? 'No application form on this page yet.' : 'Open an application form and I will pick it up.' }));
+      if (d) nodes.push(h('p', { class: 'empty', text: d.error ? `Scan failed: ${d.error}` : `Seen on this page: ${d.inputs} fields, ${d.readable} readable (needs 3).` }));
     }
     nodes.push(cvCard(), footer());
   }

@@ -5,14 +5,18 @@
   if (!AF || AF.started) return;
   AF.started = true;
 
+  // A call that never returns (the worker asleep, the server busy) must not freeze scanning, so every call has a time limit.
+  const LIMITS = { draft: 300000, resume: 120000 };
   const bg = (type, payload = {}) =>
     new Promise((resolve) => {
-      try { chrome.runtime.sendMessage({ type, ...payload }, (res) => resolve(res || { error: chrome.runtime.lastError?.message || 'no reply' })); }
-      catch (e) { resolve({ error: String(e) }); }
+      const timer = setTimeout(() => resolve({ error: 'the local server did not answer in time' }), LIMITS[type] || 45000);
+      const done = (r) => { clearTimeout(timer); resolve(r); };
+      try { chrome.runtime.sendMessage({ type, ...payload }, (res) => done(res || { error: chrome.runtime.lastError?.message || 'no reply' })); }
+      catch (e) { done({ error: String(e) }); }
     });
   AF.bg = bg;
 
-  const state = { mode: 'off', auto: true, warnings: [], items: new Map(), rules: null, neverRead: () => false, submitRe: null, signature: '', busy: false };
+  const state = { mode: 'off', auto: true, warnings: [], items: new Map(), rules: null, neverRead: () => false, submitRe: null, signature: '', busy: false, again: false, diag: {} };
 
   const compile = (list) => new RegExp(list.map((p) => `(?:${p})`).join('|'), 'i');
   const text = (f) => [f.label, f.name, f.placeholder].filter(Boolean).join(' | ');
@@ -20,7 +24,7 @@
   function report() {
     const items = [...state.items.values()].map(({ id, label, type, status, value, source, reason, kind, hint, confidence, filled, options, note, required }) => ({ id, label, type, status, value, source, reason, kind, hint, confidence, filled, options, note }));
     const missing = [...state.items.values()].filter((i) => i.required && AF.isEmpty(i.id)).map((i) => ({ id: i.id, label: i.label }));
-    bg('frame-report', { url: location.href, host: location.hostname, mode: state.mode, items, missing, warnings: state.warnings });
+    bg('frame-report', { url: location.href, host: location.hostname, mode: state.mode, items, missing, warnings: state.warnings, diag: state.diag });
   }
 
   async function fillItem(item, value = item.value, source = item.source || 'fact') {
@@ -49,10 +53,12 @@
   }
 
   async function scan({ force = false } = {}) {
-    if (state.busy || state.mode === 'off') return;
+    if (state.mode === 'off') return;
+    if (state.busy) { state.again = { force }; return; } // a change that arrives mid-scan is run right after, not dropped
     state.busy = true;
     try {
       const fields = AF.collect(state.neverRead);
+      state.diag = { inputs: document.querySelectorAll('input,select,textarea').length, readable: fields.length, url: location.pathname + location.search.slice(0, 60) };
       const nonPassword = fields.length;
       const hasResume = fields.some((f) => f.type === 'file' && /resume|cv/i.test(f.label));
       if (nonPassword < 3 && !hasResume) { state.items.clear(); report(); return; }
@@ -83,7 +89,12 @@
       state.warnings = res.warnings || [];
       if (state.auto) await fillKnown(); else report();
       predraft();
-    } finally { state.busy = false; }
+    } catch (e) {
+      state.diag = { ...state.diag, error: String(e.message || e).slice(0, 120) }; report();
+    } finally {
+      state.busy = false;
+      if (state.again) { const a = state.again; state.again = false; setTimeout(() => scan(a), 200); }
+    }
   }
 
   async function draft(id) {
