@@ -32,20 +32,27 @@ Telegram and Groq keys stay in `career-ops/.env` on the Mac; nothing goes into G
 
 ## cron-job.org
 
-1. **Token.** GitHub, Settings, Developer settings, Fine-grained tokens: one token limited to your private repo, permission
-   **Contents: Read and write** (that is what `repository_dispatch` needs). Copy it.
-2. **Cron job** (one per workflow):
-   - URL: `https://api.github.com/repos/<you>/<repo>/dispatches`
-   - Method: `POST`
-   - Headers: `Authorization: Bearer <token>`, `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`,
-     `Content-Type: application/json`, `User-Agent: cron-job.org`
-   - Body: `{"event_type":"mine-daily"}` (use `{"event_type":"discovery-weekly"}` for the weekly one)
-   - Schedule: daily at 09:30, time zone Asia/Kolkata (weekly: Sunday 02:00)
-3. A successful call answers `204 No Content`; the run then appears in the repo's Actions tab. A `404` means the token cannot see the
-   repo or the repo name is wrong; a `401` means the token is wrong or expired.
-4. `repository_dispatch` runs the workflow file on the repo's **default branch**, so push the branch you want to run as the
-   default (or merge it there).
-5. The token is the only secret. Keep it in cron-job.org, not in the repo.
+1. **Token** (fine-grained, limited to this one repo). GitHub, your avatar, Settings, Developer settings, Personal access tokens,
+   Fine-grained tokens, Generate new token:
+   - Token name: `cron-job-org-career-ops`; Expiration: 1 year (put the date in your calendar, an expired token gives `401`)
+   - Resource owner: `daivikawasthi01`; Repository access: **Only select repositories**, then `career-ops-india`
+   - Repository permissions: **Actions: Read and write** (Metadata: Read is added automatically). Nothing else.
+   - Generate and copy the `github_pat_...` value; GitHub shows it once.
+2. **Cron job** (one per workflow), in cron-job.org:
+   - URL: `https://api.github.com/repos/daivikawasthi01/career-ops-india/actions/workflows/mine-daily.yml/dispatches`
+   - Method: `POST`; Headers: `Authorization: Bearer <token>`, `Accept: application/vnd.github+json`,
+     `X-GitHub-Api-Version: 2022-11-28`, `Content-Type: application/json`, `User-Agent: cron-job.org`
+   - Body: `{"ref":"main","inputs":{"dry_run":"false"}}`  (a real run; leave `inputs` out for a dry run)
+   - Schedule: daily 09:30, time zone Asia/Kolkata
+   - Weekly discovery: same, with `.../workflows/discovery-weekly.yml/dispatches`, body `{"ref":"main"}`, Sunday 02:00
+3. A successful call answers `204 No Content`; the run then appears in the repo's Actions tab. `404`: the token cannot see the repo
+   or the workflow name is wrong. `401`: wrong or expired token. `422`: the `ref` branch or an input name is wrong.
+4. To check the token without starting a run, POST `{"event_type":"ping"}` to
+   `https://api.github.com/repos/daivikawasthi01/career-ops-india/dispatches`. No workflow listens to `ping`, so it only answers `204`
+   if the token works. (That endpoint needs Contents: Read and write, so with the Actions-only token expect `403`; the real URL above is the test.)
+5. Alternative: `repository_dispatch` (`POST .../dispatches`, body `{"event_type":"mine-daily"}`) also starts the workflows, but its
+   token needs Contents: Read and write, which can also change code in the repo. The Actions-only token above is safer.
+6. The token is the only secret. Keep it in cron-job.org, not in the repo.
 
 ## Things to know
 
