@@ -24,6 +24,7 @@
   function report() {
     const items = [...state.items.values()].map(({ id, label, type, status, value, source, reason, kind, hint, confidence, filled, options, note, required }) => ({ id, label, type, status, value, source, reason, kind, hint, confidence, filled, options, note }));
     const missing = [...state.items.values()].filter((i) => i.required && AF.isEmpty(i.id)).map((i) => ({ id: i.id, label: i.label }));
+    syncChips();
     bg('frame-report', { url: location.href, host: location.hostname, mode: state.mode, items, missing, warnings: state.warnings, diag: state.diag });
   }
 
@@ -129,6 +130,24 @@
     });
     const settings = (await stored('settings')) || {};
     if (settings.autoOpen === false) showPill(); else AF.dock({ onClose: showPill });
+  }
+
+  // ---- chips beside the questions ----
+  function syncChips() {
+    const live = new Set();
+    if (state.mode === 'assist') {
+      for (const it of state.items.values()) {
+        const anchor = AF.handles.get(it.id)?.els[0];
+        if (!anchor || it.kind === 'option' || dismissed.has(it.id) || it.filled || !AF.isEmpty(it.id)) continue;
+        const open = () => showSuggestion(it);
+        if (it.status === 'draftable') AF.chip(it.id, anchor, { text: 'Suggest answer', tone: 'idle', onClick: async () => { await draft(it.id); showSuggestion(it); } });
+        else if (it.status === 'drafting') AF.chip(it.id, anchor, { text: 'Writing from your CV...', tone: 'idle' });
+        else if (it.status === 'draft' && it.value) AF.chip(it.id, anchor, { text: 'Suggestion ready', tone: 'ready', onClick: open });
+        else continue;
+        live.add(it.id);
+      }
+    }
+    AF.keepChips(live);
   }
 
   // ---- suggestions you approve ----

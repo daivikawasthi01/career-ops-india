@@ -19,8 +19,12 @@
     .af-dock iframe{flex:1;width:100%;border:0;background:#1d1917;color-scheme:dark}
     .af-dock .af-dock-x{all:unset;cursor:pointer;align-self:flex-end;margin:6px 10px 0;padding:3px 8px;border-radius:6px;color:#bdb0a7;font:12px system-ui,sans-serif}
     .af-dock .af-dock-x:hover{color:#f0e9e3}.af-dock .af-dock-x:focus-visible{outline:2px solid #f0a493}`;
+  const CHIP = `.af-chip{all:unset;cursor:pointer;position:absolute;z-index:2147482000;box-sizing:border-box;padding:4px 10px;border-radius:999px;white-space:nowrap;
+    background:#2b2522;color:#f0e9e3;font:12px/1.3 system-ui,sans-serif;box-shadow:0 0 0 1px #3a312d}
+    .af-chip[data-tone="ready"]{background:#e8907a;color:#2a1a15;font-weight:600}.af-chip[disabled]{cursor:default;color:#bdb0a7}
+    .af-chip:focus-visible{outline:2px solid #f0a493;outline-offset:2px}`;
   const style = document.createElement('style');
-  style.textContent = CSS + PILL + DOCK;
+  style.textContent = CSS + PILL + DOCK + CHIP;
   (document.head || document.documentElement).appendChild(style);
 
   let card = null;
@@ -57,6 +61,40 @@
     document.body.append(card);
   };
   AF.closeSuggest = close;
+
+  // A small chip beside each open question, so a suggestion is visible on the page itself without clicking into the box.
+  // The chip follows its field (scrolling, re-layout) and goes away when the field does.
+  const chips = new Map();
+  const place = (c) => {
+    const r = c.anchor.getBoundingClientRect();
+    if (!c.anchor.isConnected || (r.width === 0 && r.height === 0)) { c.node.style.display = 'none'; return; }
+    c.node.style.display = '';
+    const w = c.node.offsetWidth;
+    const room = document.documentElement.clientWidth - r.right;
+    const left = room >= w + 14 ? r.right + 8 : r.right - w - 6; // beside the field when there is room, else inside its right edge
+    c.node.style.top = `${window.scrollY + r.top + Math.max(0, (r.height - c.node.offsetHeight) / 2)}px`;
+    c.node.style.left = `${window.scrollX + Math.max(4, left)}px`;
+  };
+  AF.chip = (id, anchor, { text, tone, onClick }) => {
+    let c = chips.get(id);
+    if (!c) {
+      const node = el('button', { type: 'button', class: 'af-chip' });
+      document.body.append(node);
+      c = { node, anchor };
+      chips.set(id, c);
+    }
+    c.anchor = anchor;
+    c.node.textContent = text;
+    c.node.dataset.tone = tone;
+    c.node.disabled = !onClick;
+    c.node.onclick = onClick || null;
+    place(c);
+  };
+  AF.keepChips = (ids) => { for (const [id, c] of chips) if (!ids.has(id)) { c.node.remove(); chips.delete(id); } };
+  const replace = () => chips.forEach(place);
+  window.addEventListener('scroll', replace, true);
+  window.addEventListener('resize', replace);
+  setInterval(replace, 700);
 
   // A small button on the page when a job or form is found. Chrome only lets a click open the side panel, so the extension
   // cannot open it by itself; this puts the click one tap away. It never covers the form and is dismissed per site.
