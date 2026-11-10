@@ -263,3 +263,15 @@ discovery:
   llm:
     model: groq:openai/gpt-oss-120b
     fallback: groq:openai/gpt-oss-20b
+
+# The scan steps tools/mine.py runs and the dashboard lists. The one place a step is registered: add an entry here and its
+# argument builder in tools/mine.py (STEP_ARGS). windowed: scans "since the last success"; bare_json: the scanner prints its
+# receipt on stdout; standalone: runs alone through its own flag (cli) and never as part of a default run; state_id: the key
+# its runs are recorded under.
+steps:
+  - {id: freehire, label: freehire jobs, file: scan-freehire.mjs, windowed: true}
+  - {id: internshala, label: Internshala, file: scan-internshala.mjs, windowed: true}
+  - {id: jobspy, label: "Naukri and Indeed (LinkedIn and Glassdoor run in the slow lane)", file: scan-jobspy.mjs, windowed: true}
+  - {id: portals, label: career pages and job boards in portals.yml, file: scan.mjs, windowed: true, bare_json: true}
+  - {id: ats, label: full ATS sweep, file: scan-ats-full.mjs, bare_json: true}
+  - {id: slow, label: "LinkedIn and Glassdoor, one small batch (the slow lane)", file: scan-jobspy.mjs, standalone: true, cli: "--slow", state_id: jobspy-slow}

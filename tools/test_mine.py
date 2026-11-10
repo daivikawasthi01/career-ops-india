@@ -196,5 +196,24 @@ class SlowLane(unittest.TestCase):
             self.assertEqual(len(runs), 2)
 
 
+class StepRegistry(unittest.TestCase):
+    REG = [{"id": "a", "file": "a.mjs", "windowed": True}, {"id": "b", "file": "b.mjs", "bare_json": True},
+           {"id": "slow", "file": "s.mjs", "standalone": True, "cli": "--slow", "state_id": "s-slow"}]
+
+    def test_default_run_excludes_standalone_and_windows_only_windowed(self):
+        self.assertEqual(mine.default_step_ids(self.REG), ["a", "b", "slow"][:2])
+        self.assertEqual(mine.windowed_ids(self.REG), ["a"])
+
+    def test_every_registered_step_has_an_argument_builder(self):
+        self.assertEqual({e["id"] for e in mine.step_registry()} - set(mine.STEP_ARGS), set())
+
+    def test_standalone_step_records_under_its_state_id_and_carries_its_flag(self):
+        import argparse
+        a = argparse.Namespace(days=None, dry_run=True)
+        mine.STEP_ARGS["slow"] = lambda ns, w: []
+        step = mine.make_step(self.REG[2], a)
+        self.assertEqual((step["id"], step["args"]), ("s-slow", ["--slow", "--dry-run"]))
+
+
 if __name__ == "__main__":
     unittest.main()

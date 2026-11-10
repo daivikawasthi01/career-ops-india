@@ -134,20 +134,44 @@ def receipt_coverage(receipt):
     return None if scanned <= 0 else max(0.0, min(1.0, 1 - unreachable / scanned))
 
 
-def build_steps(args, windows=None):
+# Argument builders for the registered steps (config/pipeline.yml `steps:`): id -> f(args, window_days) -> scanner arguments.
+STEP_ARGS = {
+    "freehire": lambda a, w: ["--days", str(w), "--max-pages", str(a.freehire_pages)],
+    "internshala": lambda a, w: ["--days", str(w + 1), "--max-pages", str(a.internshala_pages)],
+    "jobspy": lambda a, w: ["--days", str(w), "--sites", a.sites],
+    "portals": lambda a, w: ["--since", str(w)],
+    "ats": lambda a, w: ["--since", str(a.ats_days), "--ats", a.ats_sources, *(["--limit", str(a.ats_limit)] if a.ats_limit else [])],
+    "slow": lambda a, w: [],
+}
+
+
+def step_registry():
+    return pipeline_cfg.section("steps", [])
+
+
+def windowed_ids(registry=None):
+    return [e["id"] for e in (registry if registry is not None else step_registry()) if e.get("windowed")]
+
+
+def default_step_ids(registry=None):
+    return [e["id"] for e in (registry if registry is not None else step_registry()) if not e.get("standalone")]
+
+
+def make_step(entry, args, windows=None):
+    """One scanner invocation from a registry entry. The step's id is its state_id, so a standalone step records under its own key."""
+    window = (windows or {}).get(entry["id"], args.days or 3)
     flags = ["--dry-run"] if args.dry_run else []
-    w = {k: (windows or {}).get(k, args.days or 3) for k in ("freehire", "internshala", "jobspy", "portals")}
-    steps = [
-        {"id": "freehire", "file": "scan-freehire.mjs", "args": ["--days", str(w["freehire"]), "--max-pages", str(args.freehire_pages), *flags]},
-        {"id": "internshala", "file": "scan-internshala.mjs", "args": ["--days", str(w["internshala"] + 1), "--max-pages", str(args.internshala_pages), *flags]},
-        {"id": "jobspy", "file": "scan-jobspy.mjs", "args": ["--days", str(w["jobspy"]), "--sites", args.sites, *flags]},
-        # scan.mjs and scan-ats-full.mjs take a bare --json (receipt on stdout, no file path)
-        {"id": "portals", "file": "scan.mjs", "bare_json": True, "args": ["--since", str(w["portals"]), *flags]},
-        {"id": "ats", "file": "scan-ats-full.mjs", "bare_json": True,
-         "args": ["--since", str(args.ats_days), "--ats", args.ats_sources, *(["--limit", str(args.ats_limit)] if args.ats_limit else []), *flags]},
-    ]
-    wanted = [s.strip() for s in args.steps.split(",")]
-    return [s for s in steps if s["id"] in wanted]
+    step = {"id": entry.get("state_id", entry["id"]), "file": entry["file"],
+            "args": [*([entry["cli"]] if entry.get("cli") else []), *STEP_ARGS[entry["id"]](args, window), *flags]}
+    if entry.get("bare_json"):
+        step["bare_json"] = True  # scan.mjs and scan-ats-full.mjs take a bare --json (receipt on stdout, no file path)
+    return step
+
+
+def build_steps(args, windows=None, registry=None):
+    registry = registry if registry is not None else step_registry()
+    wanted = [x.strip() for x in args.steps.split(",")]
+    return [make_step(e, args, windows) for e in registry if not e.get("standalone") and e["id"] in wanted]
 
 
 def norm_url(url):
@@ -467,7 +491,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--days", type=int, default=None, help="override the scan window; default is since each step's last success plus a day of overlap (config window:)")
     ap.add_argument("--sites", default="naukri,indeed")  # linkedin (429) and glassdoor (blocked) need a proxy: pass --sites to add them
-    ap.add_argument("--steps", default="freehire,internshala,jobspy,portals,ats", help="comma list of steps to run")
+    ap.add_argument("--steps", default=",".join(default_step_ids()), help="comma list of steps to run")
     ap.add_argument("--ats-sources", default="greenhouse,lever,ashby", help="ATS directories for the reverse sweep")
     ap.add_argument("--ats-limit", type=int, default=0, help="max companies per ATS (0 = all)")
     ap.add_argument("--ats-days", type=int, default=14, help="posting window for the ats step (it runs weekly, so it needs a wider window than --days)")
@@ -492,14 +516,14 @@ def main():
     per_step, runs, failures = {}, [], []
     state = load_state()
     explicit = steps_given(sys.argv[1:])
-    windows = {sid: health.window_days((_entry(state, sid)[0]), args.days, started) for sid in ("freehire", "internshala", "jobspy", "portals")}
+    windows = {sid: health.window_days((_entry(state, sid)[0]), args.days, started) for sid in windowed_ids()}
     args.sites, site_notes = select_sites(args.sites, state, explicit, started)
     steps = [x for x in build_steps(args, windows) if not (x["id"] == "jobspy" and not args.sites)]
     steps, notes = select_steps(steps, state, explicit, args.ats_every)
     feeder_pick, feeder_notes = feeders.select_feeders(feeders.feeder_list(), state, [x.strip() for x in args.steps.split(",")] if explicit else [],
                                                        args.dry_run, step_due, args.no_feeders)
     if args.slow:  # only the slow lane's batch, no feeders
-        steps = [{"id": "jobspy-slow", "file": "scan-jobspy.mjs", "args": ["--slow", *(["--dry-run"] if args.dry_run else [])]}]
+        steps = [make_step(e, args) for e in step_registry() if e.get("standalone") and e.get("cli") == "--slow"]
         feeder_pick, feeder_notes = [], []
     for note in notes + site_notes + feeder_notes:
         print(note)

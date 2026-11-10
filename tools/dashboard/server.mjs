@@ -16,6 +16,7 @@ import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, openSync, c
 import { dirname, join, resolve, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isMainModule } from '../../lib/is-main-module.mjs';
+import { loadYaml } from '../../lib/yaml-document.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..');
@@ -28,8 +29,10 @@ const STATE_FILE = join(REPO, 'data', 'cache', 'mine-state.json');
 const RUN_DIR = join(REPO, 'data', 'cache', 'dashboard-runs');
 const PYTHON = process.env.DASHBOARD_PYTHON || ['/opt/anaconda3/bin/python', 'python3'].find((p) => p === 'python3' || existsSync(p));
 
-const STEPS = ['freehire', 'internshala', 'jobspy', 'portals', 'ats'];
-const SLOW = 'slow'; // one batch of the LinkedIn/Glassdoor slow lane (mine.py --slow); runs on its own
+/** The scan steps, from the one registry mine.py also reads (config/pipeline.yml `steps:`). */
+export function stepRegistry(file = process.env.CAREER_OPS_PIPELINE_CONFIG || join(REPO, 'config', 'pipeline.yml')) {
+  try { return loadYaml(readFileSync(file, 'utf8')).steps || []; } catch { return []; }
+}
 const LISTS = [
   { id: 'telegram', file: 'telegram-companies.txt', label: 'Telegram channels', feeder: 'telegram' },
   { id: 'funding', file: 'funding-companies.txt', label: 'Funding news', feeder: 'funding' },
@@ -126,7 +129,7 @@ async function sources() {
   const portals = await yamlLoad(join(ROOT, 'portals.yml'));
   const stateOf = (id) => (state[id] ? { at: state[id].at, coverage: state[id].coverage } : null);
   const feeders = feederList().map((f) => ({ kind: 'feeder', id: f.id, detail: `every ${f.every} days`, last: stateOf(f.id), runnable: true }));
-  const steps = [...STEPS, SLOW].map((id) => ({ kind: 'step', id, detail: { freehire: 'freehire jobs', internshala: 'Internshala', jobspy: 'Naukri, Indeed, LinkedIn, Glassdoor', portals: 'career pages and job boards in portals.yml', ats: 'full ATS sweep', slow: 'LinkedIn and Glassdoor, one small batch (the slow lane)' }[id], last: stateOf(id === SLOW ? 'jobspy-slow' : id), runnable: true }));
+  const steps = stepRegistry().map((e) => ({ kind: 'step', id: e.id, detail: e.label, standalone: !!e.standalone, last: stateOf(e.state_id || e.id), runnable: true }));
   const boards = (portals.job_boards || []).map((b) => ({ kind: 'board', id: b.name, detail: b.provider || (b.api ? 'api' : 'board'), enabled: b.enabled !== false, runnable: false }));
   return { feeders, steps, boards, stateFile: mtime(STATE_FILE) };
 }
@@ -186,21 +189,24 @@ async function runs() {
 // ---- background runs ----
 const started = new Map();
 export function runnable(id) {
-  return STEPS.includes(id) || id === SLOW || feederList().some((f) => f.id === id);
+  return stepRegistry().some((e) => e.id === id) || feederList().some((f) => f.id === id);
 }
 /**
  * Start one mine.py run in the background. `steps` empty = the complete run (every step, plus the feeders that are due);
  * otherwise exactly those steps and feeders. A run is a DRY run unless `dry` is the literal `false`: a real run writes
  * jobs.db, advances the schedule and sends Telegram pings. Only one run at a time, since they share jobs.db and the state file.
  */
-export function startRun({ steps = [], dry = true } = {}) {
-  const list = Array.isArray(steps) ? steps.map(String) : [];
+export function startRun({ steps = [], dry = true, unknown = [] } = {}) {
+  if (unknown.length) throw httpErr(400, `unknown field: ${unknown.join(', ')}`); // never start a run from a body we did not understand
+  if (!Array.isArray(steps)) throw httpErr(400, 'steps must be a list of step or feeder ids');
+  const list = steps.map(String);
   for (const id of list) if (!runnable(id)) throw httpErr(400, `not a runnable source: ${id}`);
   if ([...started.values()].some((r) => r.running)) throw httpErr(409, 'a mine.py run is already in progress');
-  if (list.includes(SLOW) && list.length > 1) throw httpErr(400, 'the slow lane runs on its own: pick it without other steps');
+  const alone = stepRegistry().find((e) => e.standalone && list.includes(e.id));
+  if (alone && list.length > 1) throw httpErr(400, `${alone.id} runs on its own: pick it without other steps`);
   const isDry = dry !== false;
   const args = ['tools/mine.py', ...(isDry ? ['--dry-run'] : []),
-    ...(list[0] === SLOW ? ['--slow'] : list.length ? ['--steps', [...new Set(list)].join(',')] : [])];
+    ...(alone ? [alone.cli] : list.length ? ['--steps', [...new Set(list)].join(',')] : [])];
   mkdirSync(RUN_DIR, { recursive: true });
   const target = `${isDry ? 'dry run' : 'real run'}: ${list.length ? list.join(', ') : 'everything'}`;
   const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${isDry ? 'dry' : 'real'}`;
@@ -251,7 +257,7 @@ async function route(req, res) {
   if (p === '/api/jobs' && req.method === 'GET') return send(await jobs(url.searchParams));
   if (p === '/api/jobs/status' && req.method === 'POST') { const b = await body(req); return send(await setJobStatus(b.canonical_url, b.status)); }
   if (p === '/api/runs') return send(await runs());
-  if (p === '/api/run' && req.method === 'POST') { const b = await body(req); return send(startRun({ steps: b.steps ?? (b.id ? [b.id] : []), dry: b.dry })); }
+  if (p === '/api/run' && req.method === 'POST') { const b = await body(req); return send(startRun({ steps: b.steps ?? [], dry: b.dry, unknown: Object.keys(b).filter((k) => !['steps', 'dry'].includes(k)) })); }
   if (p.startsWith('/api/run/')) return send(runLog(decodeURIComponent(p.slice(9))));
   if (p.startsWith('/api/')) return send({ error: 'not found' }, 404);
   const file = p === '/' ? 'index.html' : p.slice(1);

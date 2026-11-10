@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseTsv, namesOf, hostOk, createDashboard, runnable, startRun } from '../tools/dashboard/server.mjs';
+import { parseTsv, namesOf, hostOk, createDashboard, runnable, startRun, stepRegistry } from '../tools/dashboard/server.mjs';
 
 test('parseTsv and namesOf read the pipeline files', () => {
   assert.deepEqual(parseTsv('a\tb\n1\t2\n3\n'), [{ a: '1', b: '2' }, { a: '3', b: '' }]);
@@ -43,4 +43,11 @@ test('the slow lane is a runnable source that must run alone', () => {
   assert.equal(runnable('slow'), true);
   assert.throws(() => startRun({ steps: ['slow', 'jobspy'] }), /on its own/);
   assert.throws(() => startRun({ steps: ['nonsense'] }), /not a runnable source/);
+});
+
+test('the dashboard reads its steps from the registry mine.py uses', () => {
+  const ids = stepRegistry().map((e) => e.id);
+  assert.deepEqual(ids, ['freehire', 'internshala', 'jobspy', 'portals', 'ats', 'slow']);
+  for (const id of ids) assert.equal(runnable(id), true);
+  assert.equal(stepRegistry('/nonexistent/pipeline.yml').length, 0); // a missing file shows no steps, it does not crash
 });

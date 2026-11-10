@@ -72,7 +72,6 @@ function go(name, params = {}) {
 tabsEl.append(...TABS.map(([id, label]) => h('a', { href: `#/${id}`, 'data-tab': id, text: label })));
 
 // ---- background runs: one launcher for every mine.py run, one log panel ----
-const STEP_IDS = ['freehire', 'internshala', 'jobspy', 'portals', 'ats', 'slow'];
 let drawer = null; let poll = null; let launcher = null;
 function closeDrawer() { clearInterval(poll); drawer?.remove(); drawer = null; }
 function closeLauncher() { launcher?.remove(); launcher = null; }
@@ -103,8 +102,8 @@ function openDrawer(runId, label, after) {
 /** The one place a run starts. `pre` preselects steps (from a row's Run button); empty means the complete run. */
 async function openLauncher(pre = []) {
   closeLauncher();
-  let feeders = [];
-  try { feeders = (await api('sources')).feeders.map((f) => f.id); } catch { /* the steps still work */ }
+  let feeders = [], stepIds = [];
+  try { const src = await api('sources'); feeders = src.feeders.map((f) => f.id); stepIds = src.steps.map((x) => x.id); } catch { /* the page still loads; the picker is empty */ }
   const state = { dry: true, all: pre.length === 0, picked: new Set(pre), armed: false };
   const body = h('div', { class: 'panel-b launch-b' });
   launcher = h('section', { class: 'panel launcher', role: 'dialog', 'aria-label': 'Run mine.py' },
@@ -122,10 +121,10 @@ async function openLauncher(pre = []) {
     const box = (id, label, disabled = false) => h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: state.picked.has(id) && !disabled, disabled, onchange: (e) => { e.target.checked ? state.picked.add(id) : state.picked.delete(id); } }), h('span', { text: label }));
     const everything = h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: state.all, onchange: (e) => { state.all = e.target.checked; draw(); } }), h('span', { class: 'ink', text: 'Everything (the complete run)' }));
     const pick = state.all ? null : h('div', { class: 'picks' },
-      h('div', {}, h('div', { class: 'small', text: 'Scan steps' }), STEP_IDS.map((id) => box(id, id))),
+      h('div', {}, h('div', { class: 'small', text: 'Scan steps' }), stepIds.map((id) => box(id, id))),
       h('div', {}, h('div', { class: 'small', text: state.dry ? 'Feeders (real runs only)' : 'Feeders' }), feeders.map((id) => box(id, id, state.dry))));
     const go = h('button', { class: 'btn primary', type: 'button', text: state.dry ? 'Start dry run' : 'Start real run', onclick: async (e) => {
-      const steps = state.all ? [] : [...state.picked].filter((id) => STEP_IDS.includes(id) || (!state.dry && feeders.includes(id)));
+      const steps = state.all ? [] : [...state.picked].filter((id) => stepIds.includes(id) || (!state.dry && feeders.includes(id)));
       if (!state.all && !steps.length) { toast('Pick at least one step'); return; }
       if (!state.dry && !state.armed) { state.armed = true; e.target.textContent = 'Confirm real run'; return; }
       try {
