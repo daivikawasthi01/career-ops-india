@@ -40,11 +40,14 @@
   ],
 
   "generic": {
-    "_doc": "The content script is loaded on every https page but stays inert unless the page is an application: a listed site, or a URL that reads like one (and then 3 or more form fields). never_hosts are never touched.",
+    "_doc": "The content script is loaded on every https page but stays inert unless the page is an application: a listed site, a URL that reads like one, or (whatever the URL) a page with min_fields readable fields of which min_cue_fields ask application questions (field_cues). never_hosts are never touched.",
     "enabled": true,
     "url_hints": "apply|application|candidate|careers?|jobs?|requisition|recruit|onboard|signup|register|profile|workday|talent",
     "never_hosts": ["google.com", "youtube.com", "facebook.com", "instagram.com", "x.com", "twitter.com", "web.whatsapp.com", "github.com", "paypal.com", "amazon.com", "amazon.in", "flipkart.com", "stackoverflow.com"],
-    "poll_minutes": 15
+    "poll_minutes": 15,
+    "min_fields": 3,
+    "min_cue_fields": 2,
+    "field_cues": "resume|\\bcv\\b|curriculum|job title|company name|employer|work experience|employment|education|university|college|institut|degree|cgpa|\\bgpa\\b|graduation|notice period|\\bctc\\b|expected (salary|pay)|linkedin|github|portfolio|cover letter|authori[sz]ed to work|sponsorship|years of experience|role description|skills|how did you hear|referr|nationality|veteran|disability|gender|date available|start date"
   },
 
   "page_cues": [

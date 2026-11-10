@@ -210,7 +210,19 @@
     const listed = [...rules.ats_sites.map((x) => x.split('/')[0]), ...Object.keys(rules.guarded_sites || {})].some((site) => hostMatches(host, site));
     if (listed) return true;
     if (!g.enabled || (g.never_hosts || []).some((site) => hostMatches(host, site))) return false;
-    return new RegExp(g.url_hints, 'i').test(location.pathname + location.hash); // the path only: a query like ?q=jobs must not count
+    if (new RegExp(g.url_hints, 'i').test(location.pathname + location.hash)) return true; // the path only: a query like ?q=jobs must not count
+    return looksLikeApplication(g, rules);
+  }
+
+  // Whatever the address or the buttons say: a page is an application when several fields are readable and enough of them ask
+  // application questions (resume, job title, education, notice period, ...). Search boxes and logins never reach the count.
+  function looksLikeApplication(g, rules) {
+    if (!g.field_cues || document.querySelectorAll('input,select,textarea').length < (g.min_fields || 3)) return false;
+    const never = compile(rules.never_read);
+    const fields = AF.collect((f) => f.type === 'password' || never.test(text(f)));
+    if (fields.length < (g.min_fields || 3)) return false;
+    const cue = new RegExp(g.field_cues, 'i');
+    return fields.filter((f) => cue.test(`${f.label} ${f.name}`)).length >= (g.min_cue_fields || 2);
   }
 
   async function start(hello) {
