@@ -56,15 +56,15 @@ def cmd_doctor(args):
                       ("pdftoppm", "brew install poppler"), ("pdftohtml", "brew install poppler")):
         row(tool, bool(shutil.which(tool)), fix)
     st = llm.status()
-    row("hosted model keys (Groq or Gemini in career-ops/.env)", st["cloud"]["keys"] > 0, "add GROQ_API_KEY_8 / GEMINI_API_KEY_8 to career-ops/.env")
-    row("claude -p (the fallback)", st["claude"], "install Claude Code and log in")
+    row("a free AI key (Groq or Gemini)", st["cloud"]["keys"] > 0, "open the Apply panel, You tab, and paste a free key")
+    row("claude -p (optional extra fallback)", True, "")
     for r in resume.status():
         row(f"{r['label']} pdf ({r['file']})", r["exists"] or r["uses_default"], f"put the PDF in output/resumes/ or add it in the panel" if not r["exists"] else "")
     for s_ in cv_store.slots():
         if s_["kind"] == "default":
-            row("default CV tex", s_["tex"], "open the CV studio and use Import PDF")
+            row("default CV tex", s_["tex"], "optional: open the CV studio and use Import PDF")
             row("default CV tex confirmed by you", bool(s_["confirmed"]), "open the studio, check the preview, press Publish")
-    row("facts.yml", (_ROOT / "facts.yml").exists(), "create facts.yml (see README)")
+    row("your details (facts.yml)", (_ROOT / "facts.yml").exists(), "open the Apply panel, You tab, step 2")
     try:
         urllib.request.urlopen(f"http://127.0.0.1:{_cfg()['server']['port']}/status", timeout=2)
     except urllib.error.HTTPError:
@@ -73,7 +73,7 @@ def cmd_doctor(args):
         up = False
     else:
         up = True
-    row("server listening", up, "orchestrator.py serve  (or: install-service --load)")
+    row("server listening", up, "./apply start")
     for name, ok, fix in rows:
         print(f"{'OK     ' if ok else 'MISSING'}  {name}" + (f"   -> {fix}" if not ok and fix else ""))
     print(f"\n{sum(1 for _, ok, _ in rows if ok)}/{len(rows)} ready")

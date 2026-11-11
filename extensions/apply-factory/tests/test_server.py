@@ -67,6 +67,8 @@ class ServerTest(unittest.TestCase):
         self.assertEqual((code, out["results"][0]["value"]), (200, "Daivik"))
         code, out = self.call("/suggest", {"url": "https://www.linkedin.com/jobs/view/1", "fields": fields}, token)
         self.assertEqual((out["mode"], out["results"]), ("watch", []))
+        code, out = self.call("/suggest", {"url": "https://www.glassdoor.com/job/1", "fields": fields}, token)
+        self.assertEqual((out["mode"], out["results"]), ("off", []))
 
     def test_a_lookup_in_flight_is_joined_not_repeated_and_a_failure_is_remembered(self):
         import threading

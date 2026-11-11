@@ -3,6 +3,13 @@ Local API for the browser extension. Binds to 127.0.0.1 only.
 
   GET  /rules      rules/rules.json, so the extension and the server never disagree
   GET  /status     model availability and knowledge-base counts
+  GET  /readiness  what is still missing before forms fill (details, CV file, CV text, model)
+  POST /facts      {} -> the editable details; {values} -> save them into facts.yml
+  POST /answers/list | /answers/update {intent_key, answer} | /answers/delete {intent_key}   the answers learned so far
+  POST /event {kind, n} and /stats   local usage totals for the You tab
+  POST /setup/state | /setup/key {provider, key} | /setup/cv {base64} | /setup/cv_text {text?} | /setup/search {values?}   the first-run wizard
+  POST /scan/start | /scan/status   run the job scanners in the background
+  POST /style {emails?, cover_tex?}   the person's own sample emails and LaTeX cover letter layout (data/style/); with no fields, returns them
   POST /pair       first call from the extension returns the shared token and pins the extension id
   POST /suggest    {url, title, fields[]}            -> known answers, no model call
   POST /draft      {field, ctx}                      -> one model call for one field
@@ -51,7 +58,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from learner import learn as learner
-from lib import (checks, company as companies, config, cover, cv_import, cv_store, db, gmail, jobs, knockout, llm, mailcheck, options, outreach, resume, rules,
+from lib import (account, onboard, scan, style, checks, company as companies, config, cover, cv_import, cv_store, db, gmail, jobs, knockout, llm, mailcheck, options, outreach, resume, rules,
                  score as scorer, suggest, tailor, tex, tracker, years)
 from lib import blacklist, jobs_prune
 
@@ -129,7 +136,7 @@ def _b64(data: bytes) -> str:
 
 def _remove_too_senior(db_path: str) -> int:
     """After the years check: take the jobs that clearly ask for more years than you have out of jobs.db (jobs.auto_remove)."""
-    if not (config.load().get("jobs") or {}).get("auto_remove", True):
+    if not (config.load().get("jobs") or {}).get("auto_remove", False):
         return 0
     with db.tx(db_path) as conn:
         return jobs_prune.remove(conn)["removed"]
@@ -207,7 +214,11 @@ def make_handler(state: State):
                 return self._send(503, {"error": "model unavailable", "detail": str(e)[:200]})
             except (gmail.GmailError, blacklist.BlacklistError) as e:
                 return self._send(409, {"error": str(e)})
-            except (ValueError, KeyError, json.JSONDecodeError) as e:
+            except ValueError as e:
+                if path.startswith("/setup/") or path in ("/facts", "/answers/update"):   # these messages are written for the person, so no prefix
+                    return self._send(400, {"error": str(e)[:300]})
+                return self._send(400, {"error": f"bad request: {e}"[:200]})
+            except (KeyError, json.JSONDecodeError) as e:
                 return self._send(400, {"error": f"bad request: {e}"[:200]})
 
         def _gmail_callback(self):
@@ -228,10 +239,32 @@ def make_handler(state: State):
                 return self._send(200, rules.load())
             if method == "GET" and path == "/status":
                 return self._send(200, {"llm": llm.status(), "counts": _counts(state.db_path), "last_capture": state.last_capture,
-                                        "queued": state.jobs.qsize(), "resumes": resume.status()})
+                                        "queued": state.jobs.qsize(), "resumes": resume.status(), "setup": account.readiness()})
+            if method == "GET" and path == "/readiness":
+                return self._send(200, account.readiness())
             if method != "POST":
                 return self._send(404, {"error": "not found"})
             body = self._body()
+            if path.startswith("/setup/"):
+                return self._send(200, self._setup(path, body))
+            if path.startswith("/scan/"):
+                return self._send(200, scan.start() if path == "/scan/start" else scan.status())
+            if path == "/style":
+                return self._send(200, style.set_(body.get("emails"), body.get("cover_tex")) if ("emails" in body or "cover_tex" in body) else style.get())
+            if path == "/facts":
+                return self._send(200, account.set_facts(dict(body["values"])) if body.get("values") else account.get_facts())
+            if path.startswith("/answers/") or path in ("/stats", "/event"):
+                with db.tx(state.db_path) as conn:
+                    if path == "/answers/list":
+                        return self._send(200, account.list_answers(conn, str(body.get("q", "")), int(body.get("limit") or 60), int(body.get("offset") or 0)))
+                    if path == "/answers/update":
+                        return self._send(200, account.update_answer(conn, str(body["intent_key"]), str(body["answer"])))
+                    if path == "/answers/delete":
+                        return self._send(200, account.delete_answer(conn, str(body["intent_key"])))
+                    if path == "/event":
+                        return self._send(200, account.record(conn, str(body["kind"]), int(body.get("n") or 1)))
+                    if path == "/stats":
+                        return self._send(200, account.stats(conn))
             if path == "/suggest":
                 host = (body.get("url") or "").split("/")[2] if "//" in (body.get("url") or "") else ""
                 if rules.site_mode(host) != "assist":
@@ -257,7 +290,8 @@ def make_handler(state: State):
                     return self._send(200, jobs.search(conn, q=str(body.get("q", "")), sources=list(body.get("sources") or []), days=int(body.get("days") or 0),
                                                        confirmed_only=bool(body.get("confirmed_only")), hide_flagged=body.get("hide_flagged", True) is not False,
                                                        hide_marked=body.get("hide_marked", True) is not False, sort=str(body.get("sort", "new")), fit=body.get("fit", True) is not False,
-                                                       limit=int(body.get("limit") or 40), offset=int(body.get("offset") or 0)))
+                                                       limit=int(body.get("limit") or 40), offset=int(body.get("offset") or 0),
+                                                       max_years=None if body.get("max_years") in (None, "") else float(body["max_years"])))
             if path == "/jobs/years":   # start reading the postings' text in the background (or just report progress)
                 started = False
                 if body.get("start", True):
@@ -393,7 +427,7 @@ def make_handler(state: State):
                 rp = state.reports.get(learner._url_key(body.get("url", "")), "")
                 return self._send(200, cover.draft(str(body.get("title", "")), str(body.get("company", "")), str(body.get("jd_text", "")), rp))
             if path == "/cover/pdf":
-                return self._send(200, {"base64": _b64(cover.to_pdf(str(body["text"]), str(body.get("company", "")))),
+                return self._send(200, {"base64": _b64(cover.to_pdf(str(body["text"]), str(body.get("company", "")), str(body.get("title", "")))),
                                         "name": f"Cover-Letter-{cv_store.slug(str(body.get('company', '')) or 'Application')}.pdf"})
             if path == "/pick":
                 hit = options.pick(str(body["answer"]), [str(o) for o in body["options"]][:500])
@@ -406,6 +440,23 @@ def make_handler(state: State):
             if path == "/retry":
                 return self._send(200, learner.retry_pending(state.db_path))
             return self._send(404, {"error": "not found"})
+
+        def _setup(self, path: str, body: dict) -> dict:
+            if path == "/setup/state":
+                return onboard.state()
+            if path == "/setup/key":
+                return onboard.save_key(str(body.get("provider", "")), str(body.get("key", "")))
+            if path == "/setup/key_remove":
+                return onboard.remove_key(str(body.get("provider", "")), str(body.get("name", "")))
+            if path == "/setup/suggest_roles":
+                return onboard.suggest_roles(body.get("roles"), str(body.get("level", "")), str(body.get("country", "")))
+            if path == "/setup/cv":
+                return onboard.cv_upload(str(body["base64"]))
+            if path == "/setup/cv_text":
+                return onboard.cv_set(str(body["text"])) if "text" in body else onboard.cv_get()
+            if path == "/setup/search":
+                return onboard.search_set(body["values"]) if body.get("values") else onboard.search_get()
+            raise KeyError(path)
 
         def _cv(self, path: str, body: dict) -> dict:
             """CV studio calls. Each returns plain data; heavy ones (import, tailor) can take a minute with the local model."""

@@ -54,7 +54,7 @@ export function BlacklistPanel({ onChanged, version }: { onChanged: () => void; 
               <>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium" title={e.company}>{e.company}{e.scope === "domain" ? " (website)" : ""}</p>
-                  <p className="truncate text-xs text-muted-foreground" title={e.reason}>{[e.since, e.reason].filter(Boolean).join(" · ")}</p>
+                  <p className="truncate text-xs text-muted-foreground" title={e.reason}>{[e.since, e.reason].filter(Boolean).join(", ")}</p>
                 </div>
                 <Button size="icon-xs" variant="ghost" aria-label={`Edit ${e.company}`} onClick={() => { setEditing(e.line); setName(e.company); setReason(e.reason) }}><Pencil /></Button>
                 <Button size="icon-xs" variant="ghost" aria-label={`Remove ${e.company} from the blacklist`} disabled={busy} onClick={() => run("/blacklist/remove", { line: e.line, company: e.company }, `${e.company} is off the list.`)}><Trash2 /></Button>

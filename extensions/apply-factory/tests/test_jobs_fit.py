@@ -141,10 +141,22 @@ class YearsTest(YearsBase):
         self.assertFalse(years.needs_check({"state": "nohost", "checked_at": "2000-01-01 00:00:00"}))
 
 
+def _portals_are_for_india() -> bool:
+    import pathlib
+    import yaml
+    p = pathlib.Path(__file__).resolve().parents[3] / "portals.yml"
+    try:
+        lf = (yaml.safe_load(p.read_text()) or {}).get("location_filter") or {}
+    except (OSError, yaml.YAMLError):
+        return False
+    return "india" in str(lf).lower()
+
+
 class LocationHelperTest(unittest.TestCase):
     """The real tools/foreign-locations.mjs: foreign places go, Indian and unrecognised places stay, multi-place strings are judged place by place."""
 
     @unittest.skipUnless(__import__("shutil").which("node"), "node is not installed")
+    @unittest.skipUnless(_portals_are_for_india(), "this test needs a portals.yml whose location_filter is for India; yours is set up for another country")
     def test_the_helper_removes_only_clearly_foreign_locations(self):
         locs = ["Remote - US", "Austin, TX", "Ann Arbor, MI, United States", "London, UK", "Canada - Remote AB", "Remote job, Switzerland", "Singapore",
                 "Bangalore", "Thane", "Navi Mumbai", "Gandhinagar", "Hyderābād", "TN", "KA", "", "Remote", "Anywhere in the World", "Nashville, TN",

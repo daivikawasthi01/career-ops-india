@@ -105,7 +105,7 @@ def set_mark(kb, job_id: str, mark: str) -> None:
 
 
 def search(kb, *, q: str = "", sources: list[str] | None = None, days: int = 0, confirmed_only: bool = False, hide_flagged: bool = True,
-           hide_marked: bool = True, sort: str = "new", limit: int = 40, offset: int = 0, fit: bool = True) -> dict:
+           hide_marked: bool = True, sort: str = "new", limit: int = 40, offset: int = 0, fit: bool = True, max_years: float | None = None) -> dict:
     """One page of jobs plus the counts the filter chips show. The source counts ignore the source filter itself, so choosing one
     source still shows how many the others would add."""
     limit = max(1, min(int(limit), _PAGE_MAX))
@@ -122,7 +122,11 @@ def search(kb, *, q: str = "", sources: list[str] | None = None, days: int = 0, 
     if hide_flagged:
         where.append("(flags IS NULL OR flags = '')")
     order = {"company": "lower(company) ASC, first_seen DESC", "new": "first_seen DESC, last_seen DESC, lower(company) ASC"}.get(sort, "first_seen DESC")
-    conn = _open()
+    try:
+        conn = _open()
+    except FileNotFoundError:   # nothing scanned yet: an empty list, and the panel offers to run the first search
+        return {"total": 0, "all": 0, "latest": None, "offset": offset, "rows": [], "facets": {"sources": [], "marked": 0},
+                "fit": {"on": fit, "limit": years.limit(), "hidden": {"senior": 0, "years": 0, "location": 0, "blacklist": 0}, "unchecked": 0, "check": years.progress()}}
     try:
         rows = conn.execute(f"SELECT * FROM jobs WHERE {' AND '.join(where)} ORDER BY {order}", args).fetchall()
         latest = conn.execute("SELECT max(last_seen) FROM jobs").fetchone()[0]
@@ -153,6 +157,10 @@ def search(kb, *, q: str = "", sources: list[str] | None = None, days: int = 0, 
                 kept.append(j)
                 unchecked += years.needs_check(yrs.get(j["id"]))
         out = kept
+    if max_years is not None:   # the experience filter: 0 means no experience needed
+        before = len(out)
+        out = [j for j in out if years.fits(yrs.get(j["id"]), max_years, j["entry"])]
+        hidden["experience"] = before - len(out)
     if sort == "fit":   # entry-level titles and jobs whose text states a small bar first, then newest
         out.sort(key=lambda j: (j["entry"], j["first_seen"] or ""), reverse=True)
     counts: dict[str, int] = {}

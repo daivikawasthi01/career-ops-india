@@ -25,6 +25,9 @@ _PASTE_CV = re.compile(r"paste.*(resume|cv)|(resume|cv)\s*(text|content)|copy.*(
 _COVER = re.compile(r"cover letter|covering letter|motivation letter", re.I)
 
 
+_GENERIC_UPLOAD = re.compile(r"^\W*(upload|attach|browse|choose file|select file|drop|add file|file|document|attachment)s?\b|^\W*$|upload|attach", re.I)
+_OTHER_DOC = re.compile(r"photo|picture|image|avatar|logo|id\b|passport|aadhaar|pan\b|certificate|transcript|marksheet|portfolio|sample|reference|letter of|recommendation|salary|payslip|video|signature", re.I)
+
 def _result(field: dict, status: str, **kw) -> dict:
     return {"id": field["id"], "label": field.get("label", ""), "status": status, **kw}
 
@@ -114,6 +117,8 @@ def suggest(conn, fields: list[dict]) -> list[dict]:
                 out.append(_result(field, "cover", reason="Draft a cover letter, check it, attach it as a PDF."))
             elif re.search(r"resume|\bcv\b|curriculum", rules.field_text(field), re.I):
                 out.append(_result(field, "resume", source="fact", value="resume"))
+            elif _GENERIC_UPLOAD.search(rules.field_text(field)) and not _OTHER_DOC.search(rules.field_text(field)):
+                out.append(_result(field, "resume", source="fact", value="resume"))   # a bare "Upload" / "Attach" / "Browse" button on an application
             else:
                 out.append(_result(field, "skip", reason="file"))
             continue

@@ -93,6 +93,16 @@ def too_many_years(rec: dict | None) -> bool:
     return bool(rec and rec["state"] == "read" and rec["status"] == "stated" and rec["confident"] and rec["min_years"] is not None and rec["min_years"] > limit())
 
 
+def fits(rec: dict | None, most: float, entry: bool = False) -> bool:
+    """For the experience filter: does this job ask for at most `most` years? A stated minimum decides. A text that was read and states
+    no bar passes. A job not read yet passes, except for 0 years, where only an entry-level title does (nothing says it needs none)."""
+    if rec and rec["state"] == "read":
+        if rec["status"] == "stated" and rec["min_years"] is not None:
+            return rec["min_years"] <= most
+        return True
+    return entry if most <= 0 else True
+
+
 def label(rec: dict | None) -> str:
     """'5+', '3-5' ... for a job whose text states a bar; empty otherwise."""
     return rec["display"] if rec and rec["state"] == "read" and rec["status"] == "stated" else ""

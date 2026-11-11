@@ -16,7 +16,7 @@
     });
   AF.bg = bg;
 
-  const state = { mode: 'off', auto: true, warnings: [], items: new Map(), rules: null, neverRead: () => false, submitRe: null, signature: '', busy: false, again: false, drafts: new Map(), diag: { v: chrome.runtime.getManifest().version } };
+  const state = { mode: 'off', auto: true, warnings: [], items: new Map(), rules: null, neverRead: () => false, submitRe: null, signature: '', busy: false, again: false, drafts: new Map(), undo: [], counted: false, diag: { v: chrome.runtime.getManifest().version } };
 
   const compile = (list) => new RegExp(list.map((p) => `(?:${p})`).join('|'), 'i');
   const text = (f) => [f.label, f.name, f.placeholder].filter(Boolean).join(' | ');
@@ -25,7 +25,7 @@
     const items = [...state.items.values()].map(({ id, label, type, status, value, source, reason, kind, hint, confidence, filled, options, note, required }) => ({ id, label, type, status, value, source, reason, kind, hint, confidence, filled, options, note }));
     const missing = [...state.items.values()].filter((i) => i.required && AF.isEmpty(i.id)).map((i) => ({ id: i.id, label: i.label }));
     syncChips();
-    bg('frame-report', { url: location.href, host: location.hostname, mode: state.mode, items, missing, warnings: state.warnings, diag: state.diag });
+    bg('frame-report', { url: location.href, host: location.hostname, mode: state.mode, items, missing, warnings: state.warnings, undo: state.undo.length, diag: state.diag });
   }
 
   async function fillItem(item, value = item.value, source = item.source || 'fact') {
@@ -38,20 +38,43 @@
       else { item.value = r.name; item.note = r.label; item.reason = ''; }
       return out.ok;
     }
+    const before = AF.snap(item.id);
     const out = await AF.fill(item.id, value, source, bg);
     item.filled = out.ok;
-    if (out.ok) { item.value = value; item.source = source; } else item.reason = out.reason;
+    if (out.ok) {
+      item.value = value; item.source = source;
+      if (before) state.undo.push({ id: item.id, before });
+      if (source === 'draft') bg('event', { kind: 'draft', n: 1 });
+    } else item.reason = out.reason;
     return out.ok;
   }
 
-  async function fillKnown() {
+  async function fillKnown(force = false) {
+    let done = 0;
     for (const item of state.items.values()) {
       if (item.filled || (item.status !== 'fill' && item.status !== 'resume')) continue;
-      try { await fillItem(item); } catch (e) { item.reason = String(e.message || e).slice(0, 100); }
+      if (item.undone && !force) continue;   // you undid this one; only the Fill button brings it back
+      item.undone = false;
+      try { if (await fillItem(item)) done++; } catch (e) { item.reason = String(e.message || e).slice(0, 100); }
       await AF.sleep(60);
+    }
+    if (done) {   // local usage totals for the panel's You tab; counts only
+      bg('event', { kind: 'fill', n: done });
+      if (!state.counted) { state.counted = true; bg('event', { kind: 'form', n: 1 }); }
     }
     report();
     watchForWipe();
+  }
+
+  // Put back what the last fills replaced. Anything that cannot be restored (combo boxes, files) is left as it is.
+  function undoFill() {
+    const stack = state.undo.splice(0);
+    for (const { id, before } of stack.reverse()) {
+      const it = state.items.get(id);
+      if (AF.restore(id, before) && it) { it.filled = false; it.undone = true; }
+    }
+    wipeChecks = 99;   // do not refill what was just undone
+    report();
   }
 
   // Some pages clear the form after it loads (a form plugin's own reset or refill, a framework redraw), which would leave the panel saying
@@ -83,7 +106,7 @@
       state.diag = { v: state.diag.v, inputs: document.querySelectorAll('input,select,textarea').length, readable: fields.length, url: location.pathname + location.search.slice(0, 60) };
       const nonPassword = fields.length;
       const hasResume = fields.some((f) => f.type === 'file' && /resume|cv/i.test(f.label));
-      if (nonPassword < 3 && !hasResume) { state.items.clear(); report(); return; }
+      if (nonPassword < 3 && !hasResume) { state.items.clear(); state.signature = ''; report(); return; } // forget the signature: the same fields coming back must be read again
       const signature = fields.map((f) => f.id).join(',');
       if (!force && signature === state.signature) return;
       const previous = new Set(state.signature.split(',').filter(Boolean));
@@ -106,7 +129,7 @@
       for (const f of fields) {
         const r = res.results.find((x) => x.id === f.id) || { status: 'unknown' };
         const prev = state.items.get(f.id);
-        const item = { ...f, ...r, filled: prev?.filled && prev.value === r.value ? true : false, value: r.value ?? '' , current: f.value };
+        const item = { ...f, ...r, undone: prev?.undone, filled: prev?.filled && prev.value === r.value ? true : false, value: r.value ?? '' , current: f.value };
         const kept = state.drafts.get(f.id); // a draft that finished earlier is not thrown away when the page re-scans
         if (kept && kept.label === item.label && item.status === 'draftable') Object.assign(item, kept);
         next.set(f.id, item);
@@ -200,7 +223,7 @@
       onDismiss: () => { try { sessionStorage.setItem('af-pill-hidden', '1'); } catch { /* shown again on the next page */ } }, // this tab only, never the whole site
     });
     const settings = (await stored('settings')) || {};
-    if (settings.autoOpen === false) showPill(); else AF.dock({ onClose: showPill });
+    if (settings.autoOpen !== true) showPill(); else AF.dock({ onClose: showPill });
   }
 
   // ---- chips beside the questions ----
@@ -219,7 +242,7 @@
         else if (it.status === 'draft' && it.value) {
           // An AI suggestion is a pill that shows the answer; nothing is written until you click it. Edit opens it for changes.
           AF.chip(it.id, anchor, { text: `Use: ${preview(it.value)}`, tone: 'ready', title: String(it.value).slice(0, 400), onClick: use,
-            actions: [{ text: 'Edit', label: 'Edit the suggestion first', onClick: open }, { text: 'x', label: 'Dismiss the suggestion', onClick: () => { dismissed.add(it.id); report(); } }] });
+            actions: [{ text: 'Edit', label: 'Edit the suggestion first', onClick: open }, { text: '\u00d7', label: 'Dismiss the suggestion', onClick: () => { dismissed.add(it.id); report(); } }] });
         }
         else if (['text', 'textarea'].includes(it.type) && ['unknown', 'offline'].includes(it.status)) {
           // never silent: say why there is no suggestion, and let it be tried again
@@ -341,20 +364,25 @@
     bg('capture', { url: last.url || location.href, title: ctx.title, company: ctx.company, fields: last.fields, why, at: new Date().toISOString() });
   }
 
-  function onCapture(why) {
+  function onCapture(why, final = false) {
     if (state.mode === 'off') return;
     remember();
     flush(why);
+    if (final && state.items.size >= 3 && window === window.top) {   // the panel offers to mark it applied; the click is never blocked
+      const ctx = AF.pageContext();
+      bg('submitted', { url: location.href, title: ctx.title, company: ctx.company });
+    }
     AF.flagMissing(); report(); // empty required fields are outlined on the page and listed in the panel; the click is never blocked
   }
 
   let rememberTimer;
-  const rememberSoon = () => { clearTimeout(rememberTimer); rememberTimer = setTimeout(remember, 500); };
+  const rememberSoon = () => { clearTimeout(rememberTimer); rememberTimer = setTimeout(() => { remember(); if (state.mode !== 'off' && state.items.size) report(); }, 500); };   // the panel's empty-required list follows what you type
 
   chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
     const run = async () => {
       if (msg.type === 'rescan') { state.signature = ''; await scan({ force: true }); }
-      else if (msg.type === 'fill-known') await fillKnown();
+      else if (msg.type === 'fill-known') { wipeChecks = 0; await fillKnown(true); }
+      else if (msg.type === 'undo-fill') undoFill();
       else if (msg.type === 'fill-one') { const it = state.items.get(msg.id); if (it) { await fillItem(it, msg.value, msg.source || 'draft'); report(); } }
       else if (msg.type === 'draft') await draft(msg.id);
       else if (msg.type === 'draft-all') { for (const it of [...state.items.values()]) if (it.status === 'draftable') await draft(it.id); }
@@ -364,10 +392,10 @@
       else if (msg.type === 'focus') {
         const el = AF.handles.get(msg.id)?.els[0];
         if (el) { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); el.focus?.({ preventScroll: true }); }
-      } else if (msg.type === 'set-mode') { state.mode = msg.mode; state.auto = msg.auto ?? state.auto; state.signature = ''; await scan({ force: true }); }
+      } else if (msg.type === 'set-mode') await applyMode(msg.mode, msg.auto);
       reply({ ok: true });
     };
-    run();
+    run().catch((e) => { try { reply({ ok: false, error: String(e?.message || e).slice(0, 160) }); } catch { /* the sender is gone */ } }); // a throw must still answer
     return true;
   });
 
@@ -396,11 +424,11 @@
     return fields.filter((f) => cue.test(`${f.label} ${f.name}`)).length >= (g.min_cue_fields || 2);
   }
 
-  async function start(hello) {
-    if (state.started) return;
+  // Begins reading the page. Safe to call again: it runs once, and only when the mode is not Off. The page listeners are attached here (not at
+  // load) so a site that was Off and is turned on from the panel gets the same learning and re-scanning as one that was on from the start.
+  async function start() {
+    if (state.started || state.mode === 'off') return;
     state.started = true;
-    state.mode = hello.mode;
-    if (state.mode === 'off') return;
     AF.watchSubmit({ submitRe: state.submitRe, onCapture });
     document.addEventListener('input', (e) => { if (e.isTrusted) { rememberSoon(); setTimeout(syncChips, 150); } }, true);
     document.addEventListener('change', (e) => { if (e.isTrusted) rememberSoon(); }, true);
@@ -411,28 +439,61 @@
     window.addEventListener('hashchange', () => { remember(); flush('route'); });
     await scan();
     let timer;
-    new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(() => scan(), 900); })
+    // The extension's own chips, cards and dock change the page too; reacting to them would rescan the form after every redraw.
+    const own = (n) => !!(n.nodeType === 1 ? n : n.parentElement)?.closest?.('.af-card,.af-pill,.af-dock,.af-chip');
+    new MutationObserver((records) => {
+      if (records.every((r) => own(r.target) || (r.addedNodes.length + r.removedNodes.length > 0 && [...r.addedNodes, ...r.removedNodes].every(own)))) return;
+      clearTimeout(timer); timer = setTimeout(() => scan(), 900);
+    })
       .observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden', 'style', 'class', 'aria-hidden', 'open'] });
   }
 
-  // The page's own text for private-field rules and button words comes from the server's rules.json (cached by the worker).
-  async function init() {
-    const hello = await bg('hello', { host: location.hostname, url: location.href });
-    if (hello.error || !hello.rules) return;
-    state.rules = hello.rules;
-    state.auto = hello.auto;
-    const never = compile(hello.rules.never_read);
-    state.neverRead = (f) => f.type === 'password' || never.test(text(f));
-    state.submitRe = new RegExp(hello.rules.submit_text, 'i');
-    if (hello.mode === 'off') return;
+  // Mode changes from the panel. Off clears everything this script drew; turning a site on starts it if it never started.
+  async function applyMode(mode, auto) {
+    state.mode = mode;
+    state.modeChosen = true;
+    if (auto !== undefined) state.auto = auto;
+    state.signature = '';
+    if (mode === 'off') {
+      state.items.clear(); state.warnings = [];
+      AF.keepChips?.(new Set()); AF.closeSuggest?.(); AF.closeDock?.();
+      report();
+      return;
+    }
+    if (!state.started) { if (!state.rules) await init(); else await start(); return; }
+    await scan({ force: true });
+  }
 
-    if (applicable(hello.rules)) return start(hello);
-    // Not an application page yet. Look again while the page is open and visible, for a few minutes.
-    const until = Date.now() + (hello.rules.generic?.poll_minutes || 15) * 60000;
-    const poll = setInterval(() => {
-      if (Date.now() > until) return clearInterval(poll);
-      if (document.visibilityState === 'visible' && applicable(hello.rules)) { clearInterval(poll); start(hello); }
-    }, 2000);
+  // The page's own text for private-field rules and button words comes from the server's rules.json (cached by the worker).
+  // If the server is not up yet the page is not abandoned: it asks again after a growing wait, so starting the server later is enough.
+  const HELLO_WAIT = [4000, 10000, 30000, 60000, 60000, 60000];
+  async function init() {
+    if (state.initing) return;
+    state.initing = true;
+    try {
+      let hello;
+      for (let attempt = 0; ; attempt++) {
+        hello = await bg('hello', { host: location.hostname, url: location.href });
+        if (!hello.error && hello.rules) break;
+        if (attempt >= HELLO_WAIT.length) return;
+        await AF.sleep(HELLO_WAIT[attempt]);
+      }
+      state.rules = hello.rules;
+      state.auto = state.modeChosen ? state.auto : hello.auto;
+      const never = compile(hello.rules.never_read);
+      state.neverRead = (f) => f.type === 'password' || never.test(text(f));
+      state.submitRe = new RegExp(hello.rules.submit_text, 'i');
+      if (!state.modeChosen) state.mode = hello.mode;   // a mode the panel already picked while we waited stands
+      if (state.mode === 'off') return;
+
+      if (state.modeChosen || applicable(hello.rules)) return start();
+      // Not an application page yet. Look again while the page is open and visible, for a few minutes.
+      const until = Date.now() + (hello.rules.generic?.poll_minutes || 15) * 60000;
+      const poll = setInterval(() => {
+        if (Date.now() > until || state.started) return clearInterval(poll);
+        if (document.visibilityState === 'visible' && applicable(hello.rules)) { clearInterval(poll); start(); }
+      }, 2000);
+    } finally { state.initing = false; }
   }
 
   init();

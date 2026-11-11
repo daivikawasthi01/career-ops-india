@@ -292,6 +292,34 @@
     return { ok: false, reason: 'unsupported field' };
   };
 
+  // Undo support: what a box held before it was filled, and putting that back. Combo boxes and file inputs are not restorable.
+  AF.snap = (id) => {
+    const h = AF.handles.get(id);
+    const el = h?.els[0];
+    if (!el) return null;
+    if (h.kind === 'text' || h.kind === 'select') return { kind: h.kind, v: el.value };
+    if (h.kind === 'checkbox') return { kind: h.kind, c: isChecked(el) };
+    if (h.kind === 'radio' || h.kind === 'multiselect') return { kind: h.kind, cs: h.els.map(isChecked) };
+    return null;
+  };
+  AF.restore = (id, s) => {
+    const h = AF.handles.get(id);
+    const el = h?.els[0];
+    if (!el || !s) return false;
+    try {
+      if (s.kind === 'text' || s.kind === 'select') AF.setValue(el, s.v);
+      else if (s.kind === 'checkbox') { if (isChecked(el) !== s.c) click(el); }
+      else h.els.forEach((c, i) => {
+        if (isChecked(c) === s.cs[i]) return;
+        if (s.cs[i]) click(c);
+        else if (s.kind === 'multiselect') click(c);
+        else { c.checked = false; c.dispatchEvent(new Event('input', { bubbles: true })); c.dispatchEvent(new Event('change', { bubbles: true })); }
+      });
+      el.removeAttribute('data-af'); AF.filled.delete(el);
+      return true;
+    } catch { return false; }
+  };
+
   AF.attachFile = async (id, name, base64, replace = false) => {
     const h = AF.handles.get(id);
     const el = h?.els[0];
@@ -331,9 +359,17 @@
   AF.pageContext = () => {
     const meta = (p) => document.querySelector(`meta[property="${p}"],meta[name="${p}"]`)?.content || '';
     const seg = location.pathname.split('/').filter(Boolean)[0] || '';
+    // Which posting this is. The first path segment alone is the company on most job boards, so two jobs of one company shared a key and one
+    // job's text could stand in for another's. The key is the path without a trailing "apply" step (so the posting page and its form agree),
+    // plus the posting id when the address carries one as a query value (gh_jid and friends).
+    const parts = location.pathname.split('/').filter(Boolean);
+    while (parts.length > 1 && /^(apply|application|apply-now|applymanually|autofill|thanks|confirmation)$/i.test(parts[parts.length - 1])) parts.pop();
+    const q = new URLSearchParams(location.search);
+    const jobId = ['gh_jid', 'jobId', 'job_id', 'jid', 'requisitionId', 'reqId', 'currentJobId'].map((k) => q.get(k)).find(Boolean) || '';
+    const jdKey = `${location.hostname}/${parts.slice(0, 4).join('/')}${jobId ? `?${jobId}` : ''}`;
     const ats = /greenhouse|lever|ashby|workable|smartrecruiters|recruitee|jobvite|breezy|teamtailor/.test(location.hostname);
     const company = norm(meta('og:site_name')) || (ats ? seg : location.hostname.replace(/^(www|jobs|careers)\./, '').split('.')[0]);
     const main = document.querySelector('main,[role=main]') || document.body;
-    return { title: norm(document.title).slice(0, 160), heading: norm(document.querySelector('h1')?.textContent).slice(0, 160), company: company.slice(0, 80), jd_text: norm(main.innerText || '').slice(0, 3500), host: location.hostname, jd_key: `${location.hostname}/${seg}` };
+    return { title: norm(document.title).slice(0, 160), heading: norm(document.querySelector('h1')?.textContent).slice(0, 160), company: company.slice(0, 80), jd_text: norm(main.innerText || '').slice(0, 3500), host: location.hostname, jd_key: jdKey.slice(0, 200) };
   };
 })();

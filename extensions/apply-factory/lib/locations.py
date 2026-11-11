@@ -29,6 +29,9 @@ _LAST: dict = {"key": None, "out": set()}   # one search after another asks abou
 
 
 def foreign(locations: Iterable[str]) -> set[str]:
+    # The place list is Indian cities and foreign places, so it only makes sense for a search in India. Anywhere else nothing is hidden by place.
+    if config.home_region().lower() != "india":
+        return set()
     distinct = sorted({str(x or "").strip() for x in locations} - {""})
     try:
         mtime = (config.CAREEROPS / "portals.yml").stat().st_mtime   # the Indian cities come from your location_filter

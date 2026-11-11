@@ -35,6 +35,11 @@ def _cfg() -> dict:
     return config.load().get("company") or {}
 
 
+def _home() -> str:
+    """Your country, from the setup wizard. Empty means no region preference."""
+    return config.home_region()
+
+
 def _fetch_text(url: str, timeout: float = 8) -> tuple[int, str]:
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "text/html,text/plain"})
     try:
@@ -202,12 +207,13 @@ def _int(v) -> int | None:
 
 def research_overview(company: str, domain: str, location: str = "") -> dict:
     where = f" (website {domain})" if domain else ""
-    home = _cfg().get("home_region", "India")
-    pick = (f" Several companies can share a name: choose the one that hires in {location or home} ({home}), not a same-named company elsewhere."
-            if not domain else "")
+    home = _home()
+    pick = (f" Several companies can share a name: choose the one that hires in {location or home}, not a same-named company elsewhere."
+            if not domain and (location or home) else "")
+    office = f"whether it has an office or staff in {home}" if home else "where its offices are"
     ans = _search(
         f'Company: "{company}"{where}. Find how many employees it has (the most recent figure and its date), the headquarters city, and what it does '
-        'in one sentence, and whether it has an office or staff in India.' + pick + ' Use only what you find on pages; if you cannot find a figure use null. Reply with JSON only: '
+        f'in one sentence, and {office}.' + pick + ' Use only what you find on pages; if you cannot find a figure use null. Reply with JSON only: '
         '{"india_office": true|false|null, "employees": number|null, "employees_note": "text with the date", "hq": "city, country"|null, "summary": "one sentence"|null, '
         '"website": "domain you found"|null, "source": "page url used for the headcount"|null}')
     data = _json_in(ans["text"])
@@ -282,7 +288,7 @@ def _people_plan(roles: list[str], job_title: str, location: str) -> list[str]:
     """The searches, in order: the team that hires for this job, HR and recruiters in the job's city (else each default city), then
     each role that matters at this company's size."""
     cfg = _cfg()
-    where = f" in {location}" if location else f" in {cfg.get('home_region', 'India')}"
+    where = f" in {location}" if location else (f" in {_home()}" if _home() else "")
     plan = []
     if job_title:
         plan.append(f'the hiring manager, team lead or recruiter for a "{job_title}" role{where}')
@@ -294,7 +300,7 @@ def _people_plan(roles: list[str], job_title: str, location: str) -> list[str]:
 def _people_prompt(company: str, domain: str, role: str) -> str:
     where = f" (website {domain})" if domain else ""
     return (f'Company: "{company}"{where}. Find the CURRENT people who are: {role}. Only people you actually found on a page, each with the page url. '
-            f'Prefer people based in {_cfg().get("home_region", "India")}; give each one\'s city and country if the page says. '
+            + (f'Prefer people based in {_home()}. ' if _home() else '') + 'Give each one\'s city and country if the page says. '
             'Never guess a name; return fewer people rather than invent one. Reply with JSON only: '
             '{"people": [{"name": "...", "title": "...", "location": "city, country"|null, "kind": "founder|engineering|talent|hr|manager|other", "source": "page url", '
             '"linkedin": "profile url if the page shows it"|null}]}')
@@ -342,7 +348,7 @@ def research_people(company: str, domain: str, band: str, job_title: str, locati
         dropped += d
         for person in kept:
             people.setdefault(person["name"].lower(), person)
-    ranked = sorted(people.values(), key=_region_rank(cfg.get("home_region", "India")))
+    ranked = sorted(people.values(), key=_region_rank(_home()))
     return ranked[:12], sources, dropped
 
 
@@ -352,7 +358,7 @@ _INDIA_PLACES = re.compile(r"india|bengaluru|bangalore|hyderabad|gurugram|gurgao
 def in_region(person: dict, region: str = "India") -> bool | None:
     """True when the page places the person in the region, False when it places them elsewhere, None when it says nothing."""
     where = person.get("location") or ""
-    if not where:
+    if not where or not region:
         return None
     return bool(_INDIA_PLACES.search(where)) if region.lower() == "india" else region.lower() in where.lower()
 
@@ -411,9 +417,11 @@ def research(company: str, job_url: str = "", job_title: str = "", location: str
         out["warnings"].append("No mail server was found for this company's domains, so addresses cannot be checked.")
     elif out["email_domains"][0]["domain"] != domain and domain:
         out["warnings"].append(f"Work email seems to use {out['email_domains'][0]['domain']}, not the website domain {domain}.")
-    region = _cfg().get("home_region", "India")
+    region = _home()
     out["india"] = ov.get("india")
-    if ov.get("india") is False:
+    if not region:
+        pass
+    elif ov.get("india") is False:
         out["warnings"].append(f"No office or staff in {region} was found for this company, so it may not hire there. Check the job's location before writing.")
     elif people and not any(in_region(q, region) for q in people):
         out["warnings"].append(f"None of the people found is placed in {region} by a page. Try the LinkedIn company page filtered to {region}.")

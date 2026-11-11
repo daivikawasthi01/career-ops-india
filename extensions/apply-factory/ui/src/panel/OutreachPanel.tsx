@@ -27,6 +27,7 @@ export function OutreachPanel({ person, company, title, jdText, jobUrl, options 
   const [texErrors, setTexErrors] = useState<{ line: number | null; msg: string }[]>([])
   const [pages, setPages] = useState<string[]>([])
   const alive = useRef(true)
+  const toRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { alive.current = true; api("/gmail/status").then((g) => alive.current && !g.error && setGmail(g)); return () => { alive.current = false } }, [])
   useEffect(() => { if (!to && options[0]) setTo(options[0]) }, [options]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -76,8 +77,16 @@ export function OutreachPanel({ person, company, title, jdText, jobUrl, options 
     if (done.status !== "done") { setError(done.error || "Could not fix the tex."); return }
     setTex(done.result.tex); setTexOk(!!done.result.ok); setTexErrors(done.result.errors || []); setPages(done.result.pages || [])
   }
+  // A button that is greyed out with no reason looks broken, so these stay pressable and say what is missing.
+  const addressProblem = () => {
+    if (!to) return "Add an email address in the To box first. Press Find email on this person to guess one, or type one."
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return "That does not look like an email address. Check the To box."
+    return ""
+  }
   const create = async () => {
     if (!draft) return
+    const problem = addressProblem()
+    if (problem) { setError(problem); toRef.current?.focus(); return }
     setBusy("creating"); setError("")
     const first = await api("/outreach/gmail", { ...body, to, subject: draft.subject, body: draft.body, attach_cv: cv, attach_cover: cover, cover_tex: cover ? tex : "" })
     if (first.error) { setBusy(""); setError(String(first.error)); return }
@@ -88,6 +97,9 @@ export function OutreachPanel({ person, company, title, jdText, jobUrl, options 
   }
   const compose = async () => {
     if (!draft) return
+    const problem = addressProblem()
+    if (problem) { setError(problem); toRef.current?.focus(); return }
+    setError("")
     const r = await api("/outreach/compose", { to, subject: draft.subject, body: draft.body, person, company })
     if (r.error) setError(String(r.error)); else chrome.tabs.create({ url: r.url, active: true })
   }
@@ -96,12 +108,15 @@ export function OutreachPanel({ person, company, title, jdText, jobUrl, options 
   return (
     <div className="mt-2 space-y-2 rounded-lg border bg-muted/30 p-2.5" data-outreach={person.name}>
       {!draft && (
-        <Button size="xs" onClick={write} disabled={busy === "writing"}>{busy === "writing" ? <Loader2 className="animate-spin" /> : <PenLine />}Write the email</Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="xs" onClick={write} disabled={busy === "writing"}>{busy === "writing" ? <Loader2 className="animate-spin" /> : <PenLine />}Write the email</Button>
+          {busy === "writing" && <span className="text-xs text-muted-foreground">Writing. This can take up to a minute when the free AI service is busy.</span>}
+        </div>
       )}
       {error && <p className="text-xs text-warning">{error}</p>}
       {draft && !made && (
         <>
-          <Input list={`to-${person.name}`} placeholder="To: pick a checked address or type one" aria-label="To" value={to} onChange={(e) => setTo(e.target.value.trim())} />
+          <Input ref={toRef} list={`to-${person.name}`} placeholder="To: pick a checked address or type one" aria-label="To" value={to} onChange={(e) => setTo(e.target.value.trim())} />
           <datalist id={`to-${person.name}`}>{options.map((o) => <option key={o} value={o} />)}</datalist>
           <Input aria-label="Subject" value={draft.subject} onChange={(e) => setDraft({ ...draft, subject: e.target.value })} />
           <Textarea aria-label="Email body" rows={9} value={draft.body} onChange={(e) => setDraft({ ...draft, body: e.target.value })} />
@@ -135,9 +150,9 @@ export function OutreachPanel({ person, company, title, jdText, jobUrl, options 
             </div>
           )}
           <div className="flex flex-wrap gap-2">
-            {gmail?.connected && <Button size="xs" onClick={create} disabled={!to || busy === "creating"}>{busy === "creating" ? <Loader2 className="animate-spin" /> : <Mail />}{busy === "creating" ? "Making the draft" : "Create Gmail draft"}</Button>}
+            {gmail?.connected && <Button size="xs" onClick={create} disabled={busy === "creating"}>{busy === "creating" ? <Loader2 className="animate-spin" /> : <Mail />}{busy === "creating" ? "Making the draft" : "Create Gmail draft"}</Button>}
             {gmail?.configured && !gmail.connected && <Button size="xs" onClick={connect} disabled={busy === "connecting"}>{busy === "connecting" ? <Loader2 className="animate-spin" /> : <Mail />}{busy === "connecting" ? "Finish signing in, in the other tab" : "Connect Gmail"}</Button>}
-            <Button size="xs" variant="outline" onClick={compose} disabled={!to}><ExternalLink />Open in Gmail (no attachments)</Button>
+            <Button size="xs" variant="outline" onClick={compose}><ExternalLink />Open in Gmail (no attachments)</Button>
             <Button size="xs" variant="ghost" onClick={write} disabled={busy === "writing"}>{busy === "writing" ? <Loader2 className="animate-spin" /> : null}Write again</Button>
           </div>
           {gmail && !gmail.configured && <p className="text-xs text-muted-foreground">To attach files, save your Google OAuth client as data/gmail-credentials.json. Until then "Open in Gmail" works without attachments.</p>}

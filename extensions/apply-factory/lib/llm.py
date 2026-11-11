@@ -82,7 +82,7 @@ USAGE = {"cloud": 0, "claude": 0, "rate_limited": 0}
 # Key number n is GROQ_API_KEY_n (GROQ_API_KEY alone is number 1) and GEMINI_API_KEY_n. llm.cloud.keys picks which numbers the extension may use.
 _PROVIDERS = {
     "groq": ("https://api.groq.com/openai/v1/chat/completions", {1: "GROQ_API_KEY", **{i: f"GROQ_API_KEY_{i}" for i in range(2, 10)}}),
-    "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {i: f"GEMINI_API_KEY_{i}" for i in range(1, 11)}),
+    "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {1: "GEMINI_API_KEY", **{i: f"GEMINI_API_KEY_{i}" for i in range(2, 11)}}),
 }
 
 

@@ -20,7 +20,8 @@
   // Re-reads the DOM at capture time so the values are the final ones.
   AF.snapshot = (neverRead) => {
     const fields = AF.collect(neverRead);
-    return fields.filter((f) => f.type !== 'file').map(AF.toWire).filter((f) => f.value && f.value !== 'No' && f.value !== '');
+    // A "No" is a real answer for a choose-one question (sponsorship, relocation); only an empty value or an unticked box is skipped.
+    return fields.filter((f) => f.type !== 'file').map(AF.toWire).filter((f) => f.value !== undefined && f.value !== null && String(f.value).trim() !== '');
   };
 
   AF.watchSubmit = ({ submitRe, onCapture }) => {
@@ -30,7 +31,10 @@
       const text = norm(b.value || b.getAttribute('aria-label') || b.textContent);
       return text.length < 40 && submitRe.test(text);
     };
-    document.addEventListener('click', (e) => { if (e.isTrusted && looksLikeSubmit(e.target)) onCapture('click'); }, true);
-    document.addEventListener('submit', (e) => { if (e.isTrusted) onCapture('submit'); }, true);
+    // "Final" is stricter than "submit-like": Next and Continue also save the page, but only Submit-style words mean the application is sent.
+    const FINAL = /\b(submit|send application|finish|complete (application|registration))\b/i;
+    const isFinal = (el) => { const b = el.closest?.('button,[role=button],input[type=submit],input[type=button],a.btn,a[role=button]'); return !!b && FINAL.test(norm(b.value || b.getAttribute('aria-label') || b.textContent)); };
+    document.addEventListener('click', (e) => { if (e.isTrusted && looksLikeSubmit(e.target)) onCapture('click', isFinal(e.target)); }, true);
+    document.addEventListener('submit', (e) => { if (e.isTrusted) onCapture('submit', true); }, true);
   };
 })();

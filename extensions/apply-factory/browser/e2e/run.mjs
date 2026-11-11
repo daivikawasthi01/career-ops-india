@@ -52,8 +52,8 @@ await panel.waitForTimeout(1500);
 const shot = process.env.AF_SHOTS || tmpdir();
 await panel.screenshot({ path: path.join(shot, 'panel-1-filled.png'), fullPage: true });
 const text = await panel.locator('#app').innerText();
-check('panel shows the fill count', /\d+\s*of\s*\d+ known answers filled/.test(text.replace(/\n+/g, ' ')), text.split('\n').slice(0, 6).join(' / '));
-check('panel lists the free-text question under Needs you', /Needs you/.test(text) && /Why do you want to work at Acme/.test(text));
+check('panel shows the fill count', /\d+\s*of\s*\d+ saved answers filled/.test(text.replace(/\n+/g, ' ')), text.split('\n').slice(0, 6).join(' / '));
+check('panel lists the free-text question under Needs you', /Needs you/i.test(text) && /Why do you want to work at Acme/.test(text));
 check('panel does not list the consent checkbox as fillable', !/Ready[\s\S]*terms and conditions/.test(text));
 
 // draft one answer from the panel with the local model, then use it
@@ -62,7 +62,7 @@ await panel.waitForSelector('[data-field] textarea', { timeout: 90000 });
 const drafted = await panel.locator('[data-field] textarea').first().inputValue();
 check('draft written by the local model', drafted.length > 40, JSON.stringify(drafted.slice(0, 120)));
 await panel.screenshot({ path: path.join(shot, 'panel-2-draft.png'), fullPage: true });
-await panel.getByRole('button', { name: 'Use this answer' }).click();
+await panel.getByRole('button', { name: 'Insert answer' }).click();
 await page.waitForTimeout(800);
 check('draft inserted into the page after Use', (await val('#why')).length > 40);
 

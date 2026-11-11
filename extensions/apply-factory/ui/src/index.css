@@ -34,56 +34,67 @@
   --color-warning: var(--warning);
 }
 
-/* shadcn "zinc" theme. The extension opens in dark and remembers the choice (localStorage af-theme). */
+/* Two themes, taken from the ihatepdf sample: a near-black canvas with hairline white borders, and "Porcelain" (warm paper, ink text).
+   With no saved choice the panel follows the operating system; the toggle saves a choice (see lib/theme.ts). */
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.141 0.005 285.823);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.141 0.005 285.823);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.141 0.005 285.823);
-  --primary: oklch(0.21 0.006 285.885);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.967 0.001 286.375);
-  --secondary-foreground: oklch(0.21 0.006 285.885);
-  --muted: oklch(0.967 0.001 286.375);
-  --muted-foreground: oklch(0.552 0.016 285.938);
-  --accent: oklch(0.967 0.001 286.375);
-  --accent-foreground: oklch(0.21 0.006 285.885);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.92 0.004 286.32);
-  --input: oklch(0.92 0.004 286.32);
-  --ring: oklch(0.705 0.015 286.067);
-  --success: oklch(0.527 0.154 150.069);
-  --warning: oklch(0.555 0.163 48.4);
+  --background: #F7F5F0;
+  --foreground: #1C1915;
+  --card: #FCFBF8;
+  --card-foreground: #1C1915;
+  --popover: #FCFBF8;
+  --popover-foreground: #1C1915;
+  --primary: #1C1915;
+  --primary-foreground: #F7F5F0;
+  --secondary: #EEEBE3;
+  --secondary-foreground: #1C1915;
+  --muted: #EEEBE3;
+  --muted-foreground: #6F6A62;
+  --accent: #EEEBE3;
+  --accent-foreground: #1C1915;
+  --destructive: #B3372B;
+  --border: #E2DED5;
+  --input: #D8D3C8;
+  --ring: #8A847A;
+  --success: #2F7A4B;
+  --warning: #9A5B12;
 }
 
 .dark {
-  --background: oklch(0.141 0.005 285.823);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.21 0.006 285.885);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.21 0.006 285.885);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.92 0.004 286.32);
-  --primary-foreground: oklch(0.21 0.006 285.885);
-  --secondary: oklch(0.274 0.006 286.033);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.274 0.006 286.033);
-  --muted-foreground: oklch(0.705 0.015 286.067);
-  --accent: oklch(0.274 0.006 286.033);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.552 0.016 285.938);
-  --success: oklch(0.696 0.17 162.48);
-  --warning: oklch(0.769 0.188 70.08);
+  --background: #070708;
+  --foreground: #F4F4F5;
+  --card: #111113;
+  --card-foreground: #F4F4F5;
+  --popover: #141416;
+  --popover-foreground: #F4F4F5;
+  --primary: #F4F4F5;
+  --primary-foreground: #09090B;
+  --secondary: #1B1B1E;
+  --secondary-foreground: #F4F4F5;
+  --muted: #1B1B1E;
+  --muted-foreground: #8E8E97;
+  --accent: #202023;
+  --accent-foreground: #F4F4F5;
+  --destructive: #F0716B;
+  --border: rgb(255 255 255 / 8%);
+  --input: rgb(255 255 255 / 12%);
+  --ring: #71717A;
+  --success: #3FCB8A;
+  --warning: #F2B04A;
 }
 
 @layer base {
   * { @apply border-border outline-ring/50; }
   html { overflow-x: clip; }
   body { @apply bg-background text-foreground font-sans antialiased; overflow-x: clip; }
+  ::selection { background: color-mix(in oklab, var(--foreground) 22%, transparent); }
+}
+
+/* Small shared pieces, so every tab reads the same. */
+@layer components {
+  .section-label { @apply px-1 text-xs font-medium text-muted-foreground; }
+  .dot { @apply inline-block size-1.5 shrink-0 rounded-full bg-current; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }

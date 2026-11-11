@@ -1,0 +1,26 @@
+# Facts the extension may fill without asking. Seeded from config/profile.yml and cv.md.
+# Leave a fact out and the extension learns it from the first form you answer by hand.
+# Salary, notice period and relocation are left out on purpose: they depend on the role.
+first_name: "Daivik"
+last_name: "Awasthi"
+full_name: "Daivik Awasthi"
+email: "daivikawasthi.01@gmail.com"
+phone: "+919311067931"
+phone_national: "9311067931"
+phone_country_code: "+91"
+city: "Faridabad"
+state: "Haryana"
+country: "India"
+nationality: "Indian"
+college: "Netaji Subhas University of Technology"
+degree: "B.Tech"
+branch: "Information Technology"
+graduation_year: "2027"
+cgpa: "8.85"
+years_experience: "0"
+work_authorization: "Yes"
+needs_sponsorship: "No"
+
+# Extra groups of words that mean the same thing when matching dropdown options.
+aliases:
+  - ["netaji subhas university of technology", "nsut", "netaji subhas institute of technology", "nsit", "nsut delhi", "nsit delhi", "nsit dwarka", "nsut dwarka", "netaji subhas university of technology delhi"]

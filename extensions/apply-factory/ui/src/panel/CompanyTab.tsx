@@ -34,6 +34,8 @@ const VERDICT: Record<string, [string, string]> = {
   "no-mail-server": ["Domain takes no mail", "text-destructive border-destructive/40"],
 }
 const BAND_TONE: Record<string, string> = { low: "text-success", medium: "text-warning", high: "text-destructive" }
+// Links in a result come from a model's web search and a scraped page: only http and https are ever opened.
+const safeUrl = (u?: string | null) => { try { const x = new URL(String(u)); return x.protocol === "https:" || x.protocol === "http:" ? x.href : undefined } catch { return undefined } }
 const host = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, "") } catch { return u } }
 const ago = (iso?: string) => {
   if (!iso) return ""
@@ -44,14 +46,16 @@ const ago = (iso?: string) => {
 function CopyButton({ text, label }: { text: string; label: string }) {
   const [done, setDone] = useState(false)
   return (
-    <Button size="icon-xs" variant="ghost" aria-label={label} onClick={() => { navigator.clipboard.writeText(text); setDone(true); setTimeout(() => setDone(false), 1200) }}>
+    <Button size="icon-xs" variant="ghost" aria-label={label} onClick={async () => { try { await navigator.clipboard.writeText(text); setDone(true); setTimeout(() => setDone(false), 1200) } catch { /* Chrome blocked it: the icon stays a copy icon */ } }}>
       {done ? <Check /> : <Copy />}
     </Button>
   )
 }
 
 function SourceLink({ url }: { url: string }) {
-  return <a href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 text-xs text-muted-foreground underline-offset-2 hover:underline">{host(url)}<ExternalLink className="size-3" /></a>
+  const href = safeUrl(url)
+  if (!href) return <span className="text-xs text-muted-foreground">{host(url)}</span>
+  return <a href={href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 text-xs text-muted-foreground underline-offset-2 hover:underline">{host(url)}<ExternalLink className="size-3" /></a>
 }
 
 const RULED_OUT = new Set(["rejected", "skipped", "no-mail-server"])
@@ -199,7 +203,7 @@ export function CompanyTab({ seed }: { seed: { company: string; location: string
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <h2 className="truncate text-sm font-semibold">{res.company}</h2>
-                <p className="text-xs text-muted-foreground">{[res.hq, res.domain].filter(Boolean).join(" · ")}</p>
+                <p className="text-xs text-muted-foreground">{[res.hq, res.domain].filter(Boolean).join(", ")}</p>
               </div>
               <Button size="xs" variant="ghost" onClick={() => start(true)}><RefreshCw />Refresh</Button>
             </div>
@@ -238,7 +242,7 @@ export function CompanyTab({ seed }: { seed: { company: string; location: string
                       <div className="flex flex-wrap items-center gap-2 pt-1">
                         <Badge variant="secondary" className="font-normal">{p.kind}</Badge>
                         <SourceLink url={p.source} />
-                        {p.linkedin && <a href={p.linkedin} target="_blank" rel="noreferrer" aria-label={`${p.name} on LinkedIn`} className="text-muted-foreground hover:text-foreground"><Link2 className="size-3.5" /></a>}
+                        {safeUrl(p.linkedin) && <a href={safeUrl(p.linkedin)} target="_blank" rel="noreferrer" aria-label={`${p.name} on LinkedIn`} className="text-muted-foreground hover:text-foreground"><Link2 className="size-3.5" /></a>}
                       </div>
                     </div>
                     <Button size="xs" variant="outline" onClick={() => setWriting((w) => ({ ...w, [p.name]: !w[p.name] }))}><PenLine />Draft email</Button>
@@ -266,6 +270,7 @@ export function CompanyTab({ seed }: { seed: { company: string; location: string
             {tryDomains.length > 0 && (
               <div>
                 <Button size="xs" variant="outline" disabled={mail.generic === "busy"} onClick={() => checkMail("generic", "/mail/generic", { domains: [tryDomains[0]] })}><Mail />Check careers@, jobs@, hr@ and similar</Button>
+                <p className="pt-1 text-xs text-muted-foreground">Email checks ask the company's mail server directly whether an address exists. Nothing is sent to the address.</p>
                 {slot("generic")}
               </div>
             )}
@@ -274,7 +279,7 @@ export function CompanyTab({ seed }: { seed: { company: string; location: string
           {res.network.length > 0 && (
             <section className="space-y-1 rounded-xl border p-3" aria-label="People you know">
               <h3 className="text-sm font-medium">People you already know here</h3>
-              {res.network.map((n) => <p key={n.name} className="text-xs"><a href={n.url} target="_blank" rel="noreferrer" className="font-medium underline-offset-2 hover:underline">{n.name}</a><span className="text-muted-foreground">{n.title ? `, ${n.title}` : ""}</span></p>)}
+              {res.network.map((n) => <p key={n.name} className="text-xs"><a href={safeUrl(n.url) || undefined} target="_blank" rel="noreferrer" className="font-medium underline-offset-2 hover:underline">{n.name}</a><span className="text-muted-foreground">{n.title ? `, ${n.title}` : ""}</span></p>)}
             </section>
           )}
 

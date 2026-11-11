@@ -22,7 +22,7 @@ SYSTEM = """You score a job for one candidate, using the candidate's own CV and 
 Score each dimension from 1 to 5 (whole numbers) and give one short piece of evidence taken from the job text or the CV:
 - match: skills, experience and proof points against what the job asks. 5 is a near-complete match.
 - north_star: how well the role fits the candidate's target roles and level.
-- comp: pay against the market for this role in India. If the job gives no pay, score 3 and say it is not stated.
+- comp: pay against the market for this role in the candidate's own country. If the job gives no pay, score 3 and say it is not stated.
 - culture: company culture, growth, stability, remote policy, as far as the text shows.
 - red_flags: blockers and warnings. 5 means none found, 1 means serious ones (unrealistic requirements, scam signs, unpaid, vague employer).
 Then give global: one number from 1.0 to 5.0 with one decimal, a holistic judgment that is NOT an average.

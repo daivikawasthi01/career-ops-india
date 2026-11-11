@@ -19,7 +19,7 @@ jobs:
   # A title with one of these is above entry level. (Roman and numeric levels such as "Engineer II" or "SDE 3" are matched in lib/jobs.py.)
   seniority_words: [senior, sr, lead, staff, principal, manager, director, head, vp, architect, distinguished, fellow, "team lead", "tech lead"]
   entry_words: [intern, internship, graduate, fresher, freshers, junior, jr, trainee, entry, apprentice, associate, "new grad", campus, "sde 1", "sde-1", "sde i"]
-  auto_remove: true     # when the years check ends, delete the jobs that clearly ask for more years from jobs.db (backup first; see lib/jobs_prune.py)
+  auto_remove: false    # true: when the years check ends, delete the jobs that clearly ask for more years from jobs.db (backup first; see lib/jobs_prune.py). Off by default: the Jobs tab only hides them
   years_batch: 150      # postings read per round by the background years check
 
 llm:
@@ -31,7 +31,7 @@ llm:
     providers: [groq, gemini]   # keys are rotated; a rate-limited key rests, then claude -p answers
     budget_seconds: 50    # all hosted attempts for one call together; then claude -p answers
     attempt_seconds: 35   # one hosted attempt
-    keys: {groq: [8, 9], gemini: [8, 9, 10]}   # only these numbers (GROQ_API_KEY_8, GEMINI_API_KEY_8 ...); the scanners keep the others
+    keys: {}   # empty: every key found in .env is used (GROQ_API_KEY, GROQ_API_KEY_2 ...). To keep some for the scanners, list numbers here: {groq: [2, 3]}
     groq_model: "openai/gpt-oss-120b"
     search_models: ["openai/gpt-oss-20b", "openai/gpt-oss-120b"]   # Groq browser search, about 17k tokens a query; each model has its own daily allowance
     search_providers: [groq, gemini, claude]   # web search order (Company tab); claude -p (haiku) is the last resort
@@ -50,18 +50,18 @@ paths_extra:
 
 # Which PDF is attached, chosen by the role. Add a key here and a matching entry in rules/rules.json resume_roles.
 resumes:
-  default: "../../output/resumes/Daivik-Awasthi-Resume.pdf"
-  devops: "../../output/resumes/Daivik-Awasthi-DevopsResume.pdf"
-  ai: "../../output/resumes/Daivik-Awasthi-AIResume.pdf"   # until this exists, AI roles use the default CV
+  default: "../../output/resumes/Resume.pdf"
+  devops: "../../output/resumes/Resume-DevOps.pdf"   # until a role CV exists, that role uses the default CV
+  ai: "../../output/resumes/Resume-AI.pdf"
 
 # Company tab. Search goes Groq, Gemini, then claude -p (llm.cloud.search_providers).
 company:
   cache_days: 14
   people_queries: 6     # at most this many searches for people: the hiring team for the job, HR per city, then each role for the size
   people_parallel: 3    # people searches run this many at a time
-  home_region: India    # people based here are searched for and listed first; a same-named company elsewhere is not picked
+  home_region: ""       # people based here are searched for and listed first; set by the setup wizard (your country)
   people_target: 8      # stop searching once this many people have a source page
-  default_locations: [Bangalore, Hyderabad, Gurugram]   # HR and recruiters are searched in each when the job names no city
+  default_locations: []   # HR and recruiters are searched in each when the job names no city; set by the setup wizard
   email_domains: 3      # work-email domains to try (the web's answer, the website, then initials and name guesses that have a mail server)
   pages: ["/", "/contact", "/contact-us", "/about", "/about-us", "/team", "/leadership", "/careers"]   # public pages read for emails and phones, robots.txt permitting
   # Job boards and ATS hosts: a job link on one of these says nothing about the company's own domain.

@@ -1,0 +1,55 @@
+%Cover letter for Twilio Software Engineer Intern (India, January 2027 start)
+%Built on the moderncv classic template
+%
+\documentclass[11pt,a4paper,roman]{moderncv}
+
+\usepackage[english]{babel}
+
+\moderncvstyle[nosymbols]{classic}
+\moderncvcolor{red}
+
+% character encoding
+\usepackage[utf8]{inputenc}
+
+% adjust the page margins
+\usepackage[scale=0.82]{geometry}
+
+% personal data
+\name{XYZ}
+\email{XYZ}
+\phone[mobile]{+91 989898989898}
+\address{Delhi, India}{}
+\extrainfo{linkedin\\ github.com}
+
+% small design touches: a deeper red accent on the name and subject line
+\definecolor{color1}{rgb}{0.78,0.10,0.18}
+\definecolor{color2}{rgb}{0.30,0.30,0.30}
+\makeatletter
+\patchcmd{\makeletterhead}{{\bfseries\upshape\@firstname~\@lastname}}{{\bfseries\upshape\textcolor{color1}{\@firstname~\@lastname}}}{}{}
+\makeatother
+
+\begin{document}
+
+\recipient{To}{The Hiring Team, \\
+               ABC, \\}
+\date{19 September 2026}
+\opening{\textcolor{color1}{\textbf{Sub: Application for Software Engineer Intern, starting 12 January 2027}}}
+\closing{Warm regards, \vspace{-1em}}
+
+\enclosure[Attached]{Resume (PDF)}
+
+\makelettertitle
+
+Dear Hiring Team,
+
+I am a \textbf{B.Tech student in Information Technology at FFZ, Delhi,} and I would like to spend six months as a \textbf{Software Engineer Intern at Twilio}. That is exactly how I want to work, with real responsibility for things that ship.
+
+This summer I interned at \textbf{ABC}, where I built a full stack infrastructure platform for more than \textbf{9,000} internal developers using \textbf{React, TypeScript, Go, AWS ECS and DynamoDB.} I wrote unit and integration tests for the core service logic and deployed everything as containerised ECS services through GitLab CI.
+
+Outside of work, I have built projects of my own around Python and data, with a reduction of \textbf{17.4\%} in validation error.
+
+I am based in Delhi, one of the locations you listed, and I can commit to the \textbf{full six months from 12 January}. Thank you for your time and for considering my application.
+
+\makeletterclosing
+
+\end{document}

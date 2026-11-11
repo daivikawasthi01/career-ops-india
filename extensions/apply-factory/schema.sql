@@ -109,3 +109,11 @@ CREATE TABLE IF NOT EXISTS job_years (
     display       TEXT DEFAULT '',
     checked_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Local usage totals for the "You" tab: a kind, a count and a time. No form text.
+CREATE TABLE IF NOT EXISTS usage_events (
+    event_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind      TEXT NOT NULL,
+    n         INTEGER NOT NULL DEFAULT 1,
+    at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

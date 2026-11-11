@@ -122,7 +122,7 @@ export function App() {
     if (!file) return
     if (slots.find((s) => s.kind === slot)?.tex && !confirm(`This replaces the tex for the ${slotLabel}. The old tex is kept as a .previous file. Continue?`)) return
     setImp({ busy: true })
-    say("The local model is reading your PDF. This can take a minute or two.")
+    say("The local model is reading your PDF and building the CV. This usually takes 2 to 4 minutes. You can leave this tab open and come back.")
     const res = await longApi("/cv/import", { base64: await toBase64(file), kind: slot })
     setImp(res.error ? { error: res.error } : res)
     say(res.error ? "Import failed" : "Imported. Check it, then open it in the editor.", res.error ? "warn" : "ok")
@@ -131,7 +131,7 @@ export function App() {
 
   const runTailor = async () => {
     setTailor({ busy: true })
-    say("Tailoring with the model. This can take a minute.")
+    say("Tailoring with the model. This usually takes 1 to 2 minutes.")
     const res = await longApi("/cv/tailor", { kind: slot, jd_text: jd.text, title: jd.title, company: jd.company })
     setTailor(res.error ? { error: res.error } : res)
     say(res.error ? "Could not tailor" : "Tailored. Review the changes below.", res.error ? "warn" : "ok")

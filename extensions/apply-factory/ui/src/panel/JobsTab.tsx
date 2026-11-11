@@ -14,13 +14,17 @@ import { BlacklistPanel } from "./BlacklistPanel"
 
 type Job = { years: string; entry: boolean; id: string; url: string; company: string; title: string; location: string; first_seen: string; sources: string[]; confirmed: boolean; flags: string[]; mark: string; stipend: string }
 type Check = { running: boolean; done: number; total: number; error: string; removed?: number }
-type Fit = { on: boolean; limit: number; hidden: { senior: number; years: number; location: number; blacklist?: number }; unchecked: number; check: Check }
+type Fit = { on: boolean; limit: number; hidden: { senior: number; years: number; location: number; blacklist?: number; experience?: number }; unchecked: number; check: Check }
 type Page = { fit: Fit; total: number; all: number; latest: string; rows: Job[]; facets: { sources: [string, number][]; marked: number } }
 const PAGE = 40
+const EXPERIENCE: [string, string][] = [["any", "Any"], ["0", "None needed"], ["1", "Up to 1"], ["2", "Up to 2"], ["3", "Up to 3"], ["5", "Up to 5"]]
 const DAYS: [string, string][] = [["0", "Any time"], ["1", "Today"], ["3", "3 days"], ["7", "7 days"]]
 
 const age = (d: string) => {
-  const n = Math.floor((Date.now() - new Date(d + "T00:00:00").getTime()) / 86400000)
+  // first_seen is a date, but tolerate a timestamp too: "2026-11-10 09:30" used to become "NaN days ago".
+  const t = new Date(/^\d{4}-\d{2}-\d{2}$/.test(d || "") ? d + "T00:00:00" : String(d || "").replace(" ", "T")).getTime()
+  if (!Number.isFinite(t)) return ""
+  const n = Math.floor((Date.now() - t) / 86400000)
   return n <= 0 ? "today" : n === 1 ? "yesterday" : `${n} days ago`
 }
 
@@ -34,11 +38,13 @@ export function JobsTab({ onOpened, onResearch }: { onOpened: () => void; onRese
   const [hideMarked, setHideMarked] = useState(true)
   const [sort, setSort] = useState("fit")
   const [fit, setFit] = useState(true)
+  const [maxYears, setMaxYears] = useState("any")   // "any", "0" no experience needed
   const [rows, setRows] = useState<Job[]>([])
   const [meta, setMeta] = useState<Page | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const seq = useRef(0)
+  const fetched = useRef(0)  // rows the server has returned so far: the next page starts here, even after a row was hidden locally
   const [showList, setShowList] = useState(false)           // the blacklist editor
   const [listVersion, setListVersion] = useState(0)
   const [ask, setAsk] = useState<string | null>(null)       // the job whose red button was pressed once: pressing again confirms
@@ -47,14 +53,19 @@ export function JobsTab({ onOpened, onResearch }: { onOpened: () => void; onRese
   const load = useCallback(async (offset: number, replace: boolean) => {
     const mine = ++seq.current
     setLoading(true)
-    const res = await api("/jobs", { q, sources, days: Number(days), confirmed_only: confirmedOnly, hide_flagged: hideFlagged, hide_marked: hideMarked, sort, fit, limit: PAGE, offset })
+    const res = await api("/jobs", { q, sources, days: Number(days), confirmed_only: confirmedOnly, hide_flagged: hideFlagged, hide_marked: hideMarked, sort, fit, max_years: maxYears === "any" ? "" : maxYears, limit: PAGE, offset })
     if (mine !== seq.current) return // a newer search replaced this one
     setLoading(false)
-    if (res.error) { setError(res.error === "server offline" ? "The local server is not running." : String(res.error)); return }
+    if (res.error) { setError(res.error === "server offline" ? "The local server is not running." : String(res.error)); if (replace) { setRows([]); fetched.current = 0 } return }
     setError("")
     setMeta(res)
-    setRows((old) => (replace ? res.rows : [...old, ...res.rows]))
-  }, [q, sources, days, confirmedOnly, hideFlagged, hideMarked, sort, fit])
+    fetched.current = (replace ? 0 : offset) + res.rows.length
+    setRows((old) => {
+      if (replace) return res.rows
+      const have = new Set(old.map((x) => x.id))
+      return [...old, ...res.rows.filter((x: Job) => !have.has(x.id))]
+    })
+  }, [q, sources, days, confirmedOnly, hideFlagged, hideMarked, sort, fit, maxYears])
 
   useEffect(() => { const t = setTimeout(() => load(0, true), q ? 250 : 0); return () => clearTimeout(t) }, [load, q])
 
@@ -78,8 +89,8 @@ export function JobsTab({ onOpened, onResearch }: { onOpened: () => void; onRese
     return () => { stop = true; clearInterval(t) }
   }, [fit])
 
-  const active = sources.length + (days !== "0" ? 1 : 0) + (confirmedOnly ? 1 : 0) + (!hideFlagged ? 1 : 0) + (!hideMarked ? 1 : 0) + (sort !== "fit" ? 1 : 0) + (!fit ? 1 : 0)
-  const clear = () => { setSources([]); setDays("0"); setConfirmedOnly(false); setHideFlagged(true); setHideMarked(true); setSort("fit"); setFit(true) }
+  const active = sources.length + (days !== "0" ? 1 : 0) + (confirmedOnly ? 1 : 0) + (!hideFlagged ? 1 : 0) + (!hideMarked ? 1 : 0) + (sort !== "fit" ? 1 : 0) + (!fit ? 1 : 0) + (maxYears !== "any" ? 1 : 0)
+  const clear = () => { setSources([]); setDays("0"); setConfirmedOnly(false); setHideFlagged(true); setHideMarked(true); setSort("fit"); setFit(true); setMaxYears("any") }
 
   const open = (j: Job) => { chrome.tabs.create({ url: j.url, active: true }); onOpened() }
   const mark = async (j: Job, m: string) => {
@@ -130,6 +141,12 @@ export function JobsTab({ onOpened, onResearch }: { onOpened: () => void; onRese
               </ToggleGroup>
             </div>
             <div className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground">Experience asked, in years</p>
+              <ToggleGroup type="single" variant="outline" size="sm" className="flex flex-wrap justify-start gap-1.5" value={maxYears} onValueChange={(v) => setMaxYears(v || "any")}>
+                {EXPERIENCE.map(([v, name]) => <ToggleGroupItem key={v} value={v} className="text-xs">{name}</ToggleGroupItem>)}
+              </ToggleGroup>
+            </div>
+            <div className="space-y-2">
               <p className="text-xs font-medium text-muted-foreground">Sort</p>
               <ToggleGroup type="single" variant="outline" size="sm" value={sort} onValueChange={(v) => v && setSort(v)}>
                 <ToggleGroupItem value="fit" className="text-xs">Best fit</ToggleGroupItem>
@@ -138,7 +155,7 @@ export function JobsTab({ onOpened, onResearch }: { onOpened: () => void; onRese
               </ToggleGroup>
             </div>
             <Separator />
-            <label className="flex items-center justify-between gap-3 text-sm">Only jobs that fit my level<Switch checked={fit} onCheckedChange={setFit} /></label>
+            <label className="flex items-center justify-between gap-3 text-sm">Hide jobs above my level or in other countries<Switch checked={fit} onCheckedChange={setFit} /></label>
             <label className="flex items-center justify-between gap-3 text-sm">Employer page only<Switch checked={confirmedOnly} onCheckedChange={setConfirmedOnly} /></label>
             <label className="flex items-center justify-between gap-3 text-sm">Hide flagged as suspicious<Switch checked={hideFlagged} onCheckedChange={setHideFlagged} /></label>
             <label className="flex items-center justify-between gap-3 text-sm">Hide applied and dismissed<Switch checked={hideMarked} onCheckedChange={setHideMarked} /></label>
@@ -148,6 +165,8 @@ export function JobsTab({ onOpened, onResearch }: { onOpened: () => void; onRese
         <Button variant="outline" aria-label="Blacklist" aria-pressed={showList} title="Companies you never want to see" onClick={() => setShowList((v) => !v)}><Ban />Blacklist</Button>
       </div>
       {showList && <BlacklistPanel version={listVersion} onChanged={() => load(0, true)} />}
+      <ScanBar empty={!!meta && meta.all === 0 && !error} onDone={() => { setListVersion((v) => v + 1); load(0, true) }} />
+
       {notice && (
         <p className="flex flex-wrap items-center gap-2 rounded-lg border p-2 text-xs" role="status" data-notice>
           <span className="flex-1">{notice.text}</span>
@@ -162,24 +181,24 @@ export function JobsTab({ onOpened, onResearch }: { onOpened: () => void; onRese
             {meta.total} {fit ? "fit your level" : "jobs"} of {meta.all}{meta.latest ? `, updated ${age(meta.latest)}` : ""}
           </p>
           {fit && (meta.fit.hidden.senior > 0 || meta.fit.hidden.years > 0 || meta.fit.hidden.location > 0) && (
-            <p>Hidden: {meta.fit.hidden.location} outside India, {meta.fit.hidden.senior} senior titles, {meta.fit.hidden.years} asking for more than {meta.fit.limit} year{meta.fit.limit === 1 ? "" : "s"}.</p>
+            <p>Hidden: {meta.fit.hidden.location} in other countries, {meta.fit.hidden.senior} senior titles, {meta.fit.hidden.years} asking for more than {meta.fit.limit} year{meta.fit.limit === 1 ? "" : "s"}{(meta.fit.hidden.experience ?? 0) > 0 ? `, ${meta.fit.hidden.experience} by your experience filter` : ""}. They are hidden, not deleted.</p>
           )}
           {!!meta.fit.hidden.blacklist && <p>{meta.fit.hidden.blacklist} hidden because the company is on your blacklist.</p>}
           {fit && check?.running && <p className="flex items-center gap-1.5"><Loader2 className="size-3 animate-spin" />Reading job descriptions for the years they ask for: {check.done} of {check.total}</p>}
           {fit && !check?.running && meta.fit.unchecked > 0 && <p>{meta.fit.unchecked} jobs have not been read yet (no public description for their site, or still queued).</p>}
-          {fit && !check?.running && !!check?.removed && <p>Removed {check.removed} job{check.removed === 1 ? "" : "s"} from the database because their location is outside India or they ask for more than {meta.fit.limit} year{meta.fit.limit === 1 ? "" : "s"} in their own text.</p>}
+          {fit && !check?.running && !!check?.removed && <p>Removed {check.removed} job{check.removed === 1 ? "" : "s"} from the database because their location is in another country or they ask for more than {meta.fit.limit} year{meta.fit.limit === 1 ? "" : "s"} in their own text.</p>}
           {fit && check?.error && <p className="text-warning">{check.error}</p>}
         </div>
       )}
       {error && <p className="rounded-lg border border-warning/50 p-3 text-sm text-warning">{error}</p>}
 
-      <ul className="divide-y rounded-xl border" aria-label="Jobs">
+      <ul className="divide-y overflow-hidden rounded-xl border bg-card" aria-label="Jobs">
         {loading && !rows.length && Array.from({ length: 5 }, (_, i) => <li key={i} className="space-y-2 p-3"><Skeleton className="h-4 w-3/4" /><Skeleton className="h-3 w-1/2" /></li>)}
         {rows.map((j) => (
-          <li key={j.id} className="flex items-start gap-2 p-3" data-job={j.id}>
+          <li key={j.id} className="flex items-start gap-2 p-3 transition-colors hover:bg-accent/40" data-job={j.id}>
             <div className="min-w-0 flex-1 space-y-1">
               <p className={`truncate text-sm font-medium ${j.mark ? "text-muted-foreground line-through" : ""}`} title={j.title}>{j.title}</p>
-              <p className="truncate text-xs text-muted-foreground">{[j.company, j.location].filter(Boolean).join(" · ")}</p>
+              <p className="truncate text-xs text-muted-foreground">{[j.company, j.location].filter(Boolean).join(", ")}</p>
               <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
                 {j.entry && <Badge variant="outline" className="border-success/40 text-success">Entry level</Badge>}
                 {j.years && <Badge variant="outline" className="font-normal">Asks {j.years} yrs</Badge>}
@@ -188,7 +207,7 @@ export function JobsTab({ onOpened, onResearch }: { onOpened: () => void; onRese
                 {j.sources.length > 2 && <span className="text-xs text-muted-foreground">+{j.sources.length - 2}</span>}
                 {j.flags.length > 0 && <Badge variant="outline" className="border-warning/50 text-warning" title={j.flags.join("; ")}><ShieldAlert className="size-3" />Check</Badge>}
                 {j.mark && <Badge variant="outline">{j.mark}</Badge>}
-                <span className="text-xs text-muted-foreground">{age(j.first_seen)}{j.stipend ? ` · ${j.stipend}` : ""}</span>
+                <span className="text-xs text-muted-foreground">{age(j.first_seen)}{j.stipend ? `, ${j.stipend}` : ""}</span>
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-1">
@@ -207,7 +226,7 @@ export function JobsTab({ onOpened, onResearch }: { onOpened: () => void; onRese
                   {j.mark && <><DropdownMenuSeparator /><DropdownMenuItem onSelect={() => mark(j, "")}>Clear mark</DropdownMenuItem></>}
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onSelect={() => onResearch(j.company, j.location)}>Research {j.company}</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => navigator.clipboard.writeText(j.url)}>Copy link</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => { navigator.clipboard.writeText(j.url).catch(() => setNotice({ text: "Chrome blocked copying the link." })) }}>Copy link</DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
@@ -216,11 +235,39 @@ export function JobsTab({ onOpened, onResearch }: { onOpened: () => void; onRese
         {!loading && !rows.length && !error && <li className="p-6 text-center text-sm text-muted-foreground">No jobs match. Try fewer filters.</li>}
       </ul>
 
-      {meta && rows.length < meta.total && (
-        <Button variant="outline" className="w-full" disabled={loading} onClick={() => load(rows.length, false)}>
-          {loading ? <Loader2 className="animate-spin" /> : <ChevronDown />}Show more ({meta.total - rows.length} left)
+      {meta && fetched.current < meta.total && (
+        <Button variant="outline" className="w-full" disabled={loading} onClick={() => load(fetched.current, false)}>
+          {loading ? <Loader2 className="animate-spin" /> : <ChevronDown />}Show more ({Math.max(0, meta.total - fetched.current)} left)
         </Button>
       )}
+    </div>
+  )
+}
+
+// Runs the job scanners on this Mac and shows their progress. It keeps going if the panel is closed; reopening shows where it is.
+function ScanBar({ empty, onDone }: { empty: boolean; onDone: () => void }) {
+  const [s, setS] = useState<any>(null)
+  const wasRunning = useRef(false)
+  const poll = useCallback(async () => { const r = await api("/scan/status", {}); if (!r.error) setS(r); return r }, [])
+  useEffect(() => { poll() }, [poll])
+  useEffect(() => {
+    if (!s?.running) { if (wasRunning.current) { wasRunning.current = false; onDone() } return }
+    wasRunning.current = true
+    const t = setInterval(poll, 3000)
+    return () => clearInterval(t)
+  }, [s?.running, poll, onDone])
+  const start = async () => { const r = await api("/scan/start", {}); if (r.error) setS((x: any) => ({ ...x, error: r.error, running: false })); else setS(r) }
+  if (!s) return null
+  return (
+    <div className="space-y-2">
+      {empty && !s.running && <p className="text-sm text-muted-foreground">No jobs yet. Press the button and Apply searches the job boards for your roles. The first search takes several minutes, and you can close this panel meanwhile.</p>}
+      <div className="flex items-center gap-3">
+        <Button size="sm" variant={empty ? "default" : "outline"} disabled={s.running || !s.can} onClick={start}>{s.running ? "Searching" : empty ? "Find jobs" : "Find new jobs"}</Button>
+        {s.running && <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="size-3 shrink-0 animate-spin" /><span className="truncate">{s.line}</span></span>}
+        {!s.running && s.finished > 0 && s.ok && <span className="text-xs text-muted-foreground">Search finished.</span>}
+      </div>
+      {!s.can && s.why && <p className="text-xs text-warning">{s.why}</p>}
+      {(s.error || (!s.running && s.finished > 0 && s.ok === false)) && <p className="text-xs text-warning">{s.error || "The search stopped with an error."}</p>}
     </div>
   )
 }

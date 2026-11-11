@@ -318,6 +318,7 @@ tools/__pycache__/
 # apply-factory: personal answers, tokens and local state
 extensions/apply-factory/kb.sqlite*
 extensions/apply-factory/facts.yml
+extensions/apply-factory/config.local.yaml
 extensions/apply-factory/data/
 extensions/apply-factory/.venv/
 extensions/apply-factory/**/__pycache__/
