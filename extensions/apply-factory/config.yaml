@@ -21,7 +21,7 @@ llm:
     providers: [groq, gemini]   # keys are rotated; a rate-limited key rests, then the local model answers
     keys: {groq: [8, 9], gemini: [8, 9, 10]}   # only these numbers (GROQ_API_KEY_8, GEMINI_API_KEY_8 ...); the scanners keep the others
     groq_model: "openai/gpt-oss-120b"
-    gemini_model: "gemini-3.5-flash"
+    gemini_model: ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"]   # each has its own limit; the next runs when one is limited
   keep_alive: "30m"   # how long ollama keeps the model in memory after a call; the default 5 minutes means slow cold starts
 
 server:

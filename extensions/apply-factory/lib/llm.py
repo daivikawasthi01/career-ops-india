@@ -159,12 +159,14 @@ def _cloud(prompt: str, system: str | None, temperature: float, json_mode: bool,
     order = []
     for provider in cfg.get("providers", ["groq", "gemini"]):
         keys = [k for p, k in _pool() if p == provider]
-        order += [(provider, keys[(turn + i) % len(keys)]) for i in range(len(keys))]
-    for provider, key in order:
-        kid = f"{provider}:{key[-6:]}"
+        wanted = cfg.get(f"{provider}_model") or ("openai/gpt-oss-120b" if provider == "groq" else "gemini-3.5-flash")
+        models = [wanted] if isinstance(wanted, str) else list(wanted)
+        # every model of a provider has its own limit, so a limited key still serves the next model in the list
+        order += [(provider, keys[(turn + i) % len(keys)], m) for m in models for i in range(len(keys))]
+    for provider, key, model in order:
+        kid = f"{provider}:{model}:{key[-6:]}"
         if _REST.get(kid, 0) > now:
             continue
-        model = cfg.get(f"{provider}_model") or ("openai/gpt-oss-120b" if provider == "groq" else "gemini-3.5-flash")
         body: dict[str, Any] = {
             "model": model, "temperature": temperature,
             "messages": ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}],

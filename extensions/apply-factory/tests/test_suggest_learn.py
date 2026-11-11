@@ -188,6 +188,8 @@ class SuggestTest(unittest.TestCase):
     def test_long_answers_rotate_hosted_keys_and_fall_back_to_local(self):
         from lib import llm
         llm._pool = lambda: (("groq", "k1aaaaaa"), ("groq", "k2bbbbbb"))
+        import itertools
+        llm._TURN = itertools.count()  # the rotation starts at the first key
         seen = []
         local = self.fake.post
         def post(url, body, headers=None, timeout=0):
@@ -211,6 +213,22 @@ class SuggestTest(unittest.TestCase):
             self.fake.chat_replies = [" ".join(["local"] * 100)]
             suggest._CACHE.clear()
             self.assertIn("local", suggest.draft(conn, F("a", "Message for the hiring team", "textarea"), {})["value"])
+
+    def test_a_limited_model_falls_through_to_the_next_model_of_the_provider(self):
+        from lib import llm
+        llm._pool = lambda: (("gemini", "g1aaaaaa"),)
+        saved = dict(llm._cfg()["cloud"])
+        self.addCleanup(lambda: llm._cfg()["cloud"].update(saved))  # the config is shared with every other test
+        llm._cfg()["cloud"].update(providers=["gemini"], gemini_model=["new-model", "old-model"])
+        seen = []
+        def post(url, body, headers=None, timeout=0):
+            seen.append(body["model"])
+            if body["model"] == "new-model":
+                raise llm.RateLimited("limit", 30)
+            return {"choices": [{"message": {"content": "ok"}}]}
+        llm.post = post
+        self.assertEqual(llm._cloud("hi", None, 0.1, False), "ok")
+        self.assertEqual(seen, ["new-model", "old-model"])
 
     def test_a_short_fact_makes_one_small_call_with_no_style_lookup(self):
         self.fake.chat_replies = ["Mumbai"]
