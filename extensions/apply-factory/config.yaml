@@ -13,6 +13,15 @@ paths:
   connections: "../../data/Connections.csv"                # your LinkedIn export; optional, read by linkedin-join.mjs
   contacts_tsv: "../../data/contacts.tsv"                  # career-ops contact list; cold emails are noted here with a follow-up date
 
+# Jobs tab: which jobs fit your level. Your years come from config/profile.yml (candidate.years_of_experience).
+jobs:
+  stretch_years: 2      # a job fits when the years it asks for are at most your years plus this (the scanner's seniority_guard drops from 3 years)
+  # A title with one of these is above entry level. (Roman and numeric levels such as "Engineer II" or "SDE 3" are matched in lib/jobs.py.)
+  seniority_words: [senior, sr, lead, staff, principal, manager, director, head, vp, architect, distinguished, fellow, "team lead", "tech lead"]
+  entry_words: [intern, internship, graduate, fresher, freshers, junior, jr, trainee, entry, apprentice, associate, "new grad", campus, "sde 1", "sde-1", "sde i"]
+  auto_remove: true     # when the years check ends, delete the jobs that clearly ask for more years from jobs.db (backup first; see lib/jobs_prune.py)
+  years_batch: 150      # postings read per round by the background years check
+
 llm:
   # Nothing runs on this Mac. Every call goes to the hosted models first; when none can answer in time, `claude -p` (your Claude plan) does.
   backend: "claude"

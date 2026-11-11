@@ -98,3 +98,14 @@ CREATE TABLE IF NOT EXISTS company_cache (
     result_json TEXT NOT NULL,
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- The years of experience a posting's own text asks for (read with career-ops' jd-years.mjs). state: read | nohost (no public JD API) | unread (retry later).
+CREATE TABLE IF NOT EXISTS job_years (
+    canonical_url TEXT PRIMARY KEY,
+    state         TEXT NOT NULL,
+    status        TEXT,
+    min_years     REAL,
+    confident     INTEGER DEFAULT 0,
+    display       TEXT DEFAULT '',
+    checked_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

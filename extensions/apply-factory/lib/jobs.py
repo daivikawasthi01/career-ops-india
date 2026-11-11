@@ -11,7 +11,7 @@ import re
 import sqlite3
 from datetime import date, timedelta
 
-from . import config
+from . import config, locations, years
 
 MARKS = ("applied", "dismissed", "saved")
 _PAGE_MAX = 100
@@ -26,6 +26,47 @@ def _open() -> sqlite3.Connection:
     return conn
 
 
+def _words_re(words: list[str]) -> re.Pattern:
+    return re.compile(r"(?<![a-z0-9])(?:" + "|".join(re.escape(w).replace(r"\ ", r"[\s-]+") for w in words) + r")(?![a-z0-9])", re.I)
+
+
+# "Engineer II", "SDE 3", "L5", "(3-5 years)", "5+ yrs": a level or a number of years in the title itself.
+_LEVEL = re.compile(r"(?:\b(?:sde|swe|sdet|engineer|developer|analyst|scientist)\s*[-]?\s*(?:2|3|4|5|ii|iii|iv|v)\b|\s(?:ii|iii|iv)\s*(?:\)|$)|\bl[4-9]\b)", re.I)
+_TITLE_YEARS = re.compile(r"(\d+)\s*(?:\+|-\s*\d+|to\s*\d+)?\s*(?:years?|yrs?)\b", re.I)
+
+
+_PATTERNS: dict = {"key": None, "senior": None, "entry": None}
+
+
+def _patterns() -> tuple[re.Pattern | None, re.Pattern | None]:
+    """The title word patterns, compiled once per change of config.yaml (this runs for every row of every search)."""
+    try:
+        key = (config.ROOT / "config.yaml").stat().st_mtime
+    except OSError:
+        key = 0
+    if _PATTERNS["key"] != key:
+        cfg = config.load().get("jobs") or {}
+        _PATTERNS.update(key=key, senior=_words_re(cfg["seniority_words"]) if cfg.get("seniority_words") else None,
+                         entry=_words_re(cfg["entry_words"]) if cfg.get("entry_words") else None)
+    return _PATTERNS["senior"], _PATTERNS["entry"]
+
+
+def too_senior_title(title: str) -> bool:
+    """A title above entry level. An entry word does not rescue a senior one ("Senior Associate")."""
+    senior, _ = _patterns()
+    if senior and senior.search(title or ""):
+        return True
+    if _LEVEL.search(title or ""):
+        return True
+    m = _TITLE_YEARS.search(title or "")
+    return bool(m and int(m.group(1)) > years.limit())
+
+
+def entry_title(title: str) -> bool:
+    _, entry = _patterns()
+    return bool(entry and entry.search(title or "") and not too_senior_title(title))
+
+
 def _sources(found_by: str | None) -> list[str]:
     try:
         v = json.loads(found_by or "[]")
@@ -34,7 +75,7 @@ def _sources(found_by: str | None) -> list[str]:
         return []
 
 
-def _row(r: sqlite3.Row, marks: dict[str, str]) -> dict:
+def _row(r: sqlite3.Row, marks: dict[str, str], yrs: dict | None = None) -> dict:
     confirmed = r["confidence"] == "employer-confirmed"
     return {
         "id": r["canonical_url"],
@@ -44,6 +85,7 @@ def _row(r: sqlite3.Row, marks: dict[str, str]) -> dict:
         "posted": r["posted"] if r["posted"] not in (None, "None") else "", "stipend": r["stipend"] if r["stipend"] not in (None, "None") else "",
         "first_seen": r["first_seen"], "last_seen": r["last_seen"], "sources": _sources(r["found_by"]), "confirmed": confirmed,
         "flags": [f.strip() for f in (r["flags"] or "").split(";") if f.strip()], "mark": marks.get(r["canonical_url"], ""),
+        "years": years.label((yrs or {}).get(r["canonical_url"])), "entry": entry_title(r["title"] or ""),
     }
 
 
@@ -63,7 +105,7 @@ def set_mark(kb, job_id: str, mark: str) -> None:
 
 
 def search(kb, *, q: str = "", sources: list[str] | None = None, days: int = 0, confirmed_only: bool = False, hide_flagged: bool = True,
-           hide_marked: bool = True, sort: str = "new", limit: int = 40, offset: int = 0) -> dict:
+           hide_marked: bool = True, sort: str = "new", limit: int = 40, offset: int = 0, fit: bool = True) -> dict:
     """One page of jobs plus the counts the filter chips show. The source counts ignore the source filter itself, so choosing one
     source still shows how many the others would add."""
     limit = max(1, min(int(limit), _PAGE_MAX))
@@ -87,9 +129,28 @@ def search(kb, *, q: str = "", sources: list[str] | None = None, days: int = 0, 
         everything = conn.execute("SELECT count(*) FROM jobs").fetchone()[0]
     finally:
         conn.close()
-    out = [_row(r, done) for r in rows]
+    yrs = years.known(kb)
+    out = [_row(r, done, yrs) for r in rows]
     if hide_marked:
         out = [j for j in out if not j["mark"]]
+    hidden = {"senior": 0, "years": 0, "location": 0}
+    unchecked = 0
+    if fit:
+        abroad = locations.foreign(j["location"] for j in out)
+        kept = []
+        for j in out:
+            if j["location"].strip() in abroad:
+                hidden["location"] += 1
+            elif too_senior_title(j["title"]):
+                hidden["senior"] += 1
+            elif years.too_many_years(yrs.get(j["id"])):
+                hidden["years"] += 1
+            else:
+                kept.append(j)
+                unchecked += years.needs_check(yrs.get(j["id"]))
+        out = kept
+    if sort == "fit":   # entry-level titles and jobs whose text states a small bar first, then newest
+        out.sort(key=lambda j: (j["entry"], j["first_seen"] or ""), reverse=True)
     counts: dict[str, int] = {}
     for j in out:
         for s in j["sources"]:
@@ -98,4 +159,23 @@ def search(kb, *, q: str = "", sources: list[str] | None = None, days: int = 0, 
     if chosen:
         out = [j for j in out if chosen & set(j["sources"])]
     return {"total": len(out), "all": everything, "latest": latest, "offset": offset, "rows": out[offset:offset + limit],
-            "facets": {"sources": sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])), "marked": len(done)}}
+            "facets": {"sources": sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])), "marked": len(done)},
+            "fit": {"on": fit, "limit": years.limit(), "hidden": hidden, "unchecked": unchecked, "check": years.progress()}}
+
+
+def years_todo(kb) -> list[dict]:
+    """Postings worth reading the text of: they pass the title check, are not marked, and have no answer yet. Newest first."""
+    done, yrs = marks(kb), years.known(kb)
+    conn = _open()
+    try:
+        rows = conn.execute("SELECT * FROM jobs ORDER BY first_seen DESC, last_seen DESC").fetchall()
+    finally:
+        conn.close()
+    abroad = locations.foreign(r["location"] for r in rows)
+    out = []
+    for r in rows:
+        j = _row(r, done, yrs)
+        if j["mark"] or j["location"].strip() in abroad or too_senior_title(j["title"]) or not years.needs_check(yrs.get(j["id"])):
+            continue
+        out.append({"id": j["id"], "url": j["url"]})
+    return out

@@ -7,6 +7,7 @@ Local API for the browser extension. Binds to 127.0.0.1 only.
   POST /suggest    {url, title, fields[]}            -> known answers, no model call
   POST /draft      {field, ctx}                      -> one model call for one field
   POST /jobs        {q, sources[], days, confirmed_only, ...} -> one page of the scanner's jobs.db, read only
+  POST /jobs/years  {start}                          -> reads the years each posting's text asks for, in the background; returns progress
   POST /jobs/mark   {id, mark}                       -> applied / dismissed / saved, kept in kb.sqlite
   POST /company/start {company, url, title, refresh} -> {cached, result} or {job}: size, people, public emails and phones (poll /cv/job)
   POST /mail/find    {name, domain, known[]}         -> {job}: likely addresses for a person, checked against the mail server, with risk bands
@@ -49,7 +50,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from learner import learn as learner
 from lib import (checks, company as companies, config, cover, cv_import, cv_store, db, gmail, jobs, knockout, llm, mailcheck, options, outreach, resume, rules,
-                 score as scorer, suggest, tailor, tex, tracker)
+                 score as scorer, suggest, tailor, tex, tracker, years)
+from lib import jobs_prune
 
 MAX_BODY = 16 * 1024 * 1024  # a CV pdf arrives as base64
 STATE_FILE = config.ROOT / "data" / "server.json"
@@ -120,6 +122,14 @@ class State:
 
 def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode()
+
+
+def _remove_too_senior(db_path: str) -> int:
+    """After the years check: take the jobs that clearly ask for more years than you have out of jobs.db (jobs.auto_remove)."""
+    if not (config.load().get("jobs") or {}).get("auto_remove", True):
+        return 0
+    with db.tx(db_path) as conn:
+        return jobs_prune.remove(conn)["removed"]
 
 
 def _pages(pdf: bytes | None, dpi: int = 90) -> list[str]:
@@ -243,8 +253,15 @@ def make_handler(state: State):
                 with db.tx(state.db_path) as conn:
                     return self._send(200, jobs.search(conn, q=str(body.get("q", "")), sources=list(body.get("sources") or []), days=int(body.get("days") or 0),
                                                        confirmed_only=bool(body.get("confirmed_only")), hide_flagged=body.get("hide_flagged", True) is not False,
-                                                       hide_marked=body.get("hide_marked", True) is not False, sort=str(body.get("sort", "new")),
+                                                       hide_marked=body.get("hide_marked", True) is not False, sort=str(body.get("sort", "new")), fit=body.get("fit", True) is not False,
                                                        limit=int(body.get("limit") or 40), offset=int(body.get("offset") or 0)))
+            if path == "/jobs/years":   # start reading the postings' text in the background (or just report progress)
+                started = False
+                if body.get("start", True):
+                    with db.tx(state.db_path) as conn:
+                        todo = jobs.years_todo(conn)
+                    started = years.start(state.db_path, todo, on_done=lambda: _remove_too_senior(state.db_path))
+                return self._send(200, {"started": started, **years.progress()})
             if path == "/jobs/mark":
                 with db.tx(state.db_path) as conn:
                     jobs.set_mark(conn, str(body["id"]), str(body.get("mark", "")))

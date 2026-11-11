@@ -11,8 +11,10 @@ import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api } from "@/lib/chrome"
 
-type Job = { id: string; url: string; company: string; title: string; location: string; first_seen: string; sources: string[]; confirmed: boolean; flags: string[]; mark: string; stipend: string }
-type Page = { total: number; all: number; latest: string; rows: Job[]; facets: { sources: [string, number][]; marked: number } }
+type Job = { years: string; entry: boolean; id: string; url: string; company: string; title: string; location: string; first_seen: string; sources: string[]; confirmed: boolean; flags: string[]; mark: string; stipend: string }
+type Check = { running: boolean; done: number; total: number; error: string; removed?: number }
+type Fit = { on: boolean; limit: number; hidden: { senior: number; years: number; location: number }; unchecked: number; check: Check }
+type Page = { fit: Fit; total: number; all: number; latest: string; rows: Job[]; facets: { sources: [string, number][]; marked: number } }
 const PAGE = 40
 const DAYS: [string, string][] = [["0", "Any time"], ["1", "Today"], ["3", "3 days"], ["7", "7 days"]]
 
@@ -29,7 +31,8 @@ export function JobsTab({ onOpened, onResearch }: { onOpened: () => void; onRese
   const [confirmedOnly, setConfirmedOnly] = useState(false)
   const [hideFlagged, setHideFlagged] = useState(true)
   const [hideMarked, setHideMarked] = useState(true)
-  const [sort, setSort] = useState("new")
+  const [sort, setSort] = useState("fit")
+  const [fit, setFit] = useState(true)
   const [rows, setRows] = useState<Job[]>([])
   const [meta, setMeta] = useState<Page | null>(null)
   const [loading, setLoading] = useState(true)
@@ -39,19 +42,39 @@ export function JobsTab({ onOpened, onResearch }: { onOpened: () => void; onRese
   const load = useCallback(async (offset: number, replace: boolean) => {
     const mine = ++seq.current
     setLoading(true)
-    const res = await api("/jobs", { q, sources, days: Number(days), confirmed_only: confirmedOnly, hide_flagged: hideFlagged, hide_marked: hideMarked, sort, limit: PAGE, offset })
+    const res = await api("/jobs", { q, sources, days: Number(days), confirmed_only: confirmedOnly, hide_flagged: hideFlagged, hide_marked: hideMarked, sort, fit, limit: PAGE, offset })
     if (mine !== seq.current) return // a newer search replaced this one
     setLoading(false)
     if (res.error) { setError(res.error === "server offline" ? "The local server is not running." : String(res.error)); return }
     setError("")
     setMeta(res)
     setRows((old) => (replace ? res.rows : [...old, ...res.rows]))
-  }, [q, sources, days, confirmedOnly, hideFlagged, hideMarked, sort])
+  }, [q, sources, days, confirmedOnly, hideFlagged, hideMarked, sort, fit])
 
   useEffect(() => { const t = setTimeout(() => load(0, true), q ? 250 : 0); return () => clearTimeout(t) }, [load, q])
 
-  const active = sources.length + (days !== "0" ? 1 : 0) + (confirmedOnly ? 1 : 0) + (!hideFlagged ? 1 : 0) + (!hideMarked ? 1 : 0) + (sort !== "new" ? 1 : 0)
-  const clear = () => { setSources([]); setDays("0"); setConfirmedOnly(false); setHideFlagged(true); setHideMarked(true); setSort("new") }
+  // Reading each posting's text for the years it asks for runs on the server; this starts it, shows how far it is, and reloads the list when it ends.
+  const [check, setCheck] = useState<Check | null>(null)
+  const wasRunning = useRef(false)
+  const loadRef = useRef(load)   // the check outlives renders: when it ends it must reload with the filters as they are now, not as they were
+  loadRef.current = load
+  useEffect(() => {
+    if (!fit) return
+    let stop = false
+    const tick = async (start: boolean) => {
+      const r = await api("/jobs/years", { start })
+      if (stop || r.error) return
+      setCheck(r)
+      if (wasRunning.current && !r.running) loadRef.current(0, true)   // finished: the list now hides what needs too many years
+      wasRunning.current = !!r.running
+    }
+    tick(true)
+    const t = setInterval(() => tick(false), 3000)
+    return () => { stop = true; clearInterval(t) }
+  }, [fit])
+
+  const active = sources.length + (days !== "0" ? 1 : 0) + (confirmedOnly ? 1 : 0) + (!hideFlagged ? 1 : 0) + (!hideMarked ? 1 : 0) + (sort !== "fit" ? 1 : 0) + (!fit ? 1 : 0)
+  const clear = () => { setSources([]); setDays("0"); setConfirmedOnly(false); setHideFlagged(true); setHideMarked(true); setSort("fit"); setFit(true) }
 
   const open = (j: Job) => { chrome.tabs.create({ url: j.url, active: true }); onOpened() }
   const mark = async (j: Job, m: string) => {
@@ -86,11 +109,13 @@ export function JobsTab({ onOpened, onResearch }: { onOpened: () => void; onRese
             <div className="space-y-2">
               <p className="text-xs font-medium text-muted-foreground">Sort</p>
               <ToggleGroup type="single" variant="outline" size="sm" value={sort} onValueChange={(v) => v && setSort(v)}>
+                <ToggleGroupItem value="fit" className="text-xs">Best fit</ToggleGroupItem>
                 <ToggleGroupItem value="new" className="text-xs">Newest</ToggleGroupItem>
                 <ToggleGroupItem value="company" className="text-xs">Company A to Z</ToggleGroupItem>
               </ToggleGroup>
             </div>
             <Separator />
+            <label className="flex items-center justify-between gap-3 text-sm">Only jobs that fit my level<Switch checked={fit} onCheckedChange={setFit} /></label>
             <label className="flex items-center justify-between gap-3 text-sm">Employer page only<Switch checked={confirmedOnly} onCheckedChange={setConfirmedOnly} /></label>
             <label className="flex items-center justify-between gap-3 text-sm">Hide flagged as suspicious<Switch checked={hideFlagged} onCheckedChange={setHideFlagged} /></label>
             <label className="flex items-center justify-between gap-3 text-sm">Hide applied and dismissed<Switch checked={hideMarked} onCheckedChange={setHideMarked} /></label>
@@ -100,10 +125,18 @@ export function JobsTab({ onOpened, onResearch }: { onOpened: () => void; onRese
       </div>
 
       {meta && !error && (
-        <p className="px-0.5 text-xs text-muted-foreground">
-          {meta.total} of {meta.all} jobs{meta.latest ? `, updated ${age(meta.latest)}` : ""}
-          {meta.facets.marked > 0 && !hideMarked ? "" : ""}
-        </p>
+        <div className="space-y-1 px-0.5 text-xs text-muted-foreground" data-fit>
+          <p>
+            {meta.total} {fit ? "fit your level" : "jobs"} of {meta.all}{meta.latest ? `, updated ${age(meta.latest)}` : ""}
+          </p>
+          {fit && (meta.fit.hidden.senior > 0 || meta.fit.hidden.years > 0 || meta.fit.hidden.location > 0) && (
+            <p>Hidden: {meta.fit.hidden.location} outside India, {meta.fit.hidden.senior} senior titles, {meta.fit.hidden.years} asking for more than {meta.fit.limit} year{meta.fit.limit === 1 ? "" : "s"}.</p>
+          )}
+          {fit && check?.running && <p className="flex items-center gap-1.5"><Loader2 className="size-3 animate-spin" />Reading job descriptions for the years they ask for: {check.done} of {check.total}</p>}
+          {fit && !check?.running && meta.fit.unchecked > 0 && <p>{meta.fit.unchecked} jobs have not been read yet (no public description for their site, or still queued).</p>}
+          {fit && !check?.running && !!check?.removed && <p>Removed {check.removed} job{check.removed === 1 ? "" : "s"} from the database because their location is outside India or they ask for more than {meta.fit.limit} year{meta.fit.limit === 1 ? "" : "s"} in their own text.</p>}
+          {fit && check?.error && <p className="text-warning">{check.error}</p>}
+        </div>
       )}
       {error && <p className="rounded-lg border border-warning/50 p-3 text-sm text-warning">{error}</p>}
 
@@ -115,6 +148,8 @@ export function JobsTab({ onOpened, onResearch }: { onOpened: () => void; onRese
               <p className={`truncate text-sm font-medium ${j.mark ? "text-muted-foreground line-through" : ""}`} title={j.title}>{j.title}</p>
               <p className="truncate text-xs text-muted-foreground">{[j.company, j.location].filter(Boolean).join(" · ")}</p>
               <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                {j.entry && <Badge variant="outline" className="border-success/40 text-success">Entry level</Badge>}
+                {j.years && <Badge variant="outline" className="font-normal">Asks {j.years} yrs</Badge>}
                 {j.confirmed && <Badge variant="outline" className="border-success/40 text-success"><Check className="size-3" />Employer page</Badge>}
                 {j.sources.slice(0, 2).map((s) => <Badge key={s} variant="secondary" className="font-normal">{s}</Badge>)}
                 {j.sources.length > 2 && <span className="text-xs text-muted-foreground">+{j.sources.length - 2}</span>}
