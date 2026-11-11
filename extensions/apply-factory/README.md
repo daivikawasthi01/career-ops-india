@@ -3,15 +3,15 @@
 Fills job application forms from your own earlier answers and learns the ones you type. Two parts:
 
 - `browser/` is a Chrome extension (Manifest V3) with a side panel.
-- `server.py` is a local API on `127.0.0.1:8765` that holds the knowledge base (`kb.sqlite`) and talks to a local Ollama model.
+- `ui/` is the source of the side panel and the CV studio: React, Tailwind and shadcn/ui, built into `browser/app` (committed, so loading the extension needs no build). After editing `ui/`, run `.venv/bin/python browser/build.py` (it runs `npm run build` in `ui/` and regenerates the manifest; `npm install` in `ui/` once first). The on-page pills and cards in `browser/content/suggest.js` use the same shadcn zinc tokens.
+- `server.py` is a local API on `127.0.0.1:8765` that holds the knowledge base (`kb.sqlite`) and sends model calls to hosted models (Groq, then Gemini, using keys from `career-ops/.env`) and falls back to `claude -p`. No model runs on this Mac. Nothing beyond the question, your CV text and the job text is sent.
 
 Nothing leaves your Mac unless you set `llm.fallback: groq` in `config.yaml`.
 
 ## Set up
 
 ```bash
-brew install ollama tectonic poppler && brew services start ollama
-ollama pull nomic-embed-text qwen3:8b
+brew install tectonic poppler   # and Claude Code, logged in, for the claude -p fallback
 
 cd extensions/apply-factory
 .venv/bin/python orchestrator.py init          # creates kb.sqlite (also run on every server start)
@@ -76,7 +76,7 @@ Forms also get: a list of empty required fields (outlined on the page when you p
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -t .
-# browser end to end (real Chromium, real Ollama, throw-away database):
+# browser end to end (real Chromium, real models, throw-away database):
 .venv/bin/python browser/e2e/server.py &      # prints the DB path
 AF_E2E_DB=<that path> node browser/e2e/run.mjs
 ```

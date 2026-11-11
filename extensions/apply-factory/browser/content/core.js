@@ -5,7 +5,7 @@
   const AF = (window.AF = { filled: new WeakMap() });
 
   const style = document.createElement('style');
-  style.textContent = '[data-af="fact"],[data-af="kb"],[data-af="similar"],[data-af="user"]{box-shadow:inset 3px 0 0 #e8907a !important}[data-af="draft"],[data-af="report"]{box-shadow:inset 3px 0 0 #d9b46a !important}[data-af="missing"]{outline:2px solid #c4533e !important;outline-offset:1px}';
+  style.textContent = '[data-af="fact"],[data-af="kb"],[data-af="similar"],[data-af="user"]{box-shadow:inset 3px 0 0 oklch(0.696 0.17 162.48) !important}[data-af="draft"],[data-af="report"]{box-shadow:inset 3px 0 0 oklch(0.705 0.015 286.067) !important}[data-af="missing"]{outline:2px solid oklch(0.704 0.191 22.216) !important;outline-offset:1px}';
   (document.head || document.documentElement).appendChild(style);
 
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();

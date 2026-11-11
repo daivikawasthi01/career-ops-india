@@ -47,7 +47,7 @@ check('service worker running', !!extId);
 const tabId = await worker.evaluate(async (u) => (await chrome.tabs.query({ url: u }))[0].id, URL);
 const panel = await ctx.newPage();
 await panel.setViewportSize({ width: 400, height: 900 });
-await panel.goto(`chrome-extension://${extId}/panel/index.html?tab=${tabId}`);
+await panel.goto(`chrome-extension://${extId}/app/panel.html?tab=${tabId}`);
 await panel.waitForTimeout(1500);
 const shot = process.env.AF_SHOTS || tmpdir();
 await panel.screenshot({ path: path.join(shot, 'panel-1-filled.png'), fullPage: true });
@@ -57,9 +57,9 @@ check('panel lists the free-text question under Needs you', /Needs you/.test(tex
 check('panel does not list the consent checkbox as fillable', !/Ready[\s\S]*terms and conditions/.test(text));
 
 // draft one answer from the panel with the local model, then use it
-await panel.locator('article', { hasText: 'Why do you want to work at Acme' }).getByRole('button', { name: 'Draft', exact: true }).click();
-await panel.waitForSelector('article textarea', { timeout: 90000 });
-const drafted = await panel.locator('article textarea').first().inputValue();
+await panel.locator('[data-field]', { hasText: 'Why do you want to work at Acme' }).getByRole('button', { name: 'Draft', exact: true }).click();
+await panel.waitForSelector('[data-field] textarea', { timeout: 90000 });
+const drafted = await panel.locator('[data-field] textarea').first().inputValue();
 check('draft written by the local model', drafted.length > 40, JSON.stringify(drafted.slice(0, 120)));
 await panel.screenshot({ path: path.join(shot, 'panel-2-draft.png'), fullPage: true });
 await panel.getByRole('button', { name: 'Use this answer' }).click();
@@ -80,9 +80,9 @@ check('quick score is on the 1 to 5 scale with five dimensions', globalScore >= 
 await panel.screenshot({ path: path.join(shot, 'panel-4-job.png'), fullPage: true });
 
 // cover letter: draft, attach as pdf (tectonic)
-await panel.locator('article', { hasText: 'Cover letter' }).getByRole('button', { name: 'Draft cover letter' }).click();
-await panel.waitForSelector('article textarea[aria-label="Cover letter"]', { timeout: 180000 });
-check('cover letter drafted', (await panel.locator('article textarea[aria-label="Cover letter"]').inputValue()).length > 100);
+await panel.locator('[data-field]', { hasText: 'Cover letter' }).getByRole('button', { name: 'Draft cover letter' }).click();
+await panel.waitForSelector('[data-field] textarea[aria-label="Cover letter"]', { timeout: 180000 });
+check('cover letter drafted', (await panel.locator('[data-field] textarea[aria-label="Cover letter"]').inputValue()).length > 100);
 await panel.getByRole('button', { name: 'Attach as PDF' }).click();
 await page.waitForFunction(() => document.querySelector('#cl').files.length === 1, null, { timeout: 60000 });
 check('cover letter pdf attached to the form', (await page.$eval('#cl', (e) => e.files[0].name)).startsWith('Cover-Letter-'), await page.$eval('#cl', (e) => e.files[0].name));

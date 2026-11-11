@@ -1,0 +1,18 @@
+import { chromium } from 'playwright';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const ext = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const out = process.env.AF_SHOTS || tmpdir();
+const ctx = await chromium.launchPersistentContext(mkdtempSync(path.join(tmpdir(), 'af-profile-')), { channel: 'chromium', headless: true, args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`] });
+await ctx.route('https://docs.google.com/forms/**', (r) => r.fulfill({ contentType: 'text/html', body: '<!doctype html><title>F</title><form><label for=a>First Name</label><input id=a><label for=b>Last Name</label><input id=b><label for=c>Email Address</label><input id=c></form>' }));
+const p = await ctx.newPage();
+p.on('console', (m) => { if (m.type() === 'error') console.log('console:', m.text().slice(0, 200)); });
+ctx.on('page', () => {});
+await p.setViewportSize({ width: 1100, height: 700 });
+await p.goto('https://docs.google.com/forms/d/e/X/viewform');
+await p.waitForTimeout(6000);
+for (const f of p.frames()) console.log('frame:', f.url().slice(0, 90), (await f.evaluate(() => document.body?.innerText.length).catch(() => 'n/a')));
+await p.screenshot({ path: path.join(out, 'dock.png') });
+await ctx.close();

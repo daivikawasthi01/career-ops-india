@@ -49,7 +49,7 @@ def embed_one(text: str) -> list[float] | None:
 
 def index_missing(conn, limit: int = 200) -> int:
     """Embed question variants and writing samples that have no vector yet. Returns how many were added."""
-    model = config.load()["llm"]["embed_model"]
+    model = "none"
     added = 0
     rows = conn.execute("""
         SELECT v.variant_id, v.question_text FROM kb_question_variants v
@@ -73,7 +73,7 @@ def index_missing(conn, limit: int = 200) -> int:
 
 def nearest_variants(conn, text: str, k: int = 3) -> list[dict]:
     """Closest stored wordings to `text`: [{intent_key, question_text, score}], best first."""
-    model = config.load()["llm"]["embed_model"]
+    model = "none"
     q = embed_one(text)
     out = []
     if q is not None:
@@ -92,7 +92,7 @@ def style_examples(conn, question: str, k: int) -> list[dict]:
     """Past long answers whose question is closest to this one; newest first when vectors are unavailable."""
     q = embed_one(question)
     rows = conn.execute("SELECT question_text, answer, vec, model FROM writing_samples ORDER BY created_at DESC LIMIT 300").fetchall()
-    model = config.load()["llm"]["embed_model"]
+    model = "none"
     scored = []
     for r in rows:
         if q is not None and r["vec"] and r["model"] == model:

@@ -2,31 +2,37 @@
 // offers the model's answer. Nothing is written until you press Use, and you can edit the text in the card first.
 (() => {
   if (!window.AF || AF.suggestCard) return;
-  const CSS = `.af-card{position:absolute;z-index:2147483000;width:min(360px,calc(100vw - 24px));box-sizing:border-box;padding:10px 12px;border-radius:8px;
-    background:#2b2522;color:#f0e9e3;font:13px/1.45 system-ui,sans-serif;box-shadow:0 0 0 1px #3a312d}
-    .af-card *{box-sizing:border-box;font:inherit}.af-card b{display:block;margin-bottom:6px;color:#f0a493;font-weight:600}
-    .af-card textarea{width:100%;min-height:96px;max-height:220px;resize:vertical;padding:6px 8px;border:1px solid #4a403b;border-radius:6px;background:#1d1917;color:#f0e9e3}
-    .af-card .af-row{display:flex;gap:6px;margin-top:8px}.af-card button{cursor:pointer;padding:5px 10px;border-radius:6px;border:1px solid #4a403b;background:#352d2a;color:#f0e9e3}
-    .af-card button.af-use{background:#e8907a;border-color:#e8907a;color:#2a1a15}.af-card button:focus-visible{outline:2px solid #c4533e;outline-offset:1px}
-    .af-card p{margin:0;color:#bdb0a7}`;
+  // shadcn "zinc" dark tokens, shared by every on-page element (card, pill, dock, chip). One place for the colours.
+  const TOKENS = `.af-card,.af-pill,.af-dock,.af-chip{--af-bg:oklch(0.21 0.006 285.885);--af-fg:oklch(0.985 0 0);--af-muted:oklch(0.705 0.015 286.067);
+    --af-border:oklch(1 0 0 / 14%);--af-input:oklch(0.141 0.005 285.823);--af-primary:oklch(0.92 0.004 286.32);--af-primary-fg:oklch(0.21 0.006 285.885);
+    --af-secondary:oklch(0.274 0.006 286.033);--af-ring:oklch(0.552 0.016 285.938);--af-radius:10px;font-family:"Geist Variable",ui-sans-serif,system-ui,sans-serif}`;
+  const CSS = `.af-card{position:absolute;z-index:2147483000;width:min(360px,calc(100vw - 24px));box-sizing:border-box;padding:12px;border-radius:var(--af-radius);
+    background:var(--af-bg);color:var(--af-fg);font-size:13px;line-height:1.45;box-shadow:0 0 0 1px var(--af-border)}
+    .af-card *{box-sizing:border-box;font:inherit}.af-card b{display:block;margin-bottom:6px;color:var(--af-fg);font-weight:600}
+    .af-card textarea{width:100%;min-height:96px;max-height:220px;resize:vertical;padding:8px;border:1px solid var(--af-border);border-radius:calc(var(--af-radius) - 2px);background:var(--af-input);color:var(--af-fg)}
+    .af-card textarea:focus-visible{outline:2px solid var(--af-ring);outline-offset:1px}
+    .af-card .af-row{display:flex;gap:6px;margin-top:8px}.af-card button{cursor:pointer;padding:5px 10px;border-radius:calc(var(--af-radius) - 2px);border:1px solid var(--af-border);background:var(--af-secondary);color:var(--af-fg)}
+    .af-card button:hover{background:oklch(0.32 0.006 286)}
+    .af-card button.af-use{background:var(--af-primary);border-color:var(--af-primary);color:var(--af-primary-fg);font-weight:500}.af-card button:focus-visible{outline:2px solid var(--af-ring);outline-offset:1px}
+    .af-card p{margin:0;color:var(--af-muted)}`;
   const PILL = `.af-pill{position:fixed;z-index:2147483000;right:16px;bottom:16px;display:flex;border-radius:999px;overflow:hidden;
-    background:#2b2522;box-shadow:0 0 0 1px #3a312d;font:13px/1.2 system-ui,sans-serif}
-    .af-pill button{all:unset;cursor:pointer;box-sizing:border-box;padding:9px 14px;color:#f0e9e3;font:inherit}
-    .af-pill .af-pill-open{background:#e8907a;color:#2a1a15;font-weight:600}.af-pill .af-pill-x{padding:9px 12px;color:#bdb0a7}
-    .af-pill button:focus-visible{outline:2px solid #f0a493;outline-offset:-2px}`;
+    background:var(--af-bg);box-shadow:0 0 0 1px var(--af-border);font-size:13px;line-height:1.2}
+    .af-pill button{all:unset;cursor:pointer;box-sizing:border-box;padding:9px 14px;color:var(--af-fg);font:inherit}
+    .af-pill .af-pill-open{background:var(--af-primary);color:var(--af-primary-fg);font-weight:500}.af-pill .af-pill-x{padding:9px 12px;color:var(--af-muted)}
+    .af-pill button:focus-visible{outline:2px solid var(--af-ring);outline-offset:-2px}`;
   const DOCK = `.af-dock{position:fixed;z-index:2147483001;top:12px;right:12px;bottom:12px;width:min(400px,calc(100vw - 24px));display:flex;flex-direction:column;
-    border-radius:10px;overflow:hidden;background:#1d1917;box-shadow:0 0 0 1px #3a312d}
-    .af-dock iframe{flex:1;width:100%;border:0;background:#1d1917;color-scheme:dark}
-    .af-dock .af-dock-x{all:unset;cursor:pointer;align-self:flex-end;margin:6px 10px 0;padding:3px 8px;border-radius:6px;color:#bdb0a7;font:12px system-ui,sans-serif}
-    .af-dock .af-dock-x:hover{color:#f0e9e3}.af-dock .af-dock-x:focus-visible{outline:2px solid #f0a493}`;
-  const CHIP = `.af-chip{position:absolute;z-index:2147482000;display:inline-flex;max-width:min(420px,60vw);border-radius:999px;overflow:hidden;background:#2b2522;
-    box-shadow:0 0 0 1px #3a312d;font:12px/1.3 system-ui,sans-serif}
-    .af-chip button{all:unset;cursor:pointer;box-sizing:border-box;padding:4px 10px;color:#f0e9e3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .af-chip[data-tone="ready"] .af-chip-main{background:#e8907a;color:#2a1a15;font-weight:600}
-    .af-chip button[disabled]{cursor:default;color:#bdb0a7}.af-chip .af-chip-side{color:#bdb0a7;padding-inline:8px;border-inline-start:1px solid #3a312d}
-    .af-chip .af-chip-side:hover{color:#f0e9e3}.af-chip button:focus-visible{outline:2px solid #f0a493;outline-offset:-2px}`;
+    border-radius:var(--af-radius);overflow:hidden;background:oklch(0.141 0.005 285.823);box-shadow:0 0 0 1px var(--af-border)}
+    .af-dock iframe{flex:1;width:100%;border:0;background:oklch(0.141 0.005 285.823);color-scheme:dark}
+    .af-dock .af-dock-x{all:unset;cursor:pointer;align-self:flex-end;margin:6px 10px 0;padding:3px 8px;border-radius:6px;color:var(--af-muted);font-size:12px}
+    .af-dock .af-dock-x:hover{color:var(--af-fg)}.af-dock .af-dock-x:focus-visible{outline:2px solid var(--af-ring)}`;
+  const CHIP = `.af-chip{position:absolute;z-index:2147482000;display:inline-flex;max-width:min(420px,60vw);border-radius:999px;overflow:hidden;background:var(--af-bg);
+    box-shadow:0 0 0 1px var(--af-border);font-size:12px;line-height:1.3}
+    .af-chip button{all:unset;cursor:pointer;box-sizing:border-box;padding:4px 10px;color:var(--af-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font:inherit}
+    .af-chip[data-tone="ready"] .af-chip-main{background:var(--af-primary);color:var(--af-primary-fg);font-weight:500}
+    .af-chip button[disabled]{cursor:default;color:var(--af-muted)}.af-chip .af-chip-side{color:var(--af-muted);padding-inline:8px;border-inline-start:1px solid var(--af-border)}
+    .af-chip .af-chip-side:hover{color:var(--af-fg)}.af-chip button:focus-visible{outline:2px solid var(--af-ring);outline-offset:-2px}`;
   const style = document.createElement('style');
-  style.textContent = CSS + PILL + DOCK + CHIP;
+  style.textContent = TOKENS + CSS + PILL + DOCK + CHIP;
   (document.head || document.documentElement).appendChild(style);
 
   let card = null;
@@ -120,7 +126,7 @@
   AF.closeDock = () => { dock?.remove(); dock = null; pill?.remove(); pill = null; };
   AF.dock = ({ onClose }) => {
     if (dock) return;
-    const frame = el('iframe', { src: chrome.runtime.getURL('panel/index.html'), title: 'Apply', allow: '' });
+    const frame = el('iframe', { src: chrome.runtime.getURL('app/panel.html'), title: 'Apply', allow: '' });
     const close = el('button', { type: 'button', class: 'af-dock-x', 'aria-label': 'Close Apply', text: 'Close', onclick: () => { dock.remove(); dock = null; onClose?.(); } });
     dock = el('div', { class: 'af-dock', role: 'complementary', 'aria-label': 'Apply' }, close, frame);
     document.body.append(dock);

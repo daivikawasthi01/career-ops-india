@@ -261,6 +261,25 @@ class SuggestTest(unittest.TestCase):
         self.assertEqual((out["results"], sorted(out["single"])), ([], ["a", "b"]))
         self.assertEqual(self.fake.chat_calls, 0)
 
+    def test_claude_fallback_picks_the_model_by_size_and_rests_after_a_plan_limit(self):
+        from lib import llm
+        seen = []
+        def run(args, stdin, timeout, cwd):
+            seen.append(args[args.index("--model") + 1])
+            if len(seen) == 3:
+                return 1, json.dumps({"result": "You have hit your usage limit, resets later", "is_error": True})
+            return 0, json.dumps({"result": "ok"})
+        llm.run_claude = run
+        self.assertEqual(llm.call("short", num_predict=40), "ok")       # a short fact: the small model
+        self.assertEqual(llm.call("long", num_predict=400), "ok")       # a long answer: the large one
+        self.assertEqual(seen, ["haiku", "sonnet"])
+        with self.assertRaises(llm.LLMUnavailable):
+            llm.call("limit", num_predict=400)
+        before = len(seen)
+        with self.assertRaises(llm.LLMUnavailable):
+            llm.call("again", num_predict=400)
+        self.assertEqual(len(seen), before)                              # resting: claude is not called again for an hour
+
     def test_a_short_fact_makes_one_small_call_with_no_style_lookup(self):
         self.fake.chat_replies = ["Mumbai"]
         with db.tx(self.db) as conn:

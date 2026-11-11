@@ -172,7 +172,7 @@ const panel = {
     return { ...(first?.ctx || { title: tab?.title || '', company: '', jd_text: '' }), url: tab?.url || '' };
   },
   async 'open-studio'({ tabId, view }) {
-    await chrome.tabs.create({ url: chrome.runtime.getURL(`studio/index.html#tab=${tabId || ''}&view=${view || 'edit'}`) });
+    await chrome.tabs.create({ url: chrome.runtime.getURL(`app/studio.html#tab=${tabId || ''}&view=${view || 'edit'}`) });
     return { ok: true };
   },
   async 'attach-file'({ tabId, name, base64, kind }) {

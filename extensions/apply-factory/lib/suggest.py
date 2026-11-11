@@ -184,7 +184,7 @@ def _cache_key(field: dict, ctx: dict) -> str:
     visit shows the pill at once. A different job, field limit, option list, CV or model is a different key."""
     raw = "|".join([str(field.get("label", "")).strip().lower(), str(field.get("type", "")), str(field.get("maxlength") or ""),
                     ";".join(str(o) for o in field.get("options") or []), str(ctx.get("title", "")), str(ctx.get("company", "")),
-                    str(ctx.get("jd_text", ""))[:600], str(ctx.get("report_path", "")), str(llm._cfg().get("model")), str((llm._cfg().get("cloud") or {}).get("groq_model")), str(len(profile.cv_text()))])
+                    str(ctx.get("jd_text", ""))[:600], str(ctx.get("report_path", "")), str((llm._cfg().get("claude") or {}).get("model")), str((llm._cfg().get("cloud") or {}).get("groq_model")), str(len(profile.cv_text()))])
     return hashlib.sha1(raw.encode()).hexdigest()
 
 
@@ -405,7 +405,7 @@ def _free_text(conn, field: dict, label: str, job: str, ctx: dict) -> dict:
     answers to similar questions, and the box; only a question no rule covers asks the model first.
     A short fact (a name, a city, a link) gets a small prompt; an open question gets the CV, rules, voice and your past answers."""
     limit = int(field.get("maxlength") or 0)
-    # The CV, rules and job text come first and never change between questions on a page, so Ollama reads them once and reuses
+    # The CV, rules and job text come first and never change between questions on a page, so a hosted provider can cache them
     # that for every later question. What changes per question goes last.
     prefix = lambda: (f"CANDIDATE CV:\n{profile.cv_text()[:7000]}\n\nWRITING RULES:\n{context.writing_rules() or '(none)'}\n\n"
                       f"VOICE:\n{context.voice()[:1200] or '(none)'}\n\nPROOF POINTS:\n{context.digest()[:1200] or '(none)'}\n\n{job}")

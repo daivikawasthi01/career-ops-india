@@ -86,7 +86,7 @@ class ServerTest(unittest.TestCase):
         code, _ = self.call("/draft", {"field": {"id": "a", "label": "Tell us about a project", "type": "textarea"}}, token)
         self.assertEqual(code, 503)
         code, out = self.call("/status", token=token)
-        self.assertEqual((code, out["llm"]["ok"]), (200, False))
+        self.assertEqual((code, sorted(out["llm"])[:2]), (200, ["backend", "chat_model"]))  # status reads configuration, it does not call a model
 
     def test_rules_endpoint_matches_file(self):
         token = self.pair()

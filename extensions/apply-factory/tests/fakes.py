@@ -21,38 +21,39 @@ def vec(text: str) -> list[float]:
 
 
 class FakeOllama:
+    """Scripted model replies (the name is kept from when the model was local). Chat goes through the claude -p seam, embeddings
+    through llm.embed; the hosted pool is empty so nothing reaches the network."""
+
     def __init__(self, chat_replies=None, down=False):
         self.chat_replies = list(chat_replies or [])
         self.down = down
         self.chat_calls = 0
 
-    def post(self, url, body, headers=None, timeout=0):
+    def claude(self, args, stdin, timeout, cwd):
         if self.down:
             raise llm.LLMUnavailable("fake: down")
-        if url.endswith("/api/embed"):
-            return {"embeddings": [vec(t) for t in body["input"]]}
-        if url.endswith("/api/chat"):
-            self.chat_calls += 1
-            reply = self.chat_replies.pop(0) if self.chat_replies else "{}"
-            return {"message": {"content": reply if isinstance(reply, str) else json.dumps(reply)}}
-        raise AssertionError(url)
+        self.chat_calls += 1
+        reply = self.chat_replies.pop(0) if self.chat_replies else "{}"
+        return 0, json.dumps({"result": reply if isinstance(reply, str) else json.dumps(reply), "is_error": False})
 
-    def get(self, url, timeout=5):
+    def post(self, url, body, headers=None, timeout=0):
+        raise AssertionError(f"unexpected network call: {url}")
+
+    def embed(self, texts):
         if self.down:
             raise llm.LLMUnavailable("fake: down")
-        return {"models": [{"name": "qwen2.5:7b-instruct"}, {"name": "nomic-embed-text:latest"}]}
+        return [vec(t) for t in texts]
 
     def install(self):
-        self._saved = (llm.post, llm.get, dict(llm._chat_model_cache), llm._pool)
-        llm.post, llm.get = self.post, self.get
+        self._saved = (llm.post, llm.run_claude, llm.embed, llm._pool, llm.shutil.which)
+        llm.post, llm.run_claude, llm.embed = self.post, self.claude, self.embed
         llm._pool = lambda: ()  # tests never use the real hosted keys
+        llm.shutil.which = lambda name, *a, **k: "/usr/bin/claude" if name == "claude" else self._saved[4](name, *a, **k)
         llm._REST.clear()
-        llm._chat_model_cache.clear()
+        llm._CLAUDE_REST[0] = 0.0
 
     def uninstall(self):
-        llm.post, llm.get, cache, llm._pool = self._saved
-        llm._chat_model_cache.clear()
-        llm._chat_model_cache.update(cache)
+        llm.post, llm.run_claude, llm.embed, llm._pool, llm.shutil.which = self._saved
 
 
 def temp_db() -> str:

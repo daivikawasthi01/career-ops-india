@@ -23,7 +23,7 @@ const id = new URL(worker.url()).host;
 const studio = await ctx.newPage();
 await studio.setViewportSize({ width: 1400, height: 900 });
 studio.on('dialog', (d) => d.accept());
-await studio.goto(`chrome-extension://${id}/studio/index.html#view=import`);
+await studio.goto(`chrome-extension://${id}/app/studio.html#view=import`);
 await studio.waitForTimeout(1500);
 
 const seeded = !!process.env.AF_SEED_TEX;

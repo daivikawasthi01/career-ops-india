@@ -56,9 +56,8 @@ def cmd_doctor(args):
                       ("pdftoppm", "brew install poppler"), ("pdftohtml", "brew install poppler")):
         row(tool, bool(shutil.which(tool)), fix)
     st = llm.status()
-    row("ollama running", st["ok"] or "error" not in st, "brew services start ollama")
-    row(f"chat model ({_cfg()['llm']['model']})", st.get("chat_model") == _cfg()["llm"]["model"], f"ollama pull {_cfg()['llm']['model']}")
-    row(f"embedding model ({_cfg()['llm']['embed_model']})", bool(st.get("embeddings")), f"ollama pull {_cfg()['llm']['embed_model']}")
+    row("hosted model keys (Groq or Gemini in career-ops/.env)", st["cloud"]["keys"] > 0, "add GROQ_API_KEY_8 / GEMINI_API_KEY_8 to career-ops/.env")
+    row("claude -p (the fallback)", st["claude"], "install Claude Code and log in")
     for r in resume.status():
         row(f"{r['label']} pdf ({r['file']})", r["exists"] or r["uses_default"], f"put the PDF in output/resumes/ or add it in the panel" if not r["exists"] else "")
     for s_ in cv_store.slots():

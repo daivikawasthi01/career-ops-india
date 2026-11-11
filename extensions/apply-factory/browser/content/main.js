@@ -244,7 +244,7 @@
   window.addEventListener('scroll', () => { clearTimeout(scrollTimer); scrollTimer = setTimeout(() => { predraft(); syncChips(); }, 400); }, { passive: true });
 
   // Several drafts at a time (rules.json drafting.parallel): a long form is not one long queue. How many really run together is
-  // up to Ollama (OLLAMA_NUM_PARALLEL); the rest wait in its queue, in page order.
+  // up to the hosted providers and claude -p (two at a time); the rest wait, in page order.
   const singles = new Set(); // questions that must be written one by one (the batch could not take them)
   async function predraft() {
     if (predrafting || state.mode !== 'assist') return;

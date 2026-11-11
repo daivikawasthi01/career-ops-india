@@ -55,7 +55,8 @@ class ExtensionConsistencyTest(unittest.TestCase):
         self.assertNotRegex(src, r"requestSubmit|\.submit\(\)|form\.submit")
 
     def test_background_has_no_remote_endpoints(self):
-        src = (BROWSER / "background.js").read_text() + (BROWSER / "panel" / "panel.js").read_text()
+        ui = config.ROOT / "ui" / "src"  # the side panel and CV studio sources
+        src = (BROWSER / "background.js").read_text() + "".join(f.read_text() for f in sorted(ui.rglob("*")) if f.suffix in (".ts", ".tsx"))
         for url in re.findall(r"https?://[^\s'\"`)]+", src):
             self.assertTrue(url.startswith("http://127.0.0.1") or url.startswith("https://${"), url)
 

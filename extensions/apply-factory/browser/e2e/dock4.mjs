@@ -19,7 +19,7 @@ await a.waitForSelector('.af-dock iframe', { timeout: 30000 }).catch(() => {});
 check('with no side panel open the page panel opens by itself', !!(await a.$('.af-dock')));
 
 const panel = await ctx.newPage(); // stands in for the side panel: same page, top-level, same window
-await panel.goto(`chrome-extension://${id}/panel/index.html`);
+await panel.goto(`chrome-extension://${id}/app/panel.html`);
 await panel.waitForTimeout(1500);
 const b = await ctx.newPage();
 await b.goto('https://careers.dockdemo.net/apply?second=1');

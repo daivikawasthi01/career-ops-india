@@ -18,7 +18,7 @@
     }
   },
   "side_panel": {
-    "default_path": "panel/index.html"
+    "default_path": "app/panel.html"
   },
   "background": {
     "service_worker": "background.js"
@@ -40,8 +40,7 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "panel/*",
-        "shared/*"
+        "app/*"
       ],
       "matches": [
         "https://*/*"
