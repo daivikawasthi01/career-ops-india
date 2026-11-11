@@ -150,6 +150,34 @@ function Stats() {
   )
 }
 
+function ShareCard() {
+  const [s, setS] = useState<any>(null)
+  const [note, setNote] = useState("")
+  const [showReport, setShowReport] = useState(false)
+  useEffect(() => { api("/share/state", {}).then((r) => { if (!r.error) setS(r) }) }, [])
+  if (!s) return null
+  const copy = async () => {
+    const r = await api("/share/text", {})
+    if (r.error) { setNote(String(r.error)); return }
+    try { await navigator.clipboard.writeText(r.text); setNote("Copied. Paste it into a message to whoever asked.") } catch { setNote("Chrome blocked copying. Try again after clicking inside the panel.") }
+  }
+  return (
+    <Card size="sm">
+      <CardHeader><CardTitle>Usage counts</CardTitle></CardHeader>
+      <CardContent className="space-y-3">
+        <Hint>{s.enabled ? "Once a day this app sends an anonymous report to whoever shared it with you: " : "You can send an anonymous report to whoever shared it with you: "}how many forms, answers and drafts, and whether setup is finished. Never your name, CV, answers, companies, job links or keys.</Hint>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" onClick={copy}>Copy my stats</Button>
+          <Button size="sm" variant="ghost" onClick={() => setShowReport((v) => !v)}>{showReport ? "Hide" : "See"} what is sent</Button>
+        </div>
+        {showReport && <pre className="max-h-48 overflow-auto rounded-lg bg-muted p-2 text-xs">{JSON.stringify(s.report, null, 2)}</pre>}
+        {s.enabled && s.last_sent && <p className="text-xs text-muted-foreground">Last sent {s.last_sent.replace("T", " ").slice(0, 16)}.</p>}
+        {note && <Hint>{note}</Hint>}
+      </CardContent>
+    </Card>
+  )
+}
+
 export function YouTab({ p }: { p: Panel }) {
   const { st, send } = p
   if (!st || st.error) return <Hint>Start the local helper first. The Page tab shows how.</Hint>
@@ -168,10 +196,12 @@ export function YouTab({ p }: { p: Panel }) {
       <StyleCard />
       <GmailCard />
       <Stats />
+      <ShareCard />
       <Card size="sm">
         <CardHeader><CardTitle>What leaves this Mac</CardTitle></CardHeader>
         <CardContent className="space-y-2">
           <Hint>Your answers, details and CV files stay on this Mac. When you draft an answer or a job is scored, the question, the job text and the relevant parts of your CV are sent to the model service named at the top (Groq or Gemini, then Claude if both are unavailable).</Hint>
+          <Hint>Anonymous usage counts (see Usage counts above) are sent once a day when the person who shared this app has set that up. They never include answers, CV text or job details.</Hint>
           <Hint>Email checks in the Company tab contact the company's mail server directly. Passwords, card numbers and ID numbers are never read.</Hint>
         </CardContent>
       </Card>

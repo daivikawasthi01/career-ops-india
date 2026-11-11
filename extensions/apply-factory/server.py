@@ -58,7 +58,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from learner import learn as learner
-from lib import (account, onboard, scan, style, checks, company as companies, config, cover, cv_import, cv_store, db, gmail, jobs, knockout, llm, mailcheck, options, outreach, resume, rules,
+from lib import (share, account, onboard, scan, style, checks, company as companies, config, cover, cv_import, cv_store, db, gmail, jobs, knockout, llm, mailcheck, options, outreach, resume, rules,
                  score as scorer, suggest, tailor, tex, tracker, years)
 from lib import blacklist, jobs_prune
 
@@ -253,6 +253,15 @@ def make_handler(state: State):
                 return self._send(200, style.set_(body.get("emails"), body.get("cover_tex")) if ("emails" in body or "cover_tex" in body) else style.get())
             if path == "/facts":
                 return self._send(200, account.set_facts(dict(body["values"])) if body.get("values") else account.get_facts())
+            if path.startswith("/share/"):
+                with db.tx(state.db_path) as conn:
+                    if path == "/share/state":
+                        return self._send(200, share.state(conn))
+                    if path == "/share/text":
+                        return self._send(200, {"text": share.text(conn)})
+                    if path == "/share/send":
+                        share.send(conn)
+                        return self._send(200, share.state(conn))
             if path.startswith("/answers/") or path in ("/stats", "/event"):
                 with db.tx(state.db_path) as conn:
                     if path == "/answers/list":
@@ -529,6 +538,7 @@ def run(host: str | None = None, port: int | None = None, db_path: str | None = 
     host, port = host or cfg["host"], port if port is not None else cfg["port"]
     state = State(db_path or str(config.path("kb_db")), state_file)
     threading.Thread(target=state.worker, daemon=True).start()
+    threading.Thread(target=lambda: share.loop(state.db_path), daemon=True).start()
     threading.Thread(target=lambda: _safe_retry(state), daemon=True).start()
     httpd = ThreadingHTTPServer((host, port), make_handler(state))
     print(f"apply-factory listening on http://{host}:{httpd.server_address[1]}  (model: {llm.status().get('chat_model') or 'not reachable'})")

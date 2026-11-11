@@ -43,6 +43,12 @@ server:
   host: "127.0.0.1"
   port: 8765
 
+# Anonymous usage report, counts only, sent once a day. url is the receiving address, set once here so every install has it (tools/share-receiver.gs
+# is a Google Apps Script that logs reports to a Sheet). With url empty nothing is sent. A person can turn it off with share: {enabled: false} in config.local.yaml.
+share:
+  url: "https://script.google.com/macros/s/AKfycbzClx_EXKvPK3JTiVLSKkEoVGh-9w7irdvnWMcgzT-VFTFP3JVLP1EqYk_w77JyV4_l/exec"
+  enabled: true
+
 paths_extra:
   facts: "facts.yml"
   cv: "../../cv.md"

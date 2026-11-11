@@ -81,7 +81,7 @@ When you press a Next or Submit style button, or a form submits, the extension r
 
 ## The You tab
 
-The four-step setup (model key, details, CV, job search; each step reopens to change an answer; details are written into `facts.yml` in place, comments kept), the saved answers learned so far (search, fix, forget), CV files, behaviour switches (fill on open, open Apply on the page; both fill by default, the page panel is off by default), a local weekly total of fills and drafts, and what leaves your Mac. After a fill, "Undo the last fill" in the Page tab puts back what the boxes held. After a Submit-style click the panel asks whether to mark the job as applied.
+The four-step setup (model key, details, CV, job search; each step reopens to change an answer; details are written into `facts.yml` in place, comments kept), the saved answers learned so far (search, fix, forget), CV files, behaviour switches (fill on open, open Apply on the page; both fill by default, the page panel is off by default), a local weekly total of fills and drafts, "Usage counts" (the daily anonymous report and Copy my stats, below), and what leaves your Mac. After a fill, "Undo the last fill" in the Page tab puts back what the boxes held. After a Submit-style click the panel asks whether to mark the job as applied.
 
 ## Site modes
 
@@ -123,3 +123,10 @@ Forms also get: a list of empty required fields (outlined on the page when you p
 .venv/bin/python browser/e2e/server.py &      # prints the DB path
 AF_E2E_DB=<that path> node browser/e2e/run.mjs
 ```
+
+## Seeing how people use it
+
+- **Daily anonymous report.** `share.url` in `config.yaml` is the receiving address, set once by you so every install has it already; nobody enters it. `tools/share-receiver.gs` is a ready Google Apps Script that appends each report to a Sheet (setup steps are in its first lines). With an address set, the helper sends one report a day with no button to press. With it empty, nothing is sent. The report is counts only: a random install id, app version, operating system, setup steps finished, and forms, answers and drafts for 7 days, 30 days and all time, plus the number of days used in the last 30. It never holds names, emails, CV text, answers, companies, job links or keys. The You tab, under Usage counts, says this and shows the exact report. Someone who does not want it adds `share: {enabled: false}` to their `config.local.yaml`. The install id lives in `data/share.json`; delete the file to reset it.
+- **Copy my stats.** The same card has a button that copies a short text summary for someone to paste to you. The app sends nothing for that.
+
+Tell people what you collect before you share the repo. The code is open, so it has to match what you say.
