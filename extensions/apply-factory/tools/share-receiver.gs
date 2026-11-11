@@ -42,11 +42,10 @@ function buildDashboard() {
   latest.getRange("A2").setFormula("=IFERROR(SORTN(SORT(Sheet1!A2:P,1,FALSE),9^9,2,2,TRUE),\"\")");
 
   const calc = fresh("Calc");
-  calc.getRange("A1").setFormula("=QUERY({ARRAYFORMULA(INT(Sheet1!A2:A)),Sheet1!B2:B},\"select Col1, count(Col2) where Col2 is not null group by Col1 order by Col1 label Col1 'Day', count(Col2) 'Reports'\",1)");
+  calc.getRange("A1").setFormula("=IFERROR(QUERY({ARRAYFORMULA(TEXT(INT(FILTER(Sheet1!A2:A,Sheet1!B2:B<>\"\")),\"yyyy-mm-dd\")),FILTER(Sheet1!B2:B,Sheet1!B2:B<>\"\")},\"select Col1, count(Col2) group by Col1 order by Col1 label Col1 'Day', count(Col2) 'Reports'\",0),\"\")");
   calc.getRange("D1").setFormula("=IFERROR(QUERY(Latest!A2:P,\"select C, count(B) where C is not null group by C label C 'Version', count(B) 'Installs'\",0),\"\")");
   calc.getRange("G1").setFormula("=IFERROR(QUERY(Latest!A2:P,\"select D, count(B) where D is not null group by D label D 'System', count(B) 'Installs'\",0),\"\")");
   calc.getRange("J1").setFormula("=IFERROR(QUERY(Latest!A2:P,\"select F, count(B) where B is not null group by F order by F label F 'Setup steps done', count(B) 'Installs'\",0),\"\")");
-  calc.getRange("A:A").setNumberFormat("d mmm");
 
   const d = fresh("Dashboard");
   d.setHiddenGridlines(true);
@@ -70,7 +69,7 @@ function buildDashboard() {
   d.getRange("A6").setValue("Setup finished is the share who got through all five steps. Minutes saved is an estimate: 10 seconds per answer, 90 per draft.").setFontColor("#80868b").setFontSize(9);
 
   const chart = (type, range, title, col, row, w, h) => d.insertChart(d.newChart().setChartType(type).addRange(range)
-    .setPosition(row, col, 0, 0).setOption("title", title).setOption("legend", { position: "none" }).setOption("width", w).setOption("height", h)
+    .setNumHeaders(1).setPosition(row, col, 0, 0).setOption("title", title).setOption("legend", { position: "none" }).setOption("width", w).setOption("height", h)
     .setOption("colors", ["#1a73e8"]).build());
   chart(Charts.ChartType.COLUMN, calc.getRange("A:B"), "Reports per day", 1, 8, 470, 240);
   chart(Charts.ChartType.COLUMN, calc.getRange("J:K"), "Setup steps done, per install", 5, 8, 470, 240);
