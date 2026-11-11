@@ -70,3 +70,37 @@ class Apply(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ForeignLocation(unittest.TestCase):
+    RULES = {**RULES, "drop_foreign_location": True}
+
+    def apply(self, rows, run):
+        return freshness.apply(rows, self.RULES, today=TODAY, locations_run=run)
+
+    def test_a_clearly_foreign_location_is_dropped_and_counted(self):
+        rows = [row(location="Boston, MA"), row(location="Bengaluru"), row(location="")]
+        kept, dropped = self.apply(rows, lambda locs: [l for l in locs if "Boston" in l])
+        self.assertEqual([r["location"] for r in kept], ["Bengaluru", ""])
+        self.assertEqual(dropped["location"], 1)
+
+    def test_the_helper_is_asked_once_with_distinct_places(self):
+        asked = []
+        self.apply([row(location="Austin"), row(location="Austin"), row(location="Pune")], lambda locs: asked.append(locs) or [])
+        self.assertEqual(asked, [["Austin", "Pune"]])
+
+    def test_a_broken_helper_drops_nothing(self):
+        def boom(_):
+            raise OSError("node missing")
+        kept, dropped = self.apply([row(location="Boston")], boom)
+        self.assertEqual(len(kept), 1)
+        self.assertFalse(dropped)
+
+    def test_the_switch_turns_it_off(self):
+        kept, _ = freshness.apply([row(location="Boston")], RULES, today=TODAY, locations_run=lambda l: l)
+        self.assertEqual(len(kept), 1)
+
+    def test_the_real_helper_agrees_on_a_mixed_batch(self):
+        kept, dropped = freshness.apply([row(location="Ann Arbor, MI, United States"), row(location="Bangalore · London"), row(location="Thane"), row(location="Remote")], self.RULES, today=TODAY)
+        self.assertEqual([r["location"] for r in kept], ["Bangalore · London", "Thane", "Remote"])
+        self.assertEqual(dropped["location"], 1)

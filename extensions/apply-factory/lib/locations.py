@@ -1,7 +1,7 @@
 """
 Which job locations clearly lie outside India, so those jobs can be hidden and removed.
 
-The test is one-sided on purpose (see tools/locations.mjs): a location counts only when it names a foreign country, US state or well-known
+The test is one-sided on purpose (see tools/foreign-locations.mjs): a location counts only when it names a foreign country, US state or well-known
 foreign city and nothing Indian. Unknown places stay, because no list of Indian towns is complete and a wrongly deleted job is worse
 than a stray one. If the helper cannot run, nothing is reported and nothing is hidden or deleted.
 """
@@ -13,7 +13,7 @@ from typing import Callable, Iterable
 
 from . import config
 
-HELPER = config.ROOT / "tools" / "locations.mjs"
+HELPER = config.CAREEROPS / "tools" / "foreign-locations.mjs"
 
 
 def _run_node(locations: list[str]) -> list[str]:

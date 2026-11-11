@@ -1,6 +1,7 @@
 """
-Remove jobs from the scanner's jobs.db that do not match this profile: their own text clearly asks for more years than you have, or their
-location clearly lies outside India (lib/locations.py; unknown places are kept).
+Remove jobs from the scanner's jobs.db that do not match this profile: their own text clearly asks for more years than you have, their title
+is above entry level (Senior, Lead, Principal ... from jobs.seniority_words), or their location clearly lies outside India
+(lib/locations.py; unknown places are kept).
 
 This is the only place the extension writes to jobs.db, and only on an explicit confirm. It follows the scanner's own retention rules
 (tools/store.py expire_jobs): the database is backed up first, the posting's URLs and fuzzy key go into `seen` as tombstones so the
@@ -50,6 +51,8 @@ def candidates(kb) -> list[dict]:
             why = f"location: {(r['location'] or '').strip()[:60]} is outside India"
         elif years.too_many_years(yrs.get(r["canonical_url"])):
             why = f"experience: asks {years.label(yrs[r['canonical_url']])} years, more than {years.limit():g}"
+        elif jobs.too_senior_title(r["title"]):
+            why = "title: above entry level"
         else:
             continue
         out.append({"id": r["canonical_url"], "title": r["title"] or "", "company": r["company"] or "", "why": why})

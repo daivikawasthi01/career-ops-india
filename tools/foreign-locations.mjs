@@ -24,7 +24,7 @@ const INDIA = ['india', 'indian', 'bharat', 'andhra pradesh', 'arunachal pradesh
   'jharkhand', 'karnataka', 'kerala', 'madhya pradesh', 'maharashtra', 'manipur', 'meghalaya', 'mizoram', 'nagaland', 'odisha', 'orissa', 'punjab', 'rajasthan',
   'sikkim', 'tamil nadu', 'telangana', 'tripura', 'uttar pradesh', 'uttarakhand', 'west bengal', 'delhi', 'ncr', 'jammu', 'kashmir', 'ladakh', 'chandigarh',
   'puducherry', 'pondicherry', 'andaman', 'lakshadweep', 'daman', 'diu', 'dadra', 'nagar haveli'];
-const root = new URL('../../../', import.meta.url).pathname;
+const root = new URL('../', import.meta.url).pathname;
 const portals = yaml.load(fs.readFileSync(`${root}portals.yml`, 'utf8')) || {};
 const lf = portals.location_filter || {};
 const indiaRe = wordsRe([...INDIA, ...(lf.allow || []), ...(lf.always_allow || [])].map((x) => fold(String(x)).toLowerCase()).filter((x) => x.length > 2));

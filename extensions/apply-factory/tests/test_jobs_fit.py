@@ -51,7 +51,7 @@ class YearsBase(unittest.TestCase):
         self.jdb = make_jobs_db(self.rows)
         self._open = mock.patch.object(jobs, "_open", lambda: _ro(self.jdb))
         self._open.start()
-        self._loc = mock.patch.object(locations, "run_node", lambda locs: [l for l in locs if "London" in l or "US" in l])   # stands in for tools/locations.mjs
+        self._loc = mock.patch.object(locations, "run_node", lambda locs: [l for l in locs if "London" in l or "US" in l])   # stands in for tools/foreign-locations.mjs
         self._loc.start()
         locations._LAST.update(key=None, out=set())
 
@@ -142,7 +142,7 @@ class YearsTest(YearsBase):
 
 
 class LocationHelperTest(unittest.TestCase):
-    """The real tools/locations.mjs: foreign places go, Indian and unrecognised places stay, multi-place strings are judged place by place."""
+    """The real tools/foreign-locations.mjs: foreign places go, Indian and unrecognised places stay, multi-place strings are judged place by place."""
 
     @unittest.skipUnless(__import__("shutil").which("node"), "node is not installed")
     def test_the_helper_removes_only_clearly_foreign_locations(self):
@@ -180,6 +180,15 @@ class PruneTest(YearsBase):
             self.assertEqual(sorted(c["title"] for c in self.prune.candidates(conn)), ["AI Product Engineer", "Senior Engineer"])
             jobs.set_mark(conn, "https://jobs.lever.co/x/2", "saved")                                  # a job you saved is never a candidate
             self.assertEqual([c["title"] for c in self.prune.candidates(conn)], ["AI Product Engineer"])
+
+    def test_a_senior_title_with_no_stated_years_is_a_candidate(self):
+        c = sqlite3.connect(self.jdb)
+        c.execute("UPDATE jobs SET title='Lead Backend Engineer' WHERE title='Backend Engineer'")
+        c.commit()
+        c.close()
+        with db.tx(self.kb) as conn:
+            why = {c["title"]: c["why"] for c in self.prune.candidates(conn)}
+        self.assertEqual(why["Lead Backend Engineer"], "title: above entry level")
 
     def test_remove_backs_up_tombstones_logs_and_spares_acted_on_jobs(self):
         c = sqlite3.connect(self.jdb)
