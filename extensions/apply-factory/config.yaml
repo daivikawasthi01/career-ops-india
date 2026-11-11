@@ -12,7 +12,7 @@ llm:
   # ollama keeps everything on this Mac. Set fallback to "groq" (needs GROQ_API_KEY) to use it when ollama is down.
   backend: "ollama"
   fallback: "none"
-  model: "qwen2.5:7b-instruct"
+  model: "qwen3:8b"   # was qwen2.5:7b-instruct: fuller, more natural answers at about 1.5x the time (see the comparison in the commit message)
   embed_model: "nomic-embed-text"
   host: "http://127.0.0.1:11434"
   temperature: 0.1
