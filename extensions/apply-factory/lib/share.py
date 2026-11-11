@@ -5,8 +5,9 @@ Two ways:
   ping    an anonymous report sent once a day to the address in config.yaml (share.url). It is inert when no address is set, and the You tab
           and README say it exists. Someone who does not want it sets share.enabled: false in config.local.yaml.
 
-The report holds counts only: a random install id, the app version, the operating system, whether setup is finished, and how many forms,
-answers and drafts were handled this week, in the last 30 days and in total, plus how many days you used it. It never holds your name, email,
+The report holds counts only: a random install id, the app version, the operating system, whether setup is finished, how many forms,
+answers and drafts were handled this week, in the last 30 days and in total, how many days you used it, and what failed in the last 7 days
+(the action's name and a fixed category such as model_rate_limited, with a count; never the error text). It never holds your name, email,
 CV, answers, company names, job links or keys. The exact report is shown in the You tab.
 """
 from __future__ import annotations
@@ -19,7 +20,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
-from . import account, config
+from . import account, config, errors
 
 STATE = config.ROOT / "data" / "share.json"
 _EVERY = timedelta(hours=24)
@@ -68,7 +69,8 @@ def report(conn) -> dict:
     active = conn.execute("SELECT COUNT(DISTINCT date(at)) FROM usage_events WHERE at >= datetime('now', '-30 days')").fetchone()[0]
     return {"install": _install_id(), "version": _version(), "os": platform.system(),
             "setup_done": ready["ready"], "setup_steps_done": sum(1 for s in ready["steps"] if s["done"]), "setup_steps": len(ready["steps"]),
-            "week": _window(conn, 7), "month": _window(conn, 30), "total": _window(conn, None), "days_active_30": active}
+            "week": _window(conn, 7), "month": _window(conn, 30), "total": _window(conn, None), "days_active_30": active,
+            "errors": errors.summary(conn)}
 
 
 def text(conn) -> str:

@@ -1,5 +1,5 @@
 // Receives the daily anonymous report from the Apply extension, appends one row per report to the "Sheet1" tab of the Sheet this script is
-// attached to, and builds a Dashboard tab from those rows.
+// attached to, keeps each install's latest failure counts in the "Errors" tab, and builds a Dashboard tab from those rows.
 // Set up once: create a Google Sheet, Extensions > Apps Script, paste this file, Deploy > New deployment > type Web app,
 // Execute as: Me, Who has access: Anyone. Copy the web app URL into share.url in extensions/apply-factory/config.yaml and push.
 // Dashboard: pick buildDashboard in the editor and press Run once (or use the Apply menu in the Sheet). It is formulas and charts, so it stays live.
@@ -9,17 +9,40 @@ const COLUMNS = ["received", "install", "version", "os", "setup_done", "setup_st
   "week_forms", "week_fills", "week_drafts", "month_forms", "month_fills", "month_drafts",
   "total_forms", "total_fills", "total_drafts", "days_active_30"];
 
+const ERROR_COLUMNS = ["received", "install", "version", "os", "action", "category", "failures_7_days"];
+
 function doPost(e) {
   const r = JSON.parse(e.postData.contents);
-  const sheet = SpreadsheetApp.getActive().getSheetByName("Sheet1");
+  const ss = SpreadsheetApp.getActive();
+  const sheet = ss.getSheetByName("Sheet1");
   if (sheet.getLastRow() === 0) sheet.appendRow(COLUMNS);
   const n = (x) => Number(x) || 0;
-  sheet.appendRow([new Date(), String(r.install || "").slice(0, 32), String(r.version || "").slice(0, 16), String(r.os || "").slice(0, 16),
-    !!r.setup_done, n(r.setup_steps_done),
-    n(r.week && r.week.forms), n(r.week && r.week.fills), n(r.week && r.week.drafts),
-    n(r.month && r.month.forms), n(r.month && r.month.fills), n(r.month && r.month.drafts),
-    n(r.total && r.total.forms), n(r.total && r.total.fills), n(r.total && r.total.drafts), n(r.days_active_30)]);
+  const install = String(r.install || "").slice(0, 32), version = String(r.version || "").slice(0, 16), os = String(r.os || "").slice(0, 16);
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    sheet.appendRow([new Date(), install, version, os,
+      !!r.setup_done, n(r.setup_steps_done),
+      n(r.week && r.week.forms), n(r.week && r.week.fills), n(r.week && r.week.drafts),
+      n(r.month && r.month.forms), n(r.month && r.month.fills), n(r.month && r.month.drafts),
+      n(r.total && r.total.forms), n(r.total && r.total.fills), n(r.total && r.total.drafts), n(r.days_active_30)]);
+    // Each report carries the last 7 days of failures, so an install's old rows are replaced rather than added to.
+    const errs = errorsSheet(ss);
+    for (let i = errs.getLastRow(); i >= 2; i--) if (errs.getRange(i, 2).getValue() === install) errs.deleteRow(i);
+    const rows = (Array.isArray(r.errors) ? r.errors : []).slice(0, 40).map((x) => [new Date(), install, version, os,
+      String(x.action || "").slice(0, 60), String(x.category || "other").slice(0, 40), n(x.n)]);
+    if (rows.length) errs.getRange(errs.getLastRow() + 1, 1, rows.length, ERROR_COLUMNS.length).setValues(rows);
+  } finally {
+    lock.releaseLock();
+  }
   return ContentService.createTextOutput("ok");
+}
+
+function errorsSheet(ss) {
+  let errs = ss.getSheetByName("Errors");
+  if (!errs) errs = ss.insertSheet("Errors");
+  if (errs.getLastRow() === 0) errs.appendRow(ERROR_COLUMNS);
+  return errs;
 }
 
 function onOpen() {
@@ -31,6 +54,7 @@ function buildDashboard() {
   const ss = SpreadsheetApp.getActive();
   const reports = ss.getSheetByName("Sheet1");
   if (reports.getLastRow() === 0) reports.appendRow(COLUMNS);
+  const errs = errorsSheet(ss);
   const fresh = (name) => {
     const old = ss.getSheetByName(name);
     if (old) ss.deleteSheet(old);
@@ -76,14 +100,20 @@ function buildDashboard() {
   chart(Charts.ChartType.BAR, calc.getRange("D:E"), "Installs by version", 1, 21, 470, 240);
   chart(Charts.ChartType.PIE, calc.getRange("G:H"), "Installs by system", 5, 21, 470, 240);
 
-  d.getRange("A35").setValue("Installs, newest report first").setFontWeight("bold");
-  d.getRange("A36").setFormula("=IFERROR(QUERY(Latest!A2:P,\"select B, C, D, F, K, L, P, A order by A desc label B 'Install', C 'Version', D 'System', F 'Setup steps', K 'Fills, 30 days', L 'Drafts, 30 days', P 'Days used, 30', A 'Last report'\",0),\"No reports yet\")");
-  d.getRange("H37:H").setNumberFormat("d mmm yyyy hh:mm");
+  d.getRange("A35").setValue("What breaks most, last 7 days").setFontWeight("bold");
+  d.getRange("A36").setFormula("=IFERROR(QUERY(Errors!A2:G,\"select E, F, count(B), sum(G) where E is not null group by E, F order by count(B) desc, sum(G) desc limit 15 label E 'Action', F 'Reason', count(B) 'Installs hit', sum(G) 'Failures'\",0),\"Nothing has failed yet\")");
+  d.getRange("A54").setValue("Installs, newest report first").setFontWeight("bold");
+  d.getRange("A55").setFormula("=IFERROR(QUERY(Latest!A2:P,\"select B, C, D, F, K, L, P, A order by A desc label B 'Install', C 'Version', D 'System', F 'Setup steps', K 'Fills, 30 days', L 'Drafts, 30 days', P 'Days used, 30', A 'Last report'\",0),\"No reports yet\")");
+  d.getRange("H56:H").setNumberFormat("d mmm yyyy hh:mm");
+  d.setColumnWidth(1, 190);
 
   ss.setActiveSheet(reports);
   ss.moveActiveSheet(2);
   ss.setActiveSheet(d);
   ss.moveActiveSheet(1);
+  ss.setActiveSheet(errs);
+  ss.moveActiveSheet(3);
+  ss.setActiveSheet(d);
   latest.hideSheet();
   calc.hideSheet();
 }

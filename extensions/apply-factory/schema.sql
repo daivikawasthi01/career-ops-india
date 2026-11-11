@@ -117,3 +117,11 @@ CREATE TABLE IF NOT EXISTS usage_events (
     n         INTEGER NOT NULL DEFAULT 1,
     at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Failures by action and fixed category, so the daily usage report can say what breaks. Never holds a message, a URL or any text from a form or a CV.
+CREATE TABLE IF NOT EXISTS error_events (
+    event_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    action    TEXT NOT NULL,
+    category  TEXT NOT NULL,
+    at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

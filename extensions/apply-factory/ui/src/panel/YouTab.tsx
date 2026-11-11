@@ -165,7 +165,7 @@ function ShareCard() {
     <Card size="sm">
       <CardHeader><CardTitle>Usage counts</CardTitle></CardHeader>
       <CardContent className="space-y-3">
-        <Hint>{s.enabled ? "Once a day this app sends an anonymous report to whoever shared it with you: " : "You can send an anonymous report to whoever shared it with you: "}how many forms, answers and drafts, and whether setup is finished. Never your name, CV, answers, companies, job links or keys.</Hint>
+        <Hint>{s.enabled ? "Once a day this app sends an anonymous report to whoever shared it with you: " : "You can send an anonymous report to whoever shared it with you: "}how many forms, answers and drafts, whether setup is finished, and what failed in the last 7 days (the name of the action and a category such as the model service being rate limited, with a count). Never error messages, your name, CV, answers, companies, job links or keys.</Hint>
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="outline" onClick={copy}>Copy my stats</Button>
           <Button size="sm" variant="ghost" onClick={() => setShowReport((v) => !v)}>{showReport ? "Hide" : "See"} what is sent</Button>

@@ -58,7 +58,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from learner import learn as learner
-from lib import (share, account, onboard, scan, style, checks, company as companies, config, cover, cv_import, cv_store, db, gmail, jobs, knockout, llm, mailcheck, options, outreach, resume, rules,
+from lib import (errors as errlog, share, account, onboard, scan, style, checks, company as companies, config, cover, cv_import, cv_store, db, gmail, jobs, knockout, llm, mailcheck, options, outreach, resume, rules,
                  score as scorer, suggest, tailor, tex, tracker, years)
 from lib import blacklist, jobs_prune
 
@@ -84,6 +84,7 @@ class State:
     def spawn(self, fn) -> str:
         """Run a slow call in a thread and return its id. A browser extension's service worker cannot hold one request open for minutes."""
         job_id = secrets.token_hex(6)
+        action = errlog.current_action()
         self.long_jobs[job_id] = {"status": "running"}
         if len(self.long_jobs) > 50:  # forget the oldest finished ones
             for k in [k for k, v in self.long_jobs.items() if v["status"] != "running"][:25]:
@@ -93,8 +94,10 @@ class State:
             try:
                 self.long_jobs[job_id] = {"status": "done", "result": fn()}
             except (ValueError, KeyError, FileNotFoundError, tex.ToolMissing, llm.LLMUnavailable) as e:
+                errlog.note(self.db_path, action, e)
                 self.long_jobs[job_id] = {"status": "error", "error": str(e)[:300]}
             except Exception as e:
+                errlog.note(self.db_path, action, e)
                 self.long_jobs[job_id] = {"status": "error", "error": f"{type(e).__name__}: {e}"[:300]}
         threading.Thread(target=run, daemon=True).start()
         return job_id
@@ -125,6 +128,7 @@ class State:
                 self.last_capture = {"at": job["at"], "url_key": job["url_key"],
                                      **{k: len(v) for k, v in events.items()}}
             except Exception as e:  # keep the worker alive; the failure is shown through /status
+                errlog.note(self.db_path, "/capture", e)
                 self.last_capture = {"at": job["at"], "error": str(e)[:200]}
             finally:
                 self.jobs.task_done()
@@ -206,20 +210,29 @@ def make_handler(state: State):
                 return self._send(200, {"token": token}) if token else self._send(403, {"error": "another extension is already paired"})
             if not state.token_ok(self.headers.get("X-Token")):
                 return self._send(401, {"error": "pair first"})
+            errlog.set_action(path)
             try:
                 return self._dispatch(method, path)
             except tex.ToolMissing as e:
+                errlog.note(state.db_path, path, e)
                 return self._send(501, {"error": str(e)})
             except llm.LLMUnavailable as e:
+                errlog.note(state.db_path, path, e)
                 return self._send(503, {"error": "model unavailable", "detail": str(e)[:200]})
             except (gmail.GmailError, blacklist.BlacklistError) as e:
+                errlog.note(state.db_path, path, e)
                 return self._send(409, {"error": str(e)})
             except ValueError as e:
-                if path.startswith("/setup/") or path in ("/facts", "/answers/update"):   # these messages are written for the person, so no prefix
+                if path.startswith("/setup/") or path in ("/facts", "/answers/update"):   # these messages are written for the person, so no prefix, and a typo there is not a failure
                     return self._send(400, {"error": str(e)[:300]})
+                errlog.note(state.db_path, path, e)
                 return self._send(400, {"error": f"bad request: {e}"[:200]})
             except (KeyError, json.JSONDecodeError) as e:
+                errlog.note(state.db_path, path, e)
                 return self._send(400, {"error": f"bad request: {e}"[:200]})
+            except Exception as e:   # a bug in this app: count it, and answer instead of dropping the connection
+                errlog.note(state.db_path, path, e)
+                return self._send(500, {"error": "the helper hit an unexpected error", "detail": type(e).__name__})
 
         def _gmail_callback(self):
             """Google sends the browser back here after sign-in. The one-use state value proves this app started it."""
