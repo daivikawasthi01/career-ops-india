@@ -6,7 +6,7 @@
   AF.started = true;
 
   // A call that never returns (the worker asleep, the server busy) must not freeze scanning, so every call has a time limit.
-  const LIMITS = { draft: 300000, resume: 120000 };
+  const LIMITS = { draft: 300000, 'draft-batch': 300000, resume: 120000 };
   const bg = (type, payload = {}) =>
     new Promise((resolve) => {
       const timer = setTimeout(() => resolve({ error: 'the local server did not answer in time' }), LIMITS[type] || 45000);
@@ -115,7 +115,29 @@
     const fresh = asked.status === 'draft'; // asking again for a finished suggestion means a new one, not the saved copy
     asked.status = 'drafting'; report();
     const field = { id, label: asked.label, type: asked.type, options: asked.options, maxlength: asked.maxlength, name: asked.name, placeholder: asked.placeholder };
-    const res = await bg('draft', { field, ctx: AF.pageContext(), url: location.href, fresh });
+    settle(id, asked, await bg('draft', { field, ctx: AF.pageContext(), url: location.href, fresh }));
+  }
+
+  const fieldOf = (it) => ({ id: it.id, label: it.label, type: it.type, options: it.options, maxlength: it.maxlength, name: it.name, placeholder: it.placeholder });
+
+  // Several long questions at once: one request, one reading of the CV on the server. Questions the batch could not answer (and any
+  // error) go back through the single-question path, so every one still ends with a suggestion, a reason, or a retry.
+  async function draftMany(ids) {
+    const asks = ids.map((id) => state.items.get(id)).filter(Boolean);
+    asks.forEach((a) => { a.status = 'drafting'; });
+    report();
+    const out = await bg('draft-batch', { fields: asks.map(fieldOf), ctx: AF.pageContext(), url: location.href });
+    const by = new Map((out.results || []).map((r) => [r.id, r]));
+    const alone = new Set(out.single || []);
+    for (const a of asks) {
+      if (by.has(a.id)) settle(a.id, a, by.get(a.id));
+      else if (out.error || alone.has(a.id) || !by.size) { a.status = 'draftable'; tried.delete(a.id); singles.add(a.id); }
+      else settle(a.id, a, { error: 'no answer for this question' });
+    }
+    syncChips(); predraft();
+  }
+
+  function settle(id, asked, res) {
     const item = state.items.get(id) || asked; // the page may have re-scanned while the model was writing
     const mixed = !res.error && (res.id !== id || (res.label ?? '') !== (asked.label ?? '')); // an answer for another question is never used
     const choice = ['radio', 'select', 'multiselect'].includes(item.type);
@@ -208,11 +230,11 @@
     return (top >= 0 && top < window.innerHeight ? 0 : 1e6) + (isLong(it) ? 0 : 5e5) + Math.abs(top);
   };
   const undrafted = () => [...state.items.values()].filter((it) => it.status === 'draftable' && !tried.has(it.id) && !dismissed.has(it.id) && AF.isEmpty(it.id));
-  // A form of up to 12 open questions is drafted in full. A longer one only far enough ahead of where you are (about 2 screens),
+  // A form of up to drafting.eager (40) open questions is drafted in full. A longer one only far enough ahead of where you are (about 2 screens),
   // and the rest as you scroll to it, so 100 questions never means 100 model calls up front.
   const waiting = () => {
     const all = undrafted();
-    const near = all.length <= 12 ? all : all.filter((it) => {
+    const near = all.length <= (state.rules?.drafting?.eager || 12) ? all : all.filter((it) => {
       const top = AF.handles.get(it.id)?.els[0]?.getBoundingClientRect().top;
       return top !== undefined && top > -window.innerHeight && top < window.innerHeight * 2.5;
     });
@@ -223,14 +245,21 @@
 
   // Several drafts at a time (rules.json drafting.parallel): a long form is not one long queue. How many really run together is
   // up to Ollama (OLLAMA_NUM_PARALLEL); the rest wait in its queue, in page order.
+  const singles = new Set(); // questions that must be written one by one (the batch could not take them)
   async function predraft() {
     if (predrafting || state.mode !== 'assist') return;
     predrafting = true;
+    // Three or more long open questions waiting: write them in batches instead of one request each.
+    const size = state.rules?.drafting?.batch_size || 6;
+    const group = waiting().filter((it) => isLong(it) && !singles.has(it.id) && !['radio', 'select', 'multiselect'].includes(it.type));
+    const chunks = group.length >= 3 ? Array.from({ length: Math.ceil(group.length / size) }, (_, i) => group.slice(i * size, (i + 1) * size).map((it) => it.id)) : [];
+    chunks.flat().forEach((id) => tried.add(id));
+    const batches = chunks.map((ids) => draftMany(ids));
     const worker = async () => {
       for (let next = waiting()[0]; next; next = waiting()[0]) { tried.add(next.id); await draft(next.id); }
     };
     const n = Math.max(1, Math.min(12, state.rules?.drafting?.parallel || 4));
-    try { await Promise.all(Array.from({ length: n }, worker)); } finally { predrafting = false; }
+    try { await Promise.all([...batches, ...Array.from({ length: n }, worker)]); } finally { predrafting = false; }
   }
 
   // The one way a suggestion is accepted (the pill and the card both come here): write it, then the suggestion is finished for good.

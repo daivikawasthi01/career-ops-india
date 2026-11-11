@@ -95,6 +95,13 @@ const handlers = {
     return { rules, mode: await modeFor(rules, host), auto: settings.auto !== false };
   },
   suggest: ({ url, title, fields }) => api('/suggest', { url, title, fields }),
+  async 'draft-batch'({ fields, ctx, url, fresh }) {
+    if ((ctx.jd_text || '').length < 800) {
+      const cached = await session.get(`jd:${ctx.jd_key}`, '');
+      if (cached) ctx = { ...ctx, jd_text: cached };
+    }
+    return api('/draft_batch', { fields, ctx, url, fresh });
+  },
   async draft({ field, ctx, url, fresh }, sender) {
     if ((ctx.jd_text || '').length < 800) {
       const cached = await session.get(`jd:${ctx.jd_key}`, '');

@@ -18,7 +18,8 @@
     "gender", "\\bsex\\b", "\\brace\\b", "ethnic", "disab", "veteran", "religio", "caste", "marital", "sexual orientation",
     "pronoun", "transgender", "salary", "compensation", "\\bctc\\b", "expected pay", "current pay", "sponsor", "\\bvisa\\b",
     "work authori", "legally (authori|permitted)", "criminal", "convict", "background check", "date of birth", "\\bdob\\b",
-    "birth date", "notice period", "relocat"
+    "birth date", "notice period", "relocat",
+    "how did you (hear|find|learn)", "where did you (hear|find|see|learn)", "\\breferr(ed|al)\\b", "who referred", "referral source"
   ],
 
   "submit_text": "^\\s*(submit( application)?|apply( now)?|send( application)?|finish|done|complete( application)?|next|continue|save (and|&) continue|review( and submit)?|save (and|&) next)\\s*$",
@@ -127,11 +128,11 @@
     }
   },
 
-  "banned_in_answers": ["passionate", "results-oriented", "proven track record", "leverag", "spearhead", "synerg", "robust", "seamless", "cutting-edge", "innovative", "best practices", "demonstrated ability", "fast-paced", "certainly", "absolutely", "i am excited to", "i'm excited to"],
+  "banned_in_answers": ["passionate", "results-oriented", "proven track record", "leverag", "spearhead", "synerg", "robust", "seamless", "cutting-edge", "innovative", "best practices", "demonstrated ability", "fast-paced", "certainly", "absolutely", "i am excited to", "i'm excited to", "excited about", "thrilled", "delighted to", "eager to"],
 
   "open_questions": "achievement|accomplish|proud|strength|weakness|biggest|greatest|best (project|work|thing)|about yourself|tell us about you|why (do you|are you|should|this|us|our)|motivat|message (to|for)|note to|anything else|additional (information|comments)|challenge|describe (a|your) (project|time)|what makes you|career goals?|where do you see",
 
-  "drafting": { "_doc": "How many suggestions the page asks for at once. Ollama itself decides how many run together (OLLAMA_NUM_PARALLEL); the rest wait in its queue.", "parallel": 6 },
+  "drafting": { "_doc": "How many suggestions the page asks for at once. Ollama itself decides how many run together (OLLAMA_NUM_PARALLEL); the rest wait in its queue.", "parallel": 6, "eager": 40 },
 
   "answer_length": [
     { "re": "achievement|accomplish|proud of|biggest|greatest|best (project|work|thing)|challenge|tell us about a (time|project)|describe a (time|project)|failure|conflict|overcame", "min": 90, "max": 170, "story": true },

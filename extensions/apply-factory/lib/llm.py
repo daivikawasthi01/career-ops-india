@@ -149,6 +149,16 @@ def _pool() -> tuple[tuple[str, str], ...]:
     return tuple(found)
 
 
+def _log(line: str) -> None:
+    """Hosted-call timing for the server log: which model answered, how long it took, which keys were limited. Never the keys."""
+    print(f"[llm] {line}", flush=True)
+
+
+def _models(cfg: dict, provider: str) -> list[str]:
+    wanted = cfg.get(f"{provider}_model") or ("openai/gpt-oss-120b" if provider == "groq" else "gemini-3.5-flash")
+    return [wanted] if isinstance(wanted, str) else list(wanted)
+
+
 def _cloud(prompt: str, system: str | None, temperature: float, json_mode: bool, num_ctx: int = 0, timeout: int = 60, num_predict: int = 0) -> str:
     cfg = _cfg().get("cloud") or {}
     if not cfg.get("enabled"):
@@ -159,8 +169,7 @@ def _cloud(prompt: str, system: str | None, temperature: float, json_mode: bool,
     order = []
     for provider in cfg.get("providers", ["groq", "gemini"]):
         keys = [k for p, k in _pool() if p == provider]
-        wanted = cfg.get(f"{provider}_model") or ("openai/gpt-oss-120b" if provider == "groq" else "gemini-3.5-flash")
-        models = [wanted] if isinstance(wanted, str) else list(wanted)
+        models = _models(cfg, provider)
         # every model of a provider has its own limit, so a limited key still serves the next model in the list
         order += [(provider, keys[(turn + i) % len(keys)], m) for m in models for i in range(len(keys))]
     for provider, key, model in order:
@@ -176,20 +185,32 @@ def _cloud(prompt: str, system: str | None, temperature: float, json_mode: bool,
             body["max_completion_tokens" if provider == "groq" else "max_tokens"] = num_predict + (500 if provider == "groq" else 0)
         if json_mode:
             body["response_format"] = {"type": "json_object"}
+        started = time.time()
         try:
             out = post(_PROVIDERS[provider][0], body, {"Authorization": f"Bearer {key}"}, timeout=timeout)
             text = ((out.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
         except RateLimited as e:
             _REST[kid] = time.time() + e.retry_after
             USAGE["rate_limited"] += 1
+            _log(f"{provider}/{model} key ...{key[-4:]} rate limited, rests {e.retry_after:.0f}s ({time.time() - started:.1f}s)")
             continue
-        except LLMUnavailable:
+        except LLMUnavailable as e:
             _REST[kid] = time.time() + 30  # a failing key sits out half a minute
+            _log(f"{provider}/{model} key ...{key[-4:]} failed: {str(e)[-60:]} ({time.time() - started:.1f}s)")
             continue
         if text.strip():
             USAGE["cloud"] += 1
+            _log(f"{provider}/{model} answered in {time.time() - started:.1f}s ({len(prompt) // 4} tokens in, {len(text) // 4} out)")
             return text.strip()
     raise LLMUnavailable("no hosted key was available")
+
+
+def cloud_ready() -> bool:
+    """Is there a hosted key that is not resting? The batch writer only starts when it can finish on a hosted model."""
+    if not (_cfg().get("cloud") or {}).get("enabled"):
+        return False
+    now = time.time()
+    return any(_REST.get(f"{p}:{m}:{k[-6:]}", 0) <= now for p, k in _pool() for m in _models(_cfg()["cloud"], p))
 
 
 def _opencode(prompt: str, system: str | None, temperature: float, json_mode: bool, num_ctx: int = 0, timeout: int = _TIMEOUT, num_predict: int = 0) -> str:
@@ -211,7 +232,12 @@ def call(prompt: str, *, system: str | None = None, temperature: float | None = 
     """tier="cloud" tries the hosted models first (long answers) and falls back to the local model; the default stays local."""
     cfg = _cfg()
     temp = cfg["temperature"] if temperature is None else temperature
-    order = (["cloud"] if tier == "cloud" and (cfg.get("cloud") or {}).get("enabled") else []) + [cfg["backend"]] + ([cfg["fallback"]] if cfg.get("fallback") not in (None, "none", cfg["backend"]) else [])
+    cloud_on = bool((cfg.get("cloud") or {}).get("enabled"))
+    if tier == "cloud_only":  # a call that is only worth making on a hosted model: no local fallback
+        if not cloud_on:
+            raise LLMUnavailable("hosted models are off")
+        return _cloud(prompt, system, cfg["temperature"] if temperature is None else temperature, json_mode, num_ctx, min(timeout, 120), num_predict)
+    order = (["cloud"] if tier == "cloud" and cloud_on else []) + [cfg["backend"]] + ([cfg["fallback"]] if cfg.get("fallback") not in (None, "none", cfg["backend"]) else [])
     last: Exception | None = None
     for name in order:
         if name not in BACKENDS:

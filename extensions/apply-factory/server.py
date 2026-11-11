@@ -6,6 +6,7 @@ Local API for the browser extension. Binds to 127.0.0.1 only.
   POST /pair       first call from the extension returns the shared token and pins the extension id
   POST /suggest    {url, title, fields[]}            -> known answers, no model call
   POST /draft      {field, ctx}                      -> one model call for one field
+  POST /draft_batch {fields[], ctx}                  -> several long answers in one hosted call; "single" lists ids to ask one by one
   POST /resume/upload {kind, base64} -> replace a CV slot (the previous file is kept)
   POST /resume/upload {kind, base64}                -> replace a CV slot (the old file is kept)
   POST /cv/*       CV studio: slots, tex, compile, publish; import, tailor and fix return a job id that /cv/job polls
@@ -195,7 +196,7 @@ def make_handler(state: State):
                 with db.tx(state.db_path) as conn:
                     return self._send(200, {"mode": "assist", "results": suggest.suggest(conn, body["fields"]),
                                             "warnings": knockout.warnings(body["fields"])})
-            if path == "/draft":
+            if path in ("/draft", "/draft_batch"):
                 ctx = dict(body.get("ctx") or {})
                 key = learner._url_key(body.get("url", ""))
                 if key not in state.reports and body.get("url"):  # no preflight yet: a report for this posting is a cheap lookup
@@ -205,6 +206,8 @@ def make_handler(state: State):
                 ctx["report_path"] = state.reports.get(key, "")
                 ctx["fresh"] = bool(body.get("fresh"))  # Write again: skip the cached suggestion
                 with db.tx(state.db_path) as conn:
+                    if path == "/draft_batch":
+                        return self._send(200, suggest.draft_batch(conn, body["fields"], ctx))
                     return self._send(200, suggest.draft(conn, body["field"], ctx))
             if path == "/resume":
                 try:

@@ -230,6 +230,37 @@ class SuggestTest(unittest.TestCase):
         self.assertEqual(llm._cloud("hi", None, 0.1, False), "ok")
         self.assertEqual(seen, ["new-model", "old-model"])
 
+    def test_long_questions_are_written_together_in_one_hosted_call(self):
+        from lib import llm
+        import itertools
+        llm._pool = lambda: (("groq", "k1aaaaaa"),)
+        llm._TURN = itertools.count()
+        calls = []
+        local = self.fake.post
+        def post(url, body, headers=None, timeout=0):
+            if "groq.com" in url:
+                calls.append(body["messages"][-1]["content"])
+                return {"choices": [{"message": {"content": json.dumps({"answers": {"q1": " ".join(["alpha"] * 110), "q2": " ".join(["beta"] * 110), "q3": "tiny"}})}}]}
+            return local(url, body, headers, timeout)
+        llm.post = post
+        fields = [F("a", "Message for the hiring team", "textarea"), F("b", "Why do you want to work here?", "textarea"),
+                  F("c", "Describe your experience with Rust", "textarea"), F("d", "Current city", "text"), F("e", "How did you hear about us?", "text")]
+        with db.tx(self.db) as conn:
+            out = suggest.draft_batch(conn, fields, {"title": "SWE", "company": "Acme"})
+        by = {r["id"]: r for r in out["results"]}
+        self.assertEqual(len(calls), 1)                                   # one hosted call carried the CV once for the three long questions
+        self.assertIn("alpha", by["a"]["value"]); self.assertIn("beta", by["b"]["value"])
+        self.assertEqual(sorted(out["single"]), ["c", "d", "e"])          # the too-short answer and the short fact are asked one by one; the source question is never drafted
+        with db.tx(self.db) as conn:
+            again = suggest.draft_batch(conn, fields[:2], {"title": "SWE", "company": "Acme"})
+        self.assertEqual((len(calls), [r.get("cached") for r in again["results"]]), (1, [True, True]))  # a second visit costs nothing
+
+    def test_without_a_hosted_key_the_batch_hands_every_question_back(self):
+        with db.tx(self.db) as conn:
+            out = suggest.draft_batch(conn, [F("a", "Message for the hiring team", "textarea"), F("b", "Why do you want to work here?", "textarea")], {})
+        self.assertEqual((out["results"], sorted(out["single"])), ([], ["a", "b"]))
+        self.assertEqual(self.fake.chat_calls, 0)
+
     def test_a_short_fact_makes_one_small_call_with_no_style_lookup(self):
         self.fake.chat_replies = ["Mumbai"]
         with db.tx(self.db) as conn:
