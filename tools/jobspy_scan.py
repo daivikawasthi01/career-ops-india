@@ -69,7 +69,7 @@ def attempt(site, term, req, timeout):
     try:
         df = call_with_timeout(
             dict(site_name=[site], search_term=term, location=req.get("location", "India"),
-                 country_indeed="India", hours_old=req.get("hours_old", 72),
+                 country_indeed=req.get("country", "India"), hours_old=req.get("hours_old", 72),
                  results_wanted=req.get("results_wanted", 100), verbose=0),
             timeout,
         )

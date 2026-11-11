@@ -161,7 +161,7 @@ async function main(args) {
   const rotate = readRotation(rotationPath);
   const { rows, errors, meta } = await runHelper({
     sites, terms: TERMS, rotate,
-    budget: lane ? lane.budget : table.budget, jitter: lane ? lane.jitter : table.jitter, location: 'India', hours_old: days * 24, results_wanted: results,
+    budget: lane ? lane.budget : table.budget, jitter: lane ? lane.jitter : table.jitter, location: PIPELINE.search?.location || 'India', country: PIPELINE.search?.country || 'India', hours_old: days * 24, results_wanted: results,
     call_timeout: 60, retries: 2, backoff: [10, 30], breaker: 3, final_pass_wait: 90,
   });
 

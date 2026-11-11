@@ -12,7 +12,8 @@ _SCRIPT = ("import {loadYaml} from './lib/yaml-document.mjs'; import {readFileSy
 
 
 def config_path():
-    return Path(os.environ.get("CAREER_OPS_PIPELINE_CONFIG") or ROOT / "config" / "pipeline.yml")
+    user = ROOT / "data" / "pipeline.user.yml"   # one person's copy, written by the apply-factory setup wizard; it wins over the shared file
+    return Path(os.environ.get("CAREER_OPS_PIPELINE_CONFIG") or (user if user.exists() else ROOT / "config" / "pipeline.yml"))
 
 
 def load():
