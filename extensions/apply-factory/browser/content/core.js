@@ -31,7 +31,8 @@
     c.querySelectorAll('input,select,textarea,button,script,style,svg,[aria-hidden=true]').forEach((n) => n.remove());
     return norm(c.textContent);
   };
-  const clean = (t) => norm(t).replace(/\s*[*✱]\s*$/, '').replace(/\s*\((required|optional)\)\s*$/i, '').replace(/\s*required\s*$/i, '').replace(/[:：]\s*$/, '').slice(0, 220);
+  // "(Read our privacy policy)" after a label is a pointer, not part of the question (and would hide an Email field behind the privacy-policy rule).
+  const clean = (t) => norm(t).replace(/\s*\(\s*(?:read|see|view|check)\b[^)]*\)\s*$/i, '').replace(/\s*[*✱]\s*$/, '').replace(/\s*\((required|optional)\)\s*$/i, '').replace(/\s*required\s*$/i, '').replace(/[:：]\s*$/, '').slice(0, 220);
 
   const byId = (el, id) => rootOf(el).getElementById?.(id) || document.getElementById(id);
 
@@ -63,6 +64,19 @@
     return '';
   }
 
+  // One <label> (often unclosed or sloppy markup) can hold several questions and their boxes. Then its text belongs to none of them in particular:
+  // a box's own words are the text between the previous box and this one. Returns '' when the label holds a single box (its text is the label).
+  function ownTextInLabel(wrap, el) {
+    const boxes = [...wrap.querySelectorAll('input,select,textarea')].filter((c) => c.type !== 'hidden');
+    if (boxes.length < 2) return '';
+    const at = boxes.indexOf(el);
+    if (at < 0) return '';
+    const r = document.createRange();
+    if (at > 0) r.setStartAfter(boxes[at - 1]); else r.setStart(wrap, 0);
+    r.setEndBefore(el);
+    return clean(r.toString());
+  }
+
   AF.labelOf = (el, { group = false } = {}) => {
     if (group) { const g = groupLabel(el); if (g) return clean(g); }
     const lb = el.getAttribute('aria-labelledby');
@@ -72,7 +86,11 @@
       if (l && textOf(l)) return clean(textOf(l));
     }
     const wrap = el.closest('label');
-    if (wrap && textOf(wrap) && !group) return clean(textOf(wrap));
+    if (wrap && textOf(wrap) && !group) {
+      const own = ownTextInLabel(wrap, el);
+      if (own) return own;
+      if (wrap.querySelectorAll('input,select,textarea').length < 2) return clean(textOf(wrap));   // a label holding several boxes and no words before this one: look elsewhere
+    }
     if (el.getAttribute('aria-label')) return clean(el.getAttribute('aria-label'));
     return clean(nearbyLabel(el)) || clean(el.placeholder || el.name || '');
   };
