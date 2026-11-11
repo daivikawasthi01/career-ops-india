@@ -95,12 +95,12 @@ const handlers = {
     return { rules, mode: await modeFor(rules, host), auto: settings.auto !== false };
   },
   suggest: ({ url, title, fields }) => api('/suggest', { url, title, fields }),
-  async draft({ field, ctx, url }, sender) {
+  async draft({ field, ctx, url, fresh }, sender) {
     if ((ctx.jd_text || '').length < 800) {
       const cached = await session.get(`jd:${ctx.jd_key}`, '');
       if (cached) ctx = { ...ctx, jd_text: cached };
     }
-    return api('/draft', { field, ctx, url });
+    return api("/draft", { field, ctx, url, fresh });
   },
   pick: async ({ answer, options }) => { const r = await api('/pick', { answer, options }); return { option: r.option, queries: r.queries }; },
   resume: ({ title, jd_text }) => api('/resume', { title, jd_text }),

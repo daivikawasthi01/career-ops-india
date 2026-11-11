@@ -288,8 +288,8 @@ discovery:
   identity_gate: true
   # tools/discover-careers.mjs --llm: Groq models (GROQ_API_KEY in .env). The fallback runs when the primary errors, a 429 included.
   llm:
-    model: groq:openai/gpt-oss-120b
-    fallback: groq:openai/gpt-oss-20b
+    model: groq:openai/gpt-oss-20b      # picking a domain from candidates and checking a page are small tasks: the light model first
+    fallback: groq:openai/gpt-oss-120b  # the large one runs when the light one errors or is rate limited
 
 # The scan steps tools/mine.py runs and the dashboard lists. The one place a step is registered: add an entry here and its
 # argument builder in tools/mine.py (STEP_ARGS). windowed: scans "since the last success"; bare_json: the scanner prints its

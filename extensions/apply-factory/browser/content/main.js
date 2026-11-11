@@ -112,9 +112,10 @@
   async function draft(id) {
     const asked = state.items.get(id);
     if (!asked) return;
+    const fresh = asked.status === 'draft'; // asking again for a finished suggestion means a new one, not the saved copy
     asked.status = 'drafting'; report();
     const field = { id, label: asked.label, type: asked.type, options: asked.options, maxlength: asked.maxlength, name: asked.name, placeholder: asked.placeholder };
-    const res = await bg('draft', { field, ctx: AF.pageContext(), url: location.href });
+    const res = await bg('draft', { field, ctx: AF.pageContext(), url: location.href, fresh });
     const item = state.items.get(id) || asked; // the page may have re-scanned while the model was writing
     const mixed = !res.error && (res.id !== id || (res.label ?? '') !== (asked.label ?? '')); // an answer for another question is never used
     const choice = ['radio', 'select', 'multiselect'].includes(item.type);
@@ -195,9 +196,16 @@
   const tried = new Set(); // one automatic attempt per question; the chip offers another
   let predrafting = false;
   // What is on screen is drafted first, then the rest from the top of the page.
+  // Long answers (a story, a message, why this role) take the longest to write and are the ones you read and edit, so they go first;
+  // the short facts, which are fast, fill in behind them.
+  const isLong = (it) => {
+    const r = state.rules || {};
+    try { if (r.open_questions && new RegExp(r.open_questions, 'i').test(it.label || '')) return true; } catch { /* a bad pattern is not a reason to stop */ }
+    return (r.answer_length || []).some((a) => a.max >= 70 && !(a.textarea_only && it.type !== 'textarea') && new RegExp(a.re, 'i').test(it.label || ''));
+  };
   const orderKey = (it) => {
     const top = AF.handles.get(it.id)?.els[0]?.getBoundingClientRect().top ?? Infinity;
-    return (top >= 0 && top < window.innerHeight ? 0 : 1e6) + Math.abs(top);
+    return (top >= 0 && top < window.innerHeight ? 0 : 1e6) + (isLong(it) ? 0 : 5e5) + Math.abs(top);
   };
   const undrafted = () => [...state.items.values()].filter((it) => it.status === 'draftable' && !tried.has(it.id) && !dismissed.has(it.id) && AF.isEmpty(it.id));
   // A form of up to 12 open questions is drafted in full. A longer one only far enough ahead of where you are (about 2 screens),

@@ -43,12 +43,14 @@ class FakeOllama:
         return {"models": [{"name": "qwen2.5:7b-instruct"}, {"name": "nomic-embed-text:latest"}]}
 
     def install(self):
-        self._saved = (llm.post, llm.get, dict(llm._chat_model_cache))
+        self._saved = (llm.post, llm.get, dict(llm._chat_model_cache), llm._pool)
         llm.post, llm.get = self.post, self.get
+        llm._pool = lambda: ()  # tests never use the real hosted keys
+        llm._REST.clear()
         llm._chat_model_cache.clear()
 
     def uninstall(self):
-        llm.post, llm.get, cache = self._saved
+        llm.post, llm.get, cache, llm._pool = self._saved
         llm._chat_model_cache.clear()
         llm._chat_model_cache.update(cache)
 

@@ -15,6 +15,7 @@ class SuggestTest(unittest.TestCase):
         self.fake = FakeOllama()
         self.fake.install()
         self.db = temp_db()
+        suggest._CACHE.clear()
 
     def tearDown(self):
         self.fake.uninstall()
@@ -88,7 +89,7 @@ class SuggestTest(unittest.TestCase):
 
     def test_draft_uses_cv_and_returns_unknown_cleanly(self):
         long_reply = ("I built a self-service platform at Goldman Sachs — it cut a task from a minute to two seconds. " * 6).strip()
-        self.fake.chat_replies = ["{\"words\": 60, \"paragraphs\": 1}", long_reply, "{\"words\": 60}", "UNKNOWN"]
+        self.fake.chat_replies = [long_reply, "UNKNOWN"]
         with db.tx(self.db) as conn:
             d = suggest.draft(conn, F("a", "Why do you want to work here?", "textarea"), {"jd_text": "Backend role"})
             self.assertEqual(d["status"], "draft")
@@ -97,11 +98,11 @@ class SuggestTest(unittest.TestCase):
             self.assertEqual(u["status"], "unknown")
 
     def test_short_reply_to_open_question_is_expanded_once(self):
-        self.fake.chat_replies = ["{\"words\": 140, \"paragraphs\": 2}", "I like the role.", " ".join(["detail"] * 120)]
+        self.fake.chat_replies = ["I like the role.", " ".join(["detail"] * 120)]
         with db.tx(self.db) as conn:
             d = suggest.draft(conn, F("a", "Message for the hiring team", "textarea"), {})
         self.assertEqual(d["status"], "draft")
-        self.assertEqual(self.fake.chat_calls, 3)  # plan, first write, one expansion
+        self.assertEqual(self.fake.chat_calls, 2)  # first write, one expansion (the length came from the rules, no plan call)
         self.assertGreater(len(d["value"].split()), 90)
 
     def test_length_follows_the_question_and_the_field_limit(self):
@@ -113,11 +114,18 @@ class SuggestTest(unittest.TestCase):
 
     def test_the_model_plans_the_length_in_a_separate_call(self):
         with db.tx(self.db) as conn:
+            q = "What would make you a strong fit for this team?"  # long enough to be a real question, matched by no length rule
             self.fake.chat_replies = ['{"words": 25, "paragraphs": 1}']
-            self.assertEqual(suggest.plan_length(F("a", "Your LinkedIn headline", "text"), "Your LinkedIn headline", {})[:2], (18, 25))
+            self.assertEqual(suggest.plan_length(F("a", q, "text"), q, {})[:2], (18, 25))
+            self.assertEqual(self.fake.chat_calls, 1)
             self.fake.chat_replies = ['{"words": 200}']  # a character limit still caps what the model chose
-            lo, hi, _ = suggest.plan_length(F("a", "Why us", "textarea", maxlength=300), "Why us", {})
+            self.assertLessEqual(suggest.plan_length(F("a", q, "text", maxlength=300), q, {})[1] * 6, 300)
+            before = self.fake.chat_calls
+            lo, hi, _ = suggest.plan_length(F("a", "Why us", "textarea", maxlength=300), "Why us", {})  # a rule covers it: no model call
+            self.assertEqual(self.fake.chat_calls, before)
             self.assertLessEqual(hi * 6, 300)
+            suggest.plan_length(F("a", "City", "text"), "City", {})  # a short label is a short box: no model call
+            self.assertEqual(self.fake.chat_calls, before)
 
     def test_open_questions_keep_a_minimum_length_in_a_small_box(self):
         with db.tx(self.db) as conn:
@@ -148,18 +156,81 @@ class SuggestTest(unittest.TestCase):
     def test_banned_phrases_are_removed_in_one_check_after_the_write(self):
         from lib import rules
         self.assertEqual(rules.answer_flaws("Certainly, I built a robust platform \u2014 fast."), ["robust", "certainly", "long dash"])
-        self.fake.chat_replies = ['{"words": 30}', "Certainly, I built a robust platform in Go.", "I built a platform in Go."]
+        self.fake.chat_replies = ["Certainly, I built a robust platform in Go.", "I built a platform in Go."]
         with db.tx(self.db) as conn:
             d = suggest.draft(conn, F("a", "Message for the hiring team", "textarea"), {})
         self.assertEqual(d["value"], "I built a platform in Go.")
 
     def test_unknown_on_an_open_question_is_retried_as_best_effort(self):
         best = " ".join(["built"] * 70)
-        self.fake.chat_replies = ['{"words": 80}', "UNKNOWN", "UNKNOWN", best]  # plan, the story try, the write, the best-effort retry
+        self.fake.chat_replies = ["UNKNOWN", "UNKNOWN", best]  # the story try, the write, the best-effort retry
         with db.tx(self.db) as conn:
             d = suggest.draft(conn, F("a", "What is your best achievement till date?", "textarea"), {})
         self.assertEqual(d["status"], "draft")
-        self.assertEqual(self.fake.chat_calls, 4)
+        self.assertEqual(self.fake.chat_calls, 3)
+
+    def test_the_same_question_on_the_same_job_is_answered_from_the_cache(self):
+        self.fake.chat_replies = [" ".join(["built"] * 100)]
+        f, ctx = F("a", "Message for the hiring team", "textarea"), {"title": "SWE", "company": "Acme", "jd_text": "Backend"}
+        with db.tx(self.db) as conn:
+            first = suggest.draft(conn, f, ctx)
+            calls = self.fake.chat_calls
+            again = suggest.draft(conn, F("z", "Message for the hiring team", "textarea"), ctx)  # a reload gives the box a new id
+            self.assertEqual(self.fake.chat_calls, calls)  # the second visit made no model call
+            suggest.draft(conn, f, {**ctx, "company": "Other"})
+            self.assertGreater(self.fake.chat_calls, calls)  # a different job is a different key
+        self.assertEqual((first["status"], again["value"], again["id"], again.get("cached")), ("draft", first["value"], "z", True))
+        self.fake.chat_replies = [" ".join(["wrote"] * 100)] * 3
+        with db.tx(self.db) as conn:
+            fresh = suggest.draft(conn, f, {**ctx, "fresh": True})  # Write again skips the cache
+        self.assertIn("wrote", fresh["value"])
+
+    def test_long_answers_rotate_hosted_keys_and_fall_back_to_local(self):
+        from lib import llm
+        llm._pool = lambda: (("groq", "k1aaaaaa"), ("groq", "k2bbbbbb"))
+        seen = []
+        local = self.fake.post
+        def post(url, body, headers=None, timeout=0):
+            if "groq.com" in url:
+                key = headers["Authorization"][-8:]
+                seen.append(key)
+                if key == "k1aaaaaa":
+                    raise llm.RateLimited("slow down", 30)
+                return {"choices": [{"message": {"content": " ".join(["hosted"] * 100)}}]}
+            return local(url, body, headers, timeout)
+        llm.post = post
+        with db.tx(self.db) as conn:
+            d = suggest.draft(conn, F("a", "Message for the hiring team", "textarea"), {})
+            self.assertIn("hosted", d["value"])
+            self.assertEqual(seen, ["k1aaaaaa", "k2bbbbbb"])  # the limited key rested, the next one answered
+            seen.clear()
+            suggest._CACHE.clear()
+            suggest.draft(conn, F("a", "Message for the hiring team", "textarea"), {})
+            self.assertNotIn("k1aaaaaa", seen)  # still resting
+            llm._pool = lambda: ()  # no hosted key at all: the local model answers
+            self.fake.chat_replies = [" ".join(["local"] * 100)]
+            suggest._CACHE.clear()
+            self.assertIn("local", suggest.draft(conn, F("a", "Message for the hiring team", "textarea"), {})["value"])
+
+    def test_a_short_fact_makes_one_small_call_with_no_style_lookup(self):
+        self.fake.chat_replies = ["Mumbai"]
+        with db.tx(self.db) as conn:
+            d = suggest.draft(conn, F("a", "Current city", "text"), {})
+        self.assertEqual((d["status"], d["value"], self.fake.chat_calls), ("draft", "Mumbai", 1))
+
+    def test_an_answer_far_over_its_target_is_cut_to_whole_sentences(self):
+        text = " ".join(f"Sentence number {i} says something useful here." for i in range(30))
+        out = suggest._trim_to(text, 100)
+        self.assertLessEqual(len(out.split()), 115)
+        self.assertTrue(out.endswith("."))
+        self.assertEqual(suggest._trim_to("Short answer here.", 100), "Short answer here.")
+
+    def test_length_follows_your_own_similar_answers(self):
+        close = [{"question_text": "q", "answer": " ".join(["w"] * 60), "score": 0.8}] * 3
+        lo, hi = suggest._calibrate(100, 180, close)
+        self.assertLessEqual(hi, 100)
+        self.assertGreaterEqual(lo, 70)  # held near the rule's range, never one line
+        self.assertEqual(suggest._calibrate(100, 180, [{"question_text": "q", "answer": "x " * 60, "score": 0.3}]), (100, 180))  # far-off answers are ignored
 
     def test_short_limited_text_boxes_are_still_offered(self):
         r = self.run_suggest([F("a", "Your best achievement in one line", "text", maxlength=50)])
@@ -167,7 +238,7 @@ class SuggestTest(unittest.TestCase):
 
     def test_banned_wording_is_cut_when_the_model_keeps_repeating_it(self):
         bad = "I am excited to join X because it fits me. " + " ".join(["I built services in Go on AWS for developers."] * 14)  # long enough that no expansion call is made
-        self.fake.chat_replies = ['{"words": 60}', bad, bad, bad]  # the write, then two rewrites that still carry the phrase
+        self.fake.chat_replies = [bad, bad, bad]  # the write, then two rewrites that still carry the phrase
         with db.tx(self.db) as conn:
             d = suggest.draft(conn, F("a", "Why do you want to work here?", "textarea"), {})
         self.assertEqual(d["status"], "draft")
@@ -191,13 +262,13 @@ class SuggestTest(unittest.TestCase):
                  "action": "I built a self-service platform with React, TypeScript and Go on AWS ECS Fargate for them.",
                  "result": "It cut that operation to about 2 seconds for 9,000 developers.",
                  "lesson": "I learned that removing a small daily friction is worth more than a big feature nobody uses."}
-        self.fake.chat_replies = ['{"words": 120}', json.dumps(story)]
+        self.fake.chat_replies = [json.dumps(story)]
         with db.tx(self.db) as conn:
             d = suggest.draft(conn, F("a", "What is your best achievement till date?", "text"), {})
         self.assertEqual(d["status"], "draft")
         self.assertTrue(d["value"].startswith("At Goldman Sachs"), repr(d["value"][:160]))   # it opens with the situation, not mid-thought
         self.assertIn("\n\n", d["value"])                           # two paragraphs
-        self.assertEqual(self.fake.chat_calls, 2)
+        self.assertEqual(self.fake.chat_calls, 1)
 
     def test_single_banned_words_are_removed_in_place_and_orphans_are_kept(self):
         self.assertEqual(suggest._scrub("I built a robust platform in Go. It served 9,000 developers."), "I built a platform in Go. It served 9,000 developers.")

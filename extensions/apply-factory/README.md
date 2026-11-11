@@ -11,7 +11,7 @@ Nothing leaves your Mac unless you set `llm.fallback: groq` in `config.yaml`.
 
 ```bash
 brew install ollama tectonic poppler && brew services start ollama
-ollama pull nomic-embed-text qwen2.5:7b-instruct
+ollama pull nomic-embed-text qwen3:8b
 
 cd extensions/apply-factory
 .venv/bin/python orchestrator.py init          # creates kb.sqlite (also run on every server start)

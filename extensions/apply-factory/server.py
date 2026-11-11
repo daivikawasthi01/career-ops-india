@@ -203,6 +203,7 @@ def make_handler(state: State):
                     if hit.get("status") == "match":
                         state.reports[key] = hit["path"]
                 ctx["report_path"] = state.reports.get(key, "")
+                ctx["fresh"] = bool(body.get("fresh"))  # Write again: skip the cached suggestion
                 with db.tx(state.db_path) as conn:
                     return self._send(200, suggest.draft(conn, body["field"], ctx))
             if path == "/resume":

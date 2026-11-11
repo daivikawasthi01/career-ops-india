@@ -12,10 +12,16 @@ llm:
   # ollama keeps everything on this Mac. Set fallback to "groq" (needs GROQ_API_KEY) to use it when ollama is down.
   backend: "ollama"
   fallback: "none"
-  model: "qwen3:8b"   # was qwen2.5:7b-instruct: fuller, more natural answers at about 1.5x the time (see the comparison in the commit message)
+  model: "qwen3:8b"
   embed_model: "nomic-embed-text"
   host: "http://127.0.0.1:11434"
   temperature: 0.1
+  cloud:   # long open answers (story, why this role, a message) go to hosted models first; short facts and choose-one stay local
+    enabled: true
+    providers: [groq, gemini]   # keys are rotated; a rate-limited key rests, then the local model answers
+    keys: {groq: [8, 9], gemini: [8, 9, 10]}   # only these numbers (GROQ_API_KEY_8, GEMINI_API_KEY_8 ...); the scanners keep the others
+    groq_model: "openai/gpt-oss-120b"
+    gemini_model: "gemini-3.5-flash"
   keep_alive: "30m"   # how long ollama keeps the model in memory after a call; the default 5 minutes means slow cold starts
 
 server:
