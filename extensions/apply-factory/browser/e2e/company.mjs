@@ -75,6 +75,15 @@ await p.getByRole('tab', { name: 'Company' }).click();
 await p.getByLabel('Company', { exact: true }).fill('Acme');
 await p.waitForSelector('[data-person]', { timeout: 8000 });
 check('second visit shows the saved answer without searching', (await p.locator('[data-person]').count()) === 2);
+// A lookup keeps running when the tab is left: coming back joins it instead of starting again or losing it.
+await p.getByLabel('Company', { exact: true }).fill('Slowly Ltd');
+await p.getByRole('button', { name: 'Research' }).click();
+await p.getByText('Looking up Slowly Ltd').waitFor();
+await p.getByRole('tab', { name: 'Page' }).click();
+await p.getByRole('tab', { name: 'Company' }).click();
+await p.getByText(/Looking up Slowly Ltd/).waitFor({ timeout: 5000 });
+await p.waitForSelector('[data-person]', { timeout: 30000 });
+check('leaving the tab mid-lookup and coming back joins it and shows the answer', /Slowly Ltd/.test(await p.locator('#app').innerText()) || (await p.locator('[data-person]').count()) > 0);
 check('no page errors', errors.length === 0, errors.join(' | ').slice(0, 200));
 await ctx.close();
 process.exit(results.every(Boolean) ? 0 : 1);

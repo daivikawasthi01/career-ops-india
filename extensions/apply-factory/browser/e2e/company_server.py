@@ -2,6 +2,7 @@
 so the run costs no tokens and sends no mail. Throw-away database and pairing file."""
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -18,6 +19,8 @@ SOURCES = [{"title": "About", "uri": "https://acme.com/about"}, {"title": "News"
 
 
 def fake_search(prompt, **kw):
+    if "Slowly" in prompt:
+        time.sleep(2)   # long enough to leave the tab and come back
     if "email address format" in prompt:  # the company mails from acme-mail.com, not its website domain
         return {"text": '{"domains": [{"domain": "acme-mail.com", "pattern": "first.last", "source": "https://acme.com/about"}], "examples": [{"name": "Sam Rivera", "email": "sam.rivera@acme-mail.com", "source": "https://news.example/cto"}]}', "sources": SOURCES}
     if "employees" in prompt:

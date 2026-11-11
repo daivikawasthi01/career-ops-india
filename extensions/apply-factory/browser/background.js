@@ -118,7 +118,31 @@ const handlers = {
 };
 
 // ---- panel messages ----
+// A lookup that outlives the panel: the server keeps running it, and when it ends with the panel closed the toolbar icon shows a green badge.
+const watching = new Map();
+async function watchJob(id, company) {
+  if (watching.has(id)) return;
+  watching.set(id, company);
+  for (let i = 0; i < 400; i++) {   // about 25 minutes at most
+    await new Promise((r) => setTimeout(r, 4000));
+    const j = await api('/cv/job', { id }).catch(() => null);
+    if (j && j.status !== 'running') {
+      watching.delete(id);
+      const open = sidePanelWindows.size > 0;
+      if (!open) { chrome.action.setBadgeBackgroundColor({ color: '#16a34a' }); chrome.action.setBadgeText({ text: '✓' }); chrome.action.setTitle({ title: `${company}: research is ready. Open the panel, Company tab.` }); }
+      return;
+    }
+  }
+  watching.delete(id);
+}
+
 const panel = {
+  'watch-job'({ id, company }) { watchJob(id, String(company || 'Company')); return { ok: true }; },
+  async 'clear-badge'() {   // the panel opened: a finished lookup is waiting if the badge was up
+    const had = !!(await chrome.action.getBadgeText({}));
+    chrome.action.setBadgeText({ text: '' }); chrome.action.setTitle({ title: '' });
+    return { had };
+  },
   async 'get-state'({ tabId }) {
     const st = await session.get(stateKey(tabId), { frames: {} });
     const tab = await chrome.tabs.get(tabId).catch(() => null);
@@ -230,7 +254,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   const table = fromPage ? handlers : panel;
   const fn = table[msg.type];
   if (!fn) return false;
-  Promise.resolve(fn(msg, sender)).then(reply, (e) => reply({ error: e.message || String(e) }));
+  Promise.resolve().then(() => fn(msg, sender)).then(reply, (e) => reply({ error: e.message || String(e) }));   // a handler that throws at once still answers
   return true;
 });
 

@@ -2,7 +2,16 @@
 export type Msg = Record<string, any>
 
 export const send = (type: string, extra: Msg = {}): Promise<any> => chrome.runtime.sendMessage({ type, ...extra })
-export const api = (path: string, body: Msg = {}): Promise<any> => chrome.runtime.sendMessage({ type: "api", path, body })
+// Never rejects and never returns nothing: a background script that predates this panel (the extension was updated but not reloaded) does not
+// know a new path and answers nothing, which would leave a spinner running forever.
+export const api = async (path: string, body: Msg = {}): Promise<any> => {
+  try {
+    const r = await chrome.runtime.sendMessage({ type: "api", path, body })
+    return r ?? { error: "The extension's background script did not answer. Reload the extension at chrome://extensions, then reopen the panel." }
+  } catch (e) {
+    return { error: `The extension's background script did not answer (${e instanceof Error ? e.message : e}). Reload the extension at chrome://extensions.` }
+  }
+}
 
 declare global {
   interface Window { AF_BUILD?: string; AF_SERVER_CMD?: string }

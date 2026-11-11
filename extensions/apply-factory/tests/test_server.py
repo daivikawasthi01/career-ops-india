@@ -68,6 +68,42 @@ class ServerTest(unittest.TestCase):
         code, out = self.call("/suggest", {"url": "https://www.linkedin.com/jobs/view/1", "fields": fields}, token)
         self.assertEqual((out["mode"], out["results"]), ("watch", []))
 
+    def test_a_lookup_in_flight_is_joined_not_repeated_and_a_failure_is_remembered(self):
+        import threading
+        from lib import company
+        token = self.pair()
+        gate, calls = threading.Event(), []
+        saved = company.research
+        def slow(name, url="", title="", location="", website=""):
+            calls.append(name)
+            gate.wait(5)
+            return {"company": name, "people": [], "size": {}}
+        company.research = slow
+        try:
+            first = self.call("/company/start", {"company": "Slow Co"}, token)[1]["job"]
+            again = self.call("/company/start", {"company": "Slow Co", "cache_only": True}, token)[1]      # the panel was closed and reopened
+            self.assertEqual((again["cached"], again["job"]), (False, first))
+            self.assertEqual(self.call("/company/start", {"company": "Slow Co"}, token)[1]["job"], first)  # pressing Research again joins it too
+            gate.set()
+            for _ in range(60):
+                if self.call("/cv/job", {"id": first}, token)[1]["status"] != "running":
+                    break
+                time.sleep(0.05)
+            self.assertEqual(calls, ["Slow Co"])                                                            # one search in all
+            self.assertTrue(self.call("/company/start", {"company": "Slow Co", "cache_only": True}, token)[1]["cached"])
+            def boom(*a, **k):
+                raise ValueError("no model could search")
+            company.research = boom
+            job = self.call("/company/start", {"company": "Bad Co"}, token)[1]["job"]
+            for _ in range(60):
+                if self.call("/cv/job", {"id": job}, token)[1]["status"] != "running":
+                    break
+                time.sleep(0.05)
+            out = self.call("/company/start", {"company": "Bad Co", "cache_only": True}, token)[1]
+            self.assertEqual((out["cached"], out["failed"]), (False, "no model could search"))
+        finally:
+            company.research = saved
+
     def test_company_and_mail_routes_run_as_polled_jobs_and_cache(self):
         from lib import company, mailcheck
         token = self.pair()

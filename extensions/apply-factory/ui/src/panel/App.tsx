@@ -1,9 +1,10 @@
-import { useReducer, useRef, useState } from "react"
+import { useEffect, useReducer, useRef, useState } from "react"
 import { Moon, Sun } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { send } from "@/lib/chrome"
 import { currentTheme, toggleTheme } from "@/lib/theme"
 import { AttentionCards, CvCard, FilledCard, Footer, Group, JobCard, NeedsCard, OldManifestCard, SetupCard, SiteCard, StaleCard, SummaryCard, VerdictBanner, framesItems } from "./cards"
 import { CompanyTab } from "./CompanyTab"
@@ -19,6 +20,8 @@ export function App() {
   const { st } = p
   const [tab, setTab] = useState("page")
   const [seed, setSeed] = useState({ company: "", location: "" }) // a company (and its job city) chosen in the Jobs tab
+  // A lookup finished while the panel was closed: open on the Company tab, where the answer is waiting.
+  useEffect(() => { send("clear-badge").then((r: any) => { if (r?.had) setTab("company") }).catch(() => {}) }, [])
 
   const llm = st?.server?.llm
   const header = (

@@ -69,6 +69,7 @@ class State:
         self.jobs: queue.Queue = queue.Queue()
         self.last_capture: dict = {}
         self.reports: dict[str, str] = {}  # url_key -> report path, filled by /preflight
+        self.research_jobs: dict[str, str] = {}  # company lookup key -> its job id, so a panel that was closed re-attaches instead of searching again
         self.long_jobs: dict[str, dict] = {}  # id -> {status, result|error}; slow model calls run here and are polled
         self._load()
         db.init(db_path, str(config.ROOT / "schema.sql"))
@@ -290,20 +291,28 @@ def make_handler(state: State):
                 site = str(body.get("website", "")).strip()
                 if not name:
                     return self._send(400, {"error": "company is required"})
+                rkey = companies._key(name, loc, site)
+                live = state.long_jobs.get(state.research_jobs.get(rkey, ""))
                 if not body.get("refresh"):
                     with db.tx(state.db_path) as conn:
                         hit = companies.cached(conn, name, loc, site)
                     if hit:
                         return self._send(200, {"cached": True, "result": hit})
+                    if live and live["status"] == "running":   # already being researched (the panel was closed or another tab asked): join it
+                        return self._send(200, {"cached": False, "job": state.research_jobs[rkey]})
                     if body.get("cache_only"):  # the tab opening on a company asks only whether an answer is already saved
-                        return self._send(200, {"cached": False})
+                        failed = live["error"] if live and live["status"] == "error" else ""
+                        return self._send(200, {"cached": False, **({"failed": failed} if failed else {})})
+                elif live and live["status"] == "running":
+                    return self._send(200, {"job": state.research_jobs[rkey]})
 
                 def research():
                     res = companies.research(name, str(body.get("url", "")), str(body.get("title", "")), loc, site)
                     with db.tx(state.db_path) as conn:
                         companies.store(conn, name, res, loc, site)
                     return res
-                return self._send(200, {"job": state.spawn(research)})
+                state.research_jobs[rkey] = job = state.spawn(research)
+                return self._send(200, {"job": job})
             if path in ("/mail/find", "/mail/generic"):
                 domains = [str(d).strip().lower() for d in (body.get("domains") or [body.get("domain", "")]) if str(d).strip()][:3]
                 if not domains or not all(re.fullmatch(r"[a-z0-9-]+(\.[a-z0-9-]+)+", d) for d in domains):

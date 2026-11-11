@@ -102,11 +102,15 @@ function MailRows({ mail }: { mail: Mail }) {
 }
 
 // The company on the open page: size, the people worth writing to, public contact details, and a no-send check of guessed addresses.
+const SAVED = "af.company.query"
+const saved = (): { name?: string; location?: string; website?: string } => { try { return JSON.parse(localStorage.getItem(SAVED) || "{}") } catch { return {} } }
+
 export function CompanyTab({ seed }: { seed: { company: string; location: string } }) {
-  const [name, setName] = useState(seed.company)
-  const [location, setLocation] = useState(seed.location)
+  // What was typed survives a tab change or a closed panel, so the lookup that kept running on the server can be picked up again.
+  const [name, setName] = useState(seed.company || saved().name || "")
+  const [location, setLocation] = useState(seed.company ? seed.location : saved().location || "")
   const [title, setTitle] = useState("")
-  const [website, setWebsite] = useState("")   // when the name is shared by several companies, the site says which one
+  const [website, setWebsite] = useState(seed.company ? "" : saved().website || "")   // when the name is shared by several companies, the site says which one
   const [jobUrl, setJobUrl] = useState("")
   const [jdText, setJdText] = useState("")
   const [writing, setWriting] = useState<Record<string, boolean>>({}) // people whose email panel is open
@@ -117,6 +121,7 @@ export function CompanyTab({ seed }: { seed: { company: string; location: string
   const [error, setError] = useState("")
   const [mail, setMail] = useState<Record<string, Mail | "busy" | string>>({})
   const seq = useRef(0)
+  useEffect(() => { try { localStorage.setItem(SAVED, JSON.stringify({ name, location, website })) } catch { /* private window: nothing is remembered */ } }, [name, location, website])
 
   // Pick up the company and job from the page that is open, unless the user already typed one.
   useEffect(() => {
@@ -137,8 +142,11 @@ export function CompanyTab({ seed }: { seed: { company: string; location: string
     if (first.error) { setBusy(false); setError(first.error === "server offline" ? "The local server is not running." : String(first.error)); return }
     const take = (r: Result) => { setRes(r); setDomain(r.domain || ""); setPicked((r.email_domains || []).map((d) => d.domain)) }
     if (first.cached) { take(first.result); setBusy(false); return }
-    if (cacheOnly) { setBusy(false); return }
-    const done = await pollJob(first.job)
+    if (cacheOnly && first.failed) { setBusy(false); setError(String(first.failed)); return }
+    if (cacheOnly && !first.job) { setBusy(false); return }
+    setBusy(true)   // a lookup already running on the server (the panel was closed meanwhile): join it
+    send("watch-job", { id: first.job, company })
+    const done = await pollJob(first.job, 900)
     if (mine !== seq.current) return
     setBusy(false)
     if (done.status === "done") take(done.result)
@@ -146,7 +154,7 @@ export function CompanyTab({ seed }: { seed: { company: string; location: string
   }
 
   // Opening the tab on a company shows the saved answer straight away; it only searches when asked.
-  useEffect(() => { if (name.trim()) { const t = setTimeout(() => start(false, true), 300); return () => clearTimeout(t) } }, [name, location]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (name.trim()) { const t = setTimeout(() => start(false, true), 300); return () => clearTimeout(t) } }, [name, location, website]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const checkMail = async (key: string, path: string, body: Record<string, unknown>) => {
     setMail((m) => ({ ...m, [key]: "busy" }))
@@ -178,7 +186,7 @@ export function CompanyTab({ seed }: { seed: { company: string; location: string
 
       {busy && (
         <div className="space-y-2 rounded-xl border p-3" aria-busy="true">
-          <p className="flex items-center gap-2 text-sm"><Loader2 className="size-4 animate-spin" />Looking up {name.trim()}. This takes about a minute.</p>
+          <p className="flex items-center gap-2 text-sm"><Loader2 className="size-4 animate-spin" />Looking up {name.trim()}. It keeps running if you switch tabs or close the panel; the toolbar icon shows a green tick when it is ready.</p>
           <Skeleton className="h-4 w-2/3" /><Skeleton className="h-4 w-1/2" /><Skeleton className="h-16" />
         </div>
       )}
