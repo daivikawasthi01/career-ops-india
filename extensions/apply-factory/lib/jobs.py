@@ -11,7 +11,7 @@ import re
 import sqlite3
 from datetime import date, timedelta
 
-from . import config, locations, years
+from . import blacklist, config, locations, years
 
 MARKS = ("applied", "dismissed", "saved")
 _PAGE_MAX = 100
@@ -133,7 +133,11 @@ def search(kb, *, q: str = "", sources: list[str] | None = None, days: int = 0, 
     out = [_row(r, done, yrs) for r in rows]
     if hide_marked:
         out = [j for j in out if not j["mark"]]
-    hidden = {"senior": 0, "years": 0, "location": 0}
+    hidden = {"senior": 0, "years": 0, "location": 0, "blacklist": 0}
+    banned = blacklist.blocked(out)   # the user's own do-not-apply list hides a company whether or not the level filter is on
+    if banned:
+        hidden["blacklist"] = len(banned)
+        out = [j for i, j in enumerate(out) if i not in banned]
     unchecked = 0
     if fit:
         abroad = locations.foreign(j["location"] for j in out)
@@ -172,10 +176,11 @@ def years_todo(kb) -> list[dict]:
     finally:
         conn.close()
     abroad = locations.foreign(r["location"] for r in rows)
+    listed = [_row(r, done, yrs) for r in rows]
+    banned = blacklist.blocked(listed)
     out = []
-    for r in rows:
-        j = _row(r, done, yrs)
-        if j["mark"] or j["location"].strip() in abroad or too_senior_title(j["title"]) or not years.needs_check(yrs.get(j["id"])):
+    for i, j in enumerate(listed):
+        if i in banned or j["mark"] or j["location"].strip() in abroad or too_senior_title(j["title"]) or not years.needs_check(yrs.get(j["id"])):
             continue
         out.append({"id": j["id"], "url": j["url"]})
     return out

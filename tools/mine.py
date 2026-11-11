@@ -552,7 +552,7 @@ class Saved:
     new_rows: list
     known: int
     history_note: str
-    dropped: dict  # rows the freshness gate refused: {"stale": n, "undated": n, "experience": n, "location": n}
+    dropped: dict  # rows the freshness gate refused: {"stale": n, "undated": n, "experience": n, "location": n, "blacklist": n}
     expired: dict  # retention: {"expired": n, "kept_acted_on": n, "forgotten": n}
 
 

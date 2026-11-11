@@ -8,6 +8,8 @@ Local API for the browser extension. Binds to 127.0.0.1 only.
   POST /draft      {field, ctx}                      -> one model call for one field
   POST /jobs        {q, sources[], days, confirmed_only, ...} -> one page of the scanner's jobs.db, read only
   POST /jobs/years  {start}                          -> reads the years each posting's text asks for, in the background; returns progress
+  POST /blacklist/list | /blacklist/add {company, reason} | /blacklist/update {line, company_was, company, reason} | /blacklist/remove {line, company}
+                                                     -> edits career-ops' data/blacklist.md; add also deletes that company's jobs from jobs.db, remove forgets their tombstones
   POST /jobs/mark   {id, mark}                       -> applied / dismissed / saved, kept in kb.sqlite
   POST /company/start {company, url, title, location, website, refresh} -> {cached, result} or {job}: size, people, public emails and phones (poll /cv/job)
   POST /mail/find    {name, domain, known[]}         -> {job}: likely addresses for a person, checked against the mail server, with risk bands
@@ -51,7 +53,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from learner import learn as learner
 from lib import (checks, company as companies, config, cover, cv_import, cv_store, db, gmail, jobs, knockout, llm, mailcheck, options, outreach, resume, rules,
                  score as scorer, suggest, tailor, tex, tracker, years)
-from lib import jobs_prune
+from lib import blacklist, jobs_prune
 
 MAX_BODY = 16 * 1024 * 1024  # a CV pdf arrives as base64
 STATE_FILE = config.ROOT / "data" / "server.json"
@@ -202,7 +204,7 @@ def make_handler(state: State):
                 return self._send(501, {"error": str(e)})
             except llm.LLMUnavailable as e:
                 return self._send(503, {"error": "model unavailable", "detail": str(e)[:200]})
-            except gmail.GmailError as e:
+            except (gmail.GmailError, blacklist.BlacklistError) as e:
                 return self._send(409, {"error": str(e)})
             except (ValueError, KeyError, json.JSONDecodeError) as e:
                 return self._send(400, {"error": f"bad request: {e}"[:200]})
@@ -266,6 +268,22 @@ def make_handler(state: State):
                 with db.tx(state.db_path) as conn:
                     jobs.set_mark(conn, str(body["id"]), str(body.get("mark", "")))
                 return self._send(200, {"ok": True})
+            if path == "/blacklist/list":
+                return self._send(200, {"entries": blacklist.entries()})
+            if path == "/blacklist/add":
+                res = blacklist.add(str(body.get("company", "")), str(body.get("reason", "")), str(body.get("scope", "company")))
+                gone = {"removed": 0}
+                if res["added"]:   # the click is the user's decision: the company's jobs leave jobs.db now (not marked ones; a backup is saved first)
+                    with db.tx(state.db_path) as conn:
+                        ids = [c["id"] for c in jobs_prune.candidates(conn) if c["why"].startswith("blacklist:")]
+                        gone = jobs_prune.remove(conn, ids) if ids else gone
+                return self._send(200, {**res, "removed": gone["removed"]})
+            if path == "/blacklist/update":
+                return self._send(200, {"entry": blacklist.update(int(body["line"]), str(body["company_was"]), str(body["company"]), str(body.get("reason", "")), body.get("scope"))})
+            if path == "/blacklist/remove":
+                row = blacklist.remove(int(body["line"]), str(body["company"]))
+                back = jobs_prune.restore(row["company"]) if row["scope"] == "company" else {"restored": 0}
+                return self._send(200, {"entry": row, **back})
             if path == "/company/start":
                 name = str(body["company"]).strip()
                 loc = str(body.get("location", "")).strip()

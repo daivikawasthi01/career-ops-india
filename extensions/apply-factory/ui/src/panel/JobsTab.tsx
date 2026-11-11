@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Check, ChevronDown, Filter, Loader2, MoreHorizontal, Search, ShieldAlert } from "lucide-react"
+import { Ban, Check, ChevronDown, Filter, Loader2, MoreHorizontal, Search, ShieldAlert } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -10,10 +10,11 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api } from "@/lib/chrome"
+import { BlacklistPanel } from "./BlacklistPanel"
 
 type Job = { years: string; entry: boolean; id: string; url: string; company: string; title: string; location: string; first_seen: string; sources: string[]; confirmed: boolean; flags: string[]; mark: string; stipend: string }
 type Check = { running: boolean; done: number; total: number; error: string; removed?: number }
-type Fit = { on: boolean; limit: number; hidden: { senior: number; years: number; location: number }; unchecked: number; check: Check }
+type Fit = { on: boolean; limit: number; hidden: { senior: number; years: number; location: number; blacklist?: number }; unchecked: number; check: Check }
 type Page = { fit: Fit; total: number; all: number; latest: string; rows: Job[]; facets: { sources: [string, number][]; marked: number } }
 const PAGE = 40
 const DAYS: [string, string][] = [["0", "Any time"], ["1", "Today"], ["3", "3 days"], ["7", "7 days"]]
@@ -38,6 +39,10 @@ export function JobsTab({ onOpened, onResearch }: { onOpened: () => void; onRese
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const seq = useRef(0)
+  const [showList, setShowList] = useState(false)           // the blacklist editor
+  const [listVersion, setListVersion] = useState(0)
+  const [ask, setAsk] = useState<string | null>(null)       // the job whose red button was pressed once: pressing again confirms
+  const [notice, setNotice] = useState<{ text: string; undo?: { line: number; company: string } } | null>(null)
 
   const load = useCallback(async (offset: number, replace: boolean) => {
     const mine = ++seq.current
@@ -82,12 +87,30 @@ export function JobsTab({ onOpened, onResearch }: { onOpened: () => void; onRese
     setRows((old) => (hideMarked && m ? old.filter((x) => x.id !== j.id) : old.map((x) => (x.id === j.id ? { ...x, mark: m } : x))))
   }
 
+  // Ghost listings: one press asks, a second press blacklists the company (its jobs leave the list and jobs.db, the scanners skip it from now on).
+  const blacklist = async (j: Job) => {
+    if (ask !== j.id) { setAsk(j.id); setTimeout(() => setAsk((a) => (a === j.id ? null : a)), 4000); return }
+    setAsk(null)
+    const r = await api("/blacklist/add", { company: j.company, reason: "ghost or repeated listings (added from the Jobs tab)" })
+    if (r.error) { setNotice({ text: String(r.error) }); return }
+    setNotice({ text: r.added ? `${j.company} is blacklisted${r.removed ? `, ${r.removed} job${r.removed === 1 ? "" : "s"} removed` : ""}.` : `${j.company} was already blacklisted.`, undo: r.added ? { line: r.entry.line, company: r.entry.company } : undefined })
+    setListVersion((v) => v + 1)
+    load(0, true)
+  }
+  const undo = async () => {
+    if (!notice?.undo) return
+    const r = await api("/blacklist/remove", notice.undo)
+    setNotice({ text: r.error ? String(r.error) : `${notice.undo.company} is off the list again. Its jobs return on the next scan.` })
+    setListVersion((v) => v + 1)
+    load(0, true)
+  }
+
   return (
     <div className="space-y-3">
       <div className="flex gap-2">
         <div className="relative flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-          <Input className="pl-8" placeholder="Search title, company or city" aria-label="Search jobs" value={q} onChange={(e) => setQ(e.target.value)} />
+          <Input className="pl-8" placeholder="Search jobs" aria-label="Search jobs" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
         <Popover>
           <PopoverTrigger asChild>
@@ -122,7 +145,16 @@ export function JobsTab({ onOpened, onResearch }: { onOpened: () => void; onRese
             {active > 0 && <Button size="sm" variant="ghost" onClick={clear}>Clear filters</Button>}
           </PopoverContent>
         </Popover>
+        <Button variant="outline" aria-label="Blacklist" aria-pressed={showList} title="Companies you never want to see" onClick={() => setShowList((v) => !v)}><Ban />Blacklist</Button>
       </div>
+      {showList && <BlacklistPanel version={listVersion} onChanged={() => load(0, true)} />}
+      {notice && (
+        <p className="flex flex-wrap items-center gap-2 rounded-lg border p-2 text-xs" role="status" data-notice>
+          <span className="flex-1">{notice.text}</span>
+          {notice.undo && <Button size="xs" variant="outline" onClick={undo}>Undo</Button>}
+          <Button size="xs" variant="ghost" onClick={() => setNotice(null)}>Dismiss</Button>
+        </p>
+      )}
 
       {meta && !error && (
         <div className="space-y-1 px-0.5 text-xs text-muted-foreground" data-fit>
@@ -132,6 +164,7 @@ export function JobsTab({ onOpened, onResearch }: { onOpened: () => void; onRese
           {fit && (meta.fit.hidden.senior > 0 || meta.fit.hidden.years > 0 || meta.fit.hidden.location > 0) && (
             <p>Hidden: {meta.fit.hidden.location} outside India, {meta.fit.hidden.senior} senior titles, {meta.fit.hidden.years} asking for more than {meta.fit.limit} year{meta.fit.limit === 1 ? "" : "s"}.</p>
           )}
+          {!!meta.fit.hidden.blacklist && <p>{meta.fit.hidden.blacklist} hidden because the company is on your blacklist.</p>}
           {fit && check?.running && <p className="flex items-center gap-1.5"><Loader2 className="size-3 animate-spin" />Reading job descriptions for the years they ask for: {check.done} of {check.total}</p>}
           {fit && !check?.running && meta.fit.unchecked > 0 && <p>{meta.fit.unchecked} jobs have not been read yet (no public description for their site, or still queued).</p>}
           {fit && !check?.running && !!check?.removed && <p>Removed {check.removed} job{check.removed === 1 ? "" : "s"} from the database because their location is outside India or they ask for more than {meta.fit.limit} year{meta.fit.limit === 1 ? "" : "s"} in their own text.</p>}
@@ -160,6 +193,11 @@ export function JobsTab({ onOpened, onResearch }: { onOpened: () => void; onRese
             </div>
             <div className="flex shrink-0 items-center gap-1">
               <Button size="xs" onClick={() => open(j)}>Open</Button>
+              <Button size={ask === j.id ? "xs" : "icon-xs"} variant={ask === j.id ? "destructive" : "ghost"} className={ask === j.id ? "" : "text-destructive hover:text-destructive"}
+                      aria-label={ask === j.id ? `Confirm: blacklist ${j.company}` : `Blacklist ${j.company}`} title={`Never show ${j.company} again (ghost or repeated listings)`} data-blacklist-job={j.id}
+                      onClick={() => blacklist(j)}>
+                <Ban />{ask === j.id && "Confirm"}
+              </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild><Button size="icon-xs" variant="ghost" aria-label="More"><MoreHorizontal /></Button></DropdownMenuTrigger>
                 <DropdownMenuContent align="end">

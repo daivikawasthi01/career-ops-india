@@ -1,6 +1,6 @@
 """
 Remove jobs from the scanner's jobs.db that do not match this profile: their own text clearly asks for more years than you have, their title
-is above entry level (Senior, Lead, Principal ... from jobs.seniority_words), or their location clearly lies outside India
+is above entry level, their company is on the do-not-apply list (lib/blacklist.py) (Senior, Lead, Principal ... from jobs.seniority_words), or their location clearly lies outside India
 (lib/locations.py; unknown places are kept).
 
 This is the only place the extension writes to jobs.db, and only on an explicit confirm. It follows the scanner's own retention rules
@@ -16,7 +16,7 @@ import sqlite3
 import sys
 from datetime import date
 
-from . import config, jobs, locations, years
+from . import blacklist, config, jobs, locations, years
 
 EXPIRABLE = ("new", "ignore")   # the scanner never expires a job you marked interested or applied; neither does this
 
@@ -43,11 +43,14 @@ def candidates(kb) -> list[dict]:
     finally:
         conn.close()
     abroad = locations.foreign(r["location"] for r in rows)
+    banned = blacklist.blocked([{"company": r["company"], "url": r["url"] or r["canonical_url"]} for r in rows])
     out = []
-    for r in rows:
+    for i, r in enumerate(rows):
         if r["status"] not in EXPIRABLE or r["canonical_url"] in done:
             continue
-        if (r["location"] or "").strip() in abroad:
+        if i in banned:
+            why = f"blacklist: {(r['company'] or '').strip()[:60]}"
+        elif (r["location"] or "").strip() in abroad:
             why = f"location: {(r['location'] or '').strip()[:60]} is outside India"
         elif years.too_many_years(yrs.get(r["canonical_url"])):
             why = f"experience: asks {years.label(yrs[r['canonical_url']])} years, more than {years.limit():g}"
@@ -57,6 +60,28 @@ def candidates(kb) -> list[dict]:
             continue
         out.append({"id": r["canonical_url"], "title": r["title"] or "", "company": r["company"] or "", "why": why})
     return out
+
+
+def restore(company: str) -> dict:
+    """Take a company off the do-not-apply list for good: forget the tombstones remove() left for its jobs, so the scanner can find them
+    again as new. (The jobs themselves come back on the scanner's next run; deleted rows are not kept.) Returns {restored}."""
+    store = _store()
+    reason = f"blacklist: {company.strip()[:60]} (apply-factory)"
+    conn = _rw()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        urls = [r[0] for r in conn.execute("SELECT url FROM rejected WHERE source='apply-factory' AND reject_reason=?", (reason,)).fetchall()]
+        n = 0
+        for u in urls:
+            n += conn.execute("DELETE FROM seen WHERE canonical_url IN (?, ?)", (u, store.canonical_url(u))).rowcount
+        conn.execute("DELETE FROM rejected WHERE source='apply-factory' AND reject_reason=?", (reason,))
+        conn.commit()
+    except sqlite3.OperationalError as e:
+        conn.rollback()
+        raise ValueError(f"The scanner is writing to jobs.db right now ({e}). Nothing was changed; try again in a minute.") from e
+    finally:
+        conn.close()
+    return {"restored": len(urls)}
 
 
 def remove(kb, ids: list[str] | None = None) -> dict:

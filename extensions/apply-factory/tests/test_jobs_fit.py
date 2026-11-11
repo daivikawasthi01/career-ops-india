@@ -86,7 +86,7 @@ class YearsTest(YearsBase):
         self.assertEqual(sorted(got), ["Backend Engineer", "DevOps Engineer", "Software Engineer"])      # 5+ years and "Senior" are out; a preferred-only figure stays
         with db.tx(self.kb) as conn:
             out = jobs.search(conn, limit=100)
-        self.assertEqual(out["fit"]["hidden"], {"senior": 1, "years": 1, "location": 0})
+        self.assertEqual(out["fit"]["hidden"], {"senior": 1, "years": 1, "location": 0, "blacklist": 0})
         self.assertEqual(sorted(self.ids(fit=False)), sorted(t for t, _ in self.rows))                 # the filter can be turned off
         self.assertEqual({j["title"]: j["years"] for j in jobs.search(db.connect(self.kb), fit=False, limit=100)["rows"]}["Software Engineer"], "1+")
 

@@ -8,6 +8,7 @@ One place for the rule, applied to every merged row whichever scanner found it:
               (freshness.undated_ok_steps: their scan window; undated_ok_sources: feeds that list newest jobs first)
   experience  the title states a minimum above max_min_experience_years ("(3-5 Years)", "2 - 4 yrs")
   location    the location clearly names only places outside India (tools/foreign-locations.mjs decides; unknown places stay)
+  blacklist   the company is in data/blacklist.md (tools/blacklist-match.mjs, the same matcher scan.mjs uses)
 """
 import json
 import re
@@ -16,7 +17,9 @@ from collections import Counter
 from datetime import date, datetime
 from pathlib import Path
 
-HELPER = Path(__file__).resolve().parent / "foreign-locations.mjs"
+TOOLS = Path(__file__).resolve().parent
+HELPER = TOOLS / "foreign-locations.mjs"
+BLACKLIST_HELPER = TOOLS / "blacklist-match.mjs"
 
 TITLE_YEARS = re.compile(r"(\d{1,2})\s*(?:\+|plus)?\s*(?:(?:-|–|—|to)\s*\d{1,2}\s*)?(?:years?|yrs?)\b", re.I)
 
@@ -76,19 +79,35 @@ def foreign_locations(rows, rules, run=None):
     return frozenset(r)
 
 
-def _run_helper(locations):
-    out = subprocess.run(["node", str(HELPER)], input=json.dumps(locations), capture_output=True, text=True, timeout=60, cwd=HELPER.parent.parent)
+def _node(script, payload):
+    out = subprocess.run(["node", str(script)], input=json.dumps(payload), capture_output=True, text=True, timeout=60, cwd=TOOLS.parent)
     if out.returncode != 0:
-        raise OSError(out.stderr.strip()[-200:] or "foreign-locations helper failed")
+        raise OSError(out.stderr.strip()[-200:] or f"{script.name} failed")
     return json.loads(out.stdout or "[]")
 
 
-def apply(rows, rules, max_years=0, today=None, locations_run=None):
+def _run_helper(locations):
+    return _node(HELPER, locations)
+
+
+def blacklisted_rows(rows, rules, run=None):
+    """Positions in rows of postings whose company is in data/blacklist.md. Empty when the rule is off or the helper cannot run."""
+    if not (rules or {}).get("drop_blacklisted"):
+        return frozenset()
+    pairs = [{"company": r.get("company") or "", "url": r.get("url") or r.get("canonical_url") or ""} for r in rows]
+    try:
+        return frozenset((run or (lambda p: _node(BLACKLIST_HELPER, p)))(pairs))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return frozenset()   # a broken helper must never drop jobs
+
+
+def apply(rows, rules, max_years=0, today=None, locations_run=None, blacklist_run=None):
     """(kept rows, Counter of dropped reasons)."""
     foreign = foreign_locations(rows, rules, locations_run)
+    banned = blacklisted_rows(rows, rules, blacklist_run)
     kept, dropped = [], Counter()
-    for row in rows:
-        why = verdict(row, rules, max_years, today, foreign)
+    for i, row in enumerate(rows):
+        why = "blacklist" if i in banned else verdict(row, rules, max_years, today, foreign)
         if why:
             dropped[why] += 1
         else:

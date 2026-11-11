@@ -175,6 +175,7 @@ freshness:
   undated_ok_steps: [freehire, internshala, jobspy, jobspy-slow]
   undated_ok_sources: [instahyre]
   drop_foreign_location: true
+  drop_blacklisted: true   # a company in data/blacklist.md never reaches the database, whichever scanner found it
 
 # Naukri-style experience ranges ("0-2 Yrs"): keep when the MINIMUM is at most this.
 max_min_experience_years: 0

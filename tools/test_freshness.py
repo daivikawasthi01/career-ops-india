@@ -104,3 +104,34 @@ class ForeignLocation(unittest.TestCase):
         kept, dropped = freshness.apply([row(location="Ann Arbor, MI, United States"), row(location="Bangalore · London"), row(location="Thane"), row(location="Remote")], self.RULES, today=TODAY)
         self.assertEqual([r["location"] for r in kept], ["Bangalore · London", "Thane", "Remote"])
         self.assertEqual(dropped["location"], 1)
+
+
+class Blacklist(unittest.TestCase):
+    RULES = {**RULES, "drop_blacklisted": True}
+
+    def test_blacklisted_companies_are_dropped_and_counted(self):
+        rows = [row(company="Acme"), row(company="Fine Co"), row(company="Acme")]
+        kept, dropped = freshness.apply(rows, self.RULES, today=TODAY, blacklist_run=lambda pairs: [i for i, p in enumerate(pairs) if p["company"] == "Acme"])
+        self.assertEqual([r["company"] for r in kept], ["Fine Co"])
+        self.assertEqual(dropped["blacklist"], 2)
+
+    def test_off_by_default_and_a_broken_helper_drops_nothing(self):
+        kept, _ = freshness.apply([row(company="Acme")], RULES, today=TODAY, blacklist_run=lambda p: [0])
+        self.assertEqual(len(kept), 1)
+        def boom(_):
+            raise OSError("node missing")
+        kept, dropped = freshness.apply([row(company="Acme")], self.RULES, today=TODAY, blacklist_run=boom)
+        self.assertEqual((len(kept), dict(dropped)), (1, {}))
+
+    def test_the_real_matcher_reads_data_blacklist(self):
+        import os, tempfile
+        root = Path(tempfile.mkdtemp())
+        (root / "data").mkdir()
+        (root / "data" / "blacklist.md").write_text("| Company | Since | Scope | Reason |\n|---|---|---|---|\n| Acme Corp | 2026-11-11 | company | ghost |\n")
+        old = os.environ.get("CAREER_OPS_ROOT")
+        os.environ["CAREER_OPS_ROOT"] = str(root)
+        try:
+            kept, dropped = freshness.apply([row(company="acme corp."), row(company="Other")], self.RULES, today=TODAY)
+        finally:
+            os.environ.pop("CAREER_OPS_ROOT") if old is None else os.environ.__setitem__("CAREER_OPS_ROOT", old)
+        self.assertEqual(([r["company"] for r in kept], dropped["blacklist"]), (["Other"], 1))
