@@ -37,7 +37,7 @@ def manifest() -> dict:
     return {
         "manifest_version": 3,
         "name": "Apply",
-        "version": "0.6.0",
+        "version": "0.6.1",
         "description": "Fills job application forms from your own earlier answers, and learns the ones you type. Runs only on application sites. Never presses Submit.",
         "minimum_chrome_version": "114",
         "icons": {str(n): f"icons/{n}.png" for n in (16, 32, 48, 128)},

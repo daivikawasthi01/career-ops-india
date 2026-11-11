@@ -178,6 +178,9 @@ def draft(conn, field: dict, ctx: dict) -> dict:
 
     label = field.get("label", "")
     opts = options.usable(field.get("options") or [])
+    if field.get("type") in ("radio", "select", "multiselect") and not opts:
+        # a choose-one question is answered with one of its options or not at all, never with free text from the CV
+        return _result(field, "unknown", reason="no options were read for this question")
     report_path = ctx.get("report_path", "")
     if not opts:
         own = context.answer_for(label, context.report_answers(report_path)) if report_path else None

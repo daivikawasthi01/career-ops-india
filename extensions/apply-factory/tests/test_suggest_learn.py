@@ -164,6 +164,18 @@ class SuggestTest(unittest.TestCase):
         self.assertNotIn("excited to", d["value"].lower())
         self.assertIn("I built services in Go", d["value"])
 
+    def test_a_choose_one_question_never_gets_free_text(self):
+        with db.tx(self.db) as conn:
+            d = suggest.draft(conn, F("a", "What are you currently doing?", "radio", options=[]), {})
+        self.assertEqual(d["status"], "unknown")
+        self.assertEqual(self.fake.chat_calls, 0)  # the model is not asked at all
+
+    def test_a_choose_one_answer_is_one_of_the_options(self):
+        self.fake.chat_replies = ['{"option": "Studying"}']
+        with db.tx(self.db) as conn:
+            d = suggest.draft(conn, F("a", "What are you currently doing?", "radio", options=["Working full-time", "Studying", "Freelancing"]), {})
+        self.assertEqual((d["status"], d["value"], d["id"], d["label"]), ("draft", "Studying", "a", "What are you currently doing?"))
+
     def test_draft_refuses_sensitive(self):
         with db.tx(self.db) as conn:
             d = suggest.draft(conn, F("a", "What is your expected salary?", "textarea"), {})

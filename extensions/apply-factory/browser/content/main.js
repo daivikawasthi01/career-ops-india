@@ -87,7 +87,7 @@
         const prev = state.items.get(f.id);
         const item = { ...f, ...r, filled: prev?.filled && prev.value === r.value ? true : false, value: r.value ?? '' , current: f.value };
         const kept = state.drafts.get(f.id); // a draft that finished earlier is not thrown away when the page re-scans
-        if (kept && item.status === 'draftable') Object.assign(item, kept);
+        if (kept && kept.label === item.label && item.status === 'draftable') Object.assign(item, kept);
         next.set(f.id, item);
       }
       state.items = next;
@@ -103,16 +103,36 @@
     }
   }
 
+  // One draft for one question. The answer is applied only to the question it was asked for, a choose-one question accepts only one
+  // of its own options, and a transient failure (server restarting, model busy, timeout) is retried with a growing wait.
+  const RETRY_MS = [4000, 12000, 40000];
+  const attempts = new Map();
+  const sameOption = (value, options) => (options || []).some((o) => String(o).trim().toLowerCase() === String(value).trim().toLowerCase());
+
   async function draft(id) {
-    const item = state.items.get(id);
-    if (!item) return;
-    item.status = 'drafting'; report();
-    const field = { id, label: item.label, type: item.type, options: item.options, maxlength: item.maxlength, name: item.name, placeholder: item.placeholder };
+    const asked = state.items.get(id);
+    if (!asked) return;
+    asked.status = 'drafting'; report();
+    const field = { id, label: asked.label, type: asked.type, options: asked.options, maxlength: asked.maxlength, name: asked.name, placeholder: asked.placeholder };
     const res = await bg('draft', { field, ctx: AF.pageContext(), url: location.href });
-    if (res.error) { item.status = 'draftable'; item.reason = res.error; }
-    else {
+    const item = state.items.get(id) || asked; // the page may have re-scanned while the model was writing
+    const mixed = !res.error && (res.id !== id || (res.label ?? '') !== (asked.label ?? '')); // an answer for another question is never used
+    const choice = ['radio', 'select', 'multiselect'].includes(item.type);
+
+    if (res.error || mixed) {
+      const n = attempts.get(id) || 0;
+      item.status = 'draftable';
+      if (n < RETRY_MS.length) {
+        attempts.set(id, n + 1);
+        item.reason = `retrying (${n + 1} of ${RETRY_MS.length})`;
+        setTimeout(() => { tried.delete(id); predraft(); syncChips(); }, RETRY_MS[n]);
+      } else item.reason = mixed ? 'the answer did not match its question' : res.error;
+    } else if (res.status === 'draft' && choice && !sameOption(res.value, item.options)) {
+      Object.assign(item, { status: 'unknown', reason: 'the model did not pick one of the options' });
+    } else {
+      attempts.delete(id);
       Object.assign(item, { status: res.status, value: res.value ?? '', source: res.source || item.source, reason: res.reason, confidence: res.confidence });
-      if (res.status === 'draft') state.drafts.set(id, { status: 'draft', value: item.value, source: item.source, reason: item.reason, confidence: item.confidence });
+      if (res.status === 'draft') state.drafts.set(id, { status: 'draft', label: item.label, value: item.value, source: item.source, reason: item.reason, confidence: item.confidence });
     }
     report();
     const box = AF.handles.get(id)?.els[0];
