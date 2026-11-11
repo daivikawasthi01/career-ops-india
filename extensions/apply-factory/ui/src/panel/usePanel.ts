@@ -46,7 +46,7 @@ export function usePanel() {
     patchJob({ score: res.error ? null : res, error: auto ? "" : res.error || "", autoDone: true, busy: "" })
   }, [jobContext, patchJob])
 
-  const refresh = useCallback(async () => {
+  const refreshNow = useCallback(async () => {
     const forced = Number(new URLSearchParams(location.search).get("tab")) // lets the e2e test point the panel at another tab
     const [t] = forced ? [{ id: forced }] : await chrome.tabs.query({ active: true, currentWindow: true })
     if (!t) return
@@ -60,6 +60,12 @@ export function usePanel() {
     const j = jobRef.current
     if (next.injected && next.siteMode !== "off" && next.server?.llm?.ok && !j.score && !j.busy && !j.autoDone) runScore(true)
   }, [send, runScore])
+
+  const refresh = useCallback(async () => {
+    // A page opened before the extension was reloaded loses its link to it ("Extension context invalidated"): stop quietly, a refresh fixes it.
+    if (!chrome.runtime?.id) return
+    try { await refreshNow() } catch (e) { if (!/context invalidated/i.test(String(e))) throw e }
+  }, [refreshNow])
 
   useEffect(() => {
     // Tell the background this window's side panel is open (the copy drawn inside a web page is an iframe and does not count).
