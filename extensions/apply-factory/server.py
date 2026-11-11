@@ -9,7 +9,7 @@ Local API for the browser extension. Binds to 127.0.0.1 only.
   POST /jobs        {q, sources[], days, confirmed_only, ...} -> one page of the scanner's jobs.db, read only
   POST /jobs/years  {start}                          -> reads the years each posting's text asks for, in the background; returns progress
   POST /jobs/mark   {id, mark}                       -> applied / dismissed / saved, kept in kb.sqlite
-  POST /company/start {company, url, title, refresh} -> {cached, result} or {job}: size, people, public emails and phones (poll /cv/job)
+  POST /company/start {company, url, title, location, website, refresh} -> {cached, result} or {job}: size, people, public emails and phones (poll /cv/job)
   POST /mail/find    {name, domain, known[]}         -> {job}: likely addresses for a person, checked against the mail server, with risk bands
   POST /mail/generic {domain}                        -> {job}: careers@, jobs@, hr@ ... checked the same way
   POST /outreach/draft {person, company, title, jd_text} -> a short cold email (subject, body) from your CV and the job
@@ -269,20 +269,21 @@ def make_handler(state: State):
             if path == "/company/start":
                 name = str(body["company"]).strip()
                 loc = str(body.get("location", "")).strip()
+                site = str(body.get("website", "")).strip()
                 if not name:
                     return self._send(400, {"error": "company is required"})
                 if not body.get("refresh"):
                     with db.tx(state.db_path) as conn:
-                        hit = companies.cached(conn, name, loc)
+                        hit = companies.cached(conn, name, loc, site)
                     if hit:
                         return self._send(200, {"cached": True, "result": hit})
                     if body.get("cache_only"):  # the tab opening on a company asks only whether an answer is already saved
                         return self._send(200, {"cached": False})
 
                 def research():
-                    res = companies.research(name, str(body.get("url", "")), str(body.get("title", "")), loc)
+                    res = companies.research(name, str(body.get("url", "")), str(body.get("title", "")), loc, site)
                     with db.tx(state.db_path) as conn:
-                        companies.store(conn, name, res, loc)
+                        companies.store(conn, name, res, loc, site)
                     return res
                 return self._send(200, {"job": state.spawn(research)})
             if path in ("/mail/find", "/mail/generic"):

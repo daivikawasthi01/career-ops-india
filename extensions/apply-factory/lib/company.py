@@ -14,6 +14,7 @@ from __future__ import annotations
 import csv
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 import urllib.parse
 import urllib.request
 import urllib.robotparser
@@ -199,17 +200,20 @@ def _int(v) -> int | None:
         return None
 
 
-def research_overview(company: str, domain: str) -> dict:
+def research_overview(company: str, domain: str, location: str = "") -> dict:
     where = f" (website {domain})" if domain else ""
+    home = _cfg().get("home_region", "India")
+    pick = (f" Several companies can share a name: choose the one that hires in {location or home} ({home}), not a same-named company elsewhere."
+            if not domain else "")
     ans = _search(
         f'Company: "{company}"{where}. Find how many employees it has (the most recent figure and its date), the headquarters city, and what it does '
-        'in one sentence. Use only what you find on pages; if you cannot find a figure use null. Reply with JSON only: '
-        '{"employees": number|null, "employees_note": "text with the date", "hq": "city, country"|null, "summary": "one sentence"|null, '
+        'in one sentence, and whether it has an office or staff in India.' + pick + ' Use only what you find on pages; if you cannot find a figure use null. Reply with JSON only: '
+        '{"india_office": true|false|null, "employees": number|null, "employees_note": "text with the date", "hq": "city, country"|null, "summary": "one sentence"|null, '
         '"website": "domain you found"|null, "source": "page url used for the headcount"|null}')
     data = _json_in(ans["text"])
     src = data.get("source") if _trusted(str(data.get("source") or ""), ans["sources"]) else None
     n = _int(data.get("employees"))
-    return {"employees": n, "note": data.get("employees_note") or None, "band": band_for(n), "hq": data.get("hq"), "summary": data.get("summary"),
+    return {"india": data.get("india_office"), "employees": n, "note": data.get("employees_note") or None, "band": band_for(n), "hq": data.get("hq"), "summary": data.get("summary"),
             "website": host_of(str(data.get("website") or "")) or None, "source": src, "sources": ans["sources"]}
 
 
@@ -231,7 +235,7 @@ def domain_guesses(company: str, website: str) -> list[str]:
     return [f"{st}.{e}" for st in dict.fromkeys(stems) if len(st) >= 2 for e in ends]
 
 
-def email_domains(company: str, website: str) -> tuple[list[dict], list[str], list[dict]]:
+def email_domains(company: str, website: str, pinned: bool = False) -> tuple[list[dict], list[str], list[dict]]:
     """Where this company's work email lives, best first, each with a mail server: what the web says its addresses look like, then the
     website, then guesses. Returns (domains, shapes the evidence points to, the example addresses behind them). The examples are real
     employee addresses a page shows, so even a cut shape (8-character user names) is learned from them. A guess is only kept with a mail server."""
@@ -239,7 +243,7 @@ def email_domains(company: str, website: str) -> tuple[list[dict], list[str], li
     shapes: list[str] = []
     examples: list[dict] = []
     try:
-        ans = _search(f'What email address format and domain do employees of "{company}" use for work email (for example first.last@domain)? '
+        ans = _search(f'What email address format and domain do employees of "{company}"{f" (the one whose website is {website}, not a same-named company)" if website else ""} use for work email (for example first.last@domain)? '
                       'Give the domains you find, each with the page you found it on, and up to 5 real employee examples (the person\'s full name and their '
                       'work address exactly as a page shows it). Never guess or construct an address. Reply with JSON only: '
                       '{"domains": [{"domain": "example.com", "pattern": "first.last"|null, "source": "page url"}], '
@@ -260,7 +264,8 @@ def email_domains(company: str, website: str) -> tuple[list[dict], list[str], li
         shapes = [*mailcheck.learn_shapes([(e["name"], e["address"]) for e in examples]), *shapes]
     except llm.LLMUnavailable:
         pass  # the website and the guesses still work
-    order = found + ([(website, "website")] if website else []) + [(g, "guess") for g in domain_guesses(company, website)]
+    site = [(website, "website")] if website else []
+    order = (site + found if pinned else found + site) + [(g, "guess") for g in domain_guesses(company, website)]
     out: list[dict] = []
     for dom, how in order:
         if dom in {o["domain"] for o in out}:
@@ -277,7 +282,7 @@ def _people_plan(roles: list[str], job_title: str, location: str) -> list[str]:
     """The searches, in order: the team that hires for this job, HR and recruiters in the job's city (else each default city), then
     each role that matters at this company's size."""
     cfg = _cfg()
-    where = f" in {location}" if location else ""
+    where = f" in {location}" if location else f" in {cfg.get('home_region', 'India')}"
     plan = []
     if job_title:
         plan.append(f'the hiring manager, team lead or recruiter for a "{job_title}" role{where}')
@@ -289,8 +294,9 @@ def _people_plan(roles: list[str], job_title: str, location: str) -> list[str]:
 def _people_prompt(company: str, domain: str, role: str) -> str:
     where = f" (website {domain})" if domain else ""
     return (f'Company: "{company}"{where}. Find the CURRENT people who are: {role}. Only people you actually found on a page, each with the page url. '
+            f'Prefer people based in {_cfg().get("home_region", "India")}; give each one\'s city and country if the page says. '
             'Never guess a name; return fewer people rather than invent one. Reply with JSON only: '
-            '{"people": [{"name": "...", "title": "...", "kind": "founder|engineering|talent|hr|manager|other", "source": "page url", '
+            '{"people": [{"name": "...", "title": "...", "location": "city, country"|null, "kind": "founder|engineering|talent|hr|manager|other", "source": "page url", '
             '"linkedin": "profile url if the page shows it"|null}]}')
 
 
@@ -302,7 +308,7 @@ def _read_people(answer: dict) -> tuple[list[dict], int]:
             dropped += 1
             continue
         li = str(p.get("linkedin") or "")
-        kept.append({"name": name, "title": str(p.get("title") or "")[:120], "kind": str(p.get("kind") or "other"), "source": str(p["source"]),
+        kept.append({"name": name, "title": str(p.get("title") or "")[:120], "location": str(p.get("location") or "")[:60] or None, "kind": str(p.get("kind") or "other"), "source": str(p["source"]),
                      "linkedin": li if "linkedin.com/in/" in li else None, "partial": len(name.split()[-1].rstrip(".")) < 2})
     return kept, dropped
 
@@ -315,21 +321,44 @@ def research_people(company: str, domain: str, band: str, job_title: str, locati
     people: dict[str, dict] = {}
     sources: list[dict] = []
     dropped = 0
-    for role in _people_plan(roles, job_title, location)[: int(cfg.get("people_queries", 6))]:
+    plan = _people_plan(roles, job_title, location)[: int(cfg.get("people_queries", 6))]
+
+    def ask(role):
         try:
-            ans = _search(_people_prompt(company, domain, role))
-        except llm.LLMUnavailable:
-            if people:
-                break  # keep what the earlier searches found
-            raise
+            return _search(_people_prompt(company, domain, role))
+        except llm.LLMUnavailable as e:
+            return e
+
+    # The searches are independent and take about 20 s each, so they run side by side (the claude fallback caps itself at two at a time).
+    with ThreadPoolExecutor(max_workers=max(1, int(cfg.get("people_parallel", 3)))) as pool:
+        answers = list(pool.map(ask, plan))
+    if answers and all(isinstance(a, llm.LLMUnavailable) for a in answers):
+        raise answers[0]
+    for ans in answers:
+        if isinstance(ans, llm.LLMUnavailable):
+            continue  # keep what the other searches found
         sources += ans["sources"]
         kept, d = _read_people(ans)
         dropped += d
-        for p in kept:
-            people.setdefault(p["name"].lower(), p)
-        if len(people) >= int(cfg.get("people_target", 6)):
-            break
-    return list(people.values())[:12], sources, dropped
+        for person in kept:
+            people.setdefault(person["name"].lower(), person)
+    ranked = sorted(people.values(), key=_region_rank(cfg.get("home_region", "India")))
+    return ranked[:12], sources, dropped
+
+
+_INDIA_PLACES = re.compile(r"india|bengaluru|bangalore|hyderabad|gurugram|gurgaon|mumbai|pune|delhi|noida|chennai|kolkata|ahmedabad|kochi", re.I)
+
+
+def in_region(person: dict, region: str = "India") -> bool | None:
+    """True when the page places the person in the region, False when it places them elsewhere, None when it says nothing."""
+    where = person.get("location") or ""
+    if not where:
+        return None
+    return bool(_INDIA_PLACES.search(where)) if region.lower() == "india" else region.lower() in where.lower()
+
+
+def _region_rank(region: str):
+    return lambda person: {True: 0, None: 1, False: 2}[in_region(person, region)]
 
 
 def network(company: str) -> list[dict]:
@@ -347,9 +376,11 @@ def network(company: str) -> list[dict]:
             for t in targets for c in (t.get("connections") or [])][:10]
 
 
-def research(company: str, job_url: str = "", job_title: str = "", location: str = "") -> dict:
+def research(company: str, job_url: str = "", job_title: str = "", location: str = "", website: str = "") -> dict:
     """The whole lookup. Raises llm.LLMUnavailable when no search backend can answer; the site crawl and network parts still run first."""
     domain, how = domain_for(company, job_url)
+    if host_of(website):   # the person told us which company it is: that beats every guess
+        domain, how = _registrable(host_of(website)), "you gave it"
     out: dict = {"company": company, "domain": domain, "domain_from": how, "job_title": job_title, "location": location, "warnings": [],
                  "generated_at": datetime.now().isoformat(timespec="seconds")}
     if domain:
@@ -357,12 +388,12 @@ def research(company: str, job_url: str = "", job_title: str = "", location: str
     else:
         out["contacts"] = {"emails": [], "phones": [], "pages": []}
     out["network"] = network(company)
-    ov = research_overview(company, domain)
+    ov = research_overview(company, domain, location)
     if not domain and ov.get("website") and not _is_board(ov["website"]):
         domain = _registrable(ov["website"])
         out.update(domain=domain, domain_from="web search")
         out["contacts"] = crawl(domain)
-    out["email_domains"], out["email_shapes"], out["email_examples"] = email_domains(company, domain)
+    out["email_domains"], out["email_shapes"], out["email_examples"] = email_domains(company, domain, pinned=how == "you gave it")
     out["size"] = {k: ov[k] for k in ("employees", "note", "band", "source")}
     out["hq"], out["summary"] = ov["hq"], ov["summary"]
     people, psrc, dropped = research_people(company, domain, ov["band"], job_title, location)
@@ -380,6 +411,12 @@ def research(company: str, job_url: str = "", job_title: str = "", location: str
         out["warnings"].append("No mail server was found for this company's domains, so addresses cannot be checked.")
     elif out["email_domains"][0]["domain"] != domain and domain:
         out["warnings"].append(f"Work email seems to use {out['email_domains'][0]['domain']}, not the website domain {domain}.")
+    region = _cfg().get("home_region", "India")
+    out["india"] = ov.get("india")
+    if ov.get("india") is False:
+        out["warnings"].append(f"No office or staff in {region} was found for this company, so it may not hire there. Check the job's location before writing.")
+    elif people and not any(in_region(q, region) for q in people):
+        out["warnings"].append(f"None of the people found is placed in {region} by a page. Try the LinkedIn company page filtered to {region}.")
     if not people:
         out["warnings"].append("No named people were found with a source page. Try the LinkedIn company page for the hiring team.")
     return out
@@ -402,13 +439,13 @@ def cache_put(conn, key: str, result: dict) -> None:
     conn.execute("INSERT OR REPLACE INTO company_cache(cache_key, result_json, created_at) VALUES (?,?,CURRENT_TIMESTAMP)", (key, json.dumps(result)))
 
 
-def _key(company: str, location: str) -> str:
-    return "company:" + norm(company) + (":" + norm(location) if location else "")
+def _key(company: str, location: str, website: str = "") -> str:
+    return "company:" + norm(company) + (":" + norm(location) if location else "") + ("@" + host_of(website) if host_of(website) else "")
 
 
-def cached(conn, company: str, location: str = "") -> dict | None:
-    return cache_get(conn, _key(company, location), int(_cfg().get("cache_days", 14)))
+def cached(conn, company: str, location: str = "", website: str = "") -> dict | None:
+    return cache_get(conn, _key(company, location, website), int(_cfg().get("cache_days", 14)))
 
 
-def store(conn, company: str, result: dict, location: str = "") -> None:
-    cache_put(conn, _key(company, location), result)
+def store(conn, company: str, result: dict, location: str = "", website: str = "") -> None:
+    cache_put(conn, _key(company, location, website), result)

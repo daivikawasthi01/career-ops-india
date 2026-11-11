@@ -58,6 +58,8 @@ resumes:
 company:
   cache_days: 14
   people_queries: 6     # at most this many searches for people: the hiring team for the job, HR per city, then each role for the size
+  people_parallel: 3    # people searches run this many at a time
+  home_region: India    # people based here are searched for and listed first; a same-named company elsewhere is not picked
   people_target: 8      # stop searching once this many people have a source page
   default_locations: [Bangalore, Hyderabad, Gurugram]   # HR and recruiters are searched in each when the job names no city
   email_domains: 3      # work-email domains to try (the web's answer, the website, then initials and name guesses that have a mail server)

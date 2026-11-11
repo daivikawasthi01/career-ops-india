@@ -73,7 +73,7 @@ class ServerTest(unittest.TestCase):
         token = self.pair()
         saved = (company.research, mailcheck.find_multi)
         calls = []
-        company.research = lambda name, url="", title="", location="": (calls.append(name), {"company": name, "people": [], "size": {}})[1]
+        company.research = lambda name, url="", title="", location="", website="": (calls.append(name), {"company": name, "people": [], "size": {}})[1]
         mailcheck.find_multi = lambda name, domains, known=None, prefer=None: {"domain": domains[0], "catch_all": False, "rows": [{"address": "a@" + domains[0], "verdict": "accepted", "shape": "flast"}]}
         try:
             code, out = self.call("/company/start", {"company": "Acme", "url": "", "title": "SWE"}, token)

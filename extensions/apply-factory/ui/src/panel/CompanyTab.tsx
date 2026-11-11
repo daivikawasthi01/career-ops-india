@@ -9,7 +9,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, pollJob, send } from "@/lib/chrome"
 import { OutreachPanel } from "./OutreachPanel"
 
-type Person = { name: string; title: string; kind: string; source: string; linkedin: string | null; partial?: boolean }
+type Person = { name: string; title: string; location?: string | null; kind: string; source: string; linkedin: string | null; partial?: boolean }
 type Result = {
   company: string; domain: string; domain_from: string; location?: string; hq?: string; summary?: string; generated_at?: string; cached_at?: string
   size: { employees: number | null; note: string | null; band: string; source: string | null }
@@ -106,6 +106,7 @@ export function CompanyTab({ seed }: { seed: { company: string; location: string
   const [name, setName] = useState(seed.company)
   const [location, setLocation] = useState(seed.location)
   const [title, setTitle] = useState("")
+  const [website, setWebsite] = useState("")   // when the name is shared by several companies, the site says which one
   const [jobUrl, setJobUrl] = useState("")
   const [jdText, setJdText] = useState("")
   const [writing, setWriting] = useState<Record<string, boolean>>({}) // people whose email panel is open
@@ -131,7 +132,7 @@ export function CompanyTab({ seed }: { seed: { company: string; location: string
     if (!company) return
     const mine = ++seq.current
     setBusy(!cacheOnly); setError(""); if (!cacheOnly) setMail({})
-    const first = await api("/company/start", { company, url: jobUrl, title, location: location.trim(), refresh, cache_only: cacheOnly })
+    const first = await api("/company/start", { company, url: jobUrl, title, location: location.trim(), website: website.trim(), refresh, cache_only: cacheOnly })
     if (mine !== seq.current) return
     if (first.error) { setBusy(false); setError(first.error === "server offline" ? "The local server is not running." : String(first.error)); return }
     const take = (r: Result) => { setRes(r); setDomain(r.domain || ""); setPicked((r.email_domains || []).map((d) => d.domain)) }
@@ -172,7 +173,8 @@ export function CompanyTab({ seed }: { seed: { company: string; location: string
         </div>
         <Button type="submit" disabled={busy || !name.trim()}>{busy ? <Loader2 className="animate-spin" /> : <Search />}Research</Button>
       </form>
-      <Input placeholder="Job city (optional)" title="Left empty, HR is searched in Bangalore, Hyderabad and Gurugram" aria-label="Job city" value={location} onChange={(e) => { setLocation(e.target.value); setRes(null) }} />
+      <Input placeholder="Company website (optional, if the name is shared)" title="Several companies can share a name. Paste the right company's website and it is used instead of a guess" aria-label="Company website" value={website} onChange={(e) => { setWebsite(e.target.value); setRes(null) }} />
+      <Input placeholder="Job city (optional)" title="Left empty, HR is searched in India: Bangalore, Hyderabad and Gurugram" aria-label="Job city" value={location} onChange={(e) => { setLocation(e.target.value); setRes(null) }} />
 
       {busy && (
         <div className="space-y-2 rounded-xl border p-3" aria-busy="true">
@@ -223,7 +225,7 @@ export function CompanyTab({ seed }: { seed: { company: string; location: string
                     <UserRound className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium">{p.name}</p>
-                      <p className="truncate text-xs text-muted-foreground" title={p.title}>{p.title}</p>
+                      <p className="truncate text-xs text-muted-foreground" title={p.title}>{p.title}{p.location ? ` (${p.location})` : ""}</p>
                       {p.partial && <p className="text-xs text-warning">Only an initial for the last name, so only first-name guesses are possible.</p>}
                       <div className="flex flex-wrap items-center gap-2 pt-1">
                         <Badge variant="secondary" className="font-normal">{p.kind}</Badge>

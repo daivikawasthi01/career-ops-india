@@ -232,19 +232,20 @@ class CompanyTest(unittest.TestCase):
         plan = company._people_plan([], "", "")
         self.assertEqual(plan, [f"HR, talent acquisition or technical recruiters based in {c}" for c in ("Bangalore", "Hyderabad", "Gurugram")])
 
-    def test_people_searches_merge_and_stop_early_when_there_are_enough(self):
+    def test_people_searches_run_together_merge_and_list_people_in_india_first(self):
         seen = []
-        def person(n, src="https://news.example/p"):
-            return {"name": f"Person {'abcdefg'[n - 1].upper()}erson", "title": "x", "kind": "other", "source": src}
-        batches = iter([[person(1), person(2), person(3)], [person(3), person(4), person(5), person(6)], [person(7)]])
+        def person(n, where, src="https://news.example/p"):
+            return {"name": f"Person {'abcdefg'[n - 1].upper()}erson", "title": "x", "kind": "other", "source": src, "location": where}
+        by_role = {"Bangalore": [person(1, "Prague, Czechia"), person(2, None)], "Hyderabad": [person(2, None), person(3, "Hyderabad, India")], "Gurugram": [person(4, "Gurugram")]}
         def fake(prompt, **kw):
             seen.append(prompt)
-            return {"text": json.dumps({"people": next(batches)}), "sources": [{"title": "N", "uri": "https://news.example/a"}]}
+            hit = next((v for k, v in by_role.items() if k in prompt), [])
+            return {"text": json.dumps({"people": hit}), "sources": [{"title": "N", "uri": "https://news.example/a"}]}
         company.search = fake
-        with mock.patch.object(company, "_cfg", lambda: {**config.load()["company"], "people_target": 6}):
-            people, _, _ = company.research_people("Acme", "acme.com", "mid", "")
-        self.assertEqual([p["name"] for p in people], [f"Person {c}erson" for c in "ABCDEF"])           # person C was found twice, listed once
-        self.assertEqual(len(seen), 2)                                                                  # six people found: the third search never ran
+        people, _, _ = company.research_people("Acme", "acme.com", "mid", "")
+        self.assertEqual(len(seen), 6)                                                                  # every search ran
+        self.assertEqual([p["name"] for p in people], ["Person Cerson", "Person Derson", "Person Berson", "Person Aerson"])   # India first, unknown next, abroad last; B once
+        self.assertTrue(all("Prefer people based in India" in q for q in seen))
 
     def test_email_domain_can_differ_from_the_website(self):
         self.assertEqual(company.domain_guesses("Goldman Sachs", "goldmansachs.com")[:3], ["gs.com", "goldman.com", "goldmansachs.com"])
@@ -276,19 +277,26 @@ class CompanyTest(unittest.TestCase):
         doms, shapes, examples = company.email_domains("Goldman Sachs", "")
         self.assertEqual((shapes, [e["address"] for e in examples], doms[0]["domain"]), (["flast:8"], ["pbhattac@gs.com"], "gs.com"))
 
-    def test_a_failed_later_search_keeps_what_was_found(self):
-        calls = []
+    def test_a_failed_search_keeps_what_the_others_found(self):
+        ok = {"text": json.dumps({"people": [{"name": "Ada Lovelace", "title": "CTO", "kind": "engineering", "source": "https://news.example/a"}]}),
+              "sources": [{"title": "N", "uri": "https://news.example/a"}]}
         def fake(prompt, **kw):
-            calls.append(1)
-            if len(calls) == 2:
+            if "Hyderabad" in prompt:
                 raise llm.LLMUnavailable("limited")
-            return {"text": json.dumps({"people": [{"name": "Ada Lovelace", "title": "CTO", "kind": "engineering", "source": "https://news.example/a"}]}),
-                    "sources": [{"title": "N", "uri": "https://news.example/a"}]}
+            return ok
         company.search = fake
         self.assertEqual([p["name"] for p in company.research_people("Acme", "acme.com", "mid", "")[0]], ["Ada Lovelace"])
-        calls.clear(); calls.append(1)
+        def down(prompt, **kw):
+            raise llm.LLMUnavailable("limited")
+        company.search = down
         with self.assertRaises(llm.LLMUnavailable):                                                    # nothing found at all: the error is shown, not hidden
             company.research_people("Acme", "acme.com", "mid", "")
+
+    def test_a_website_you_give_decides_the_company(self):
+        company.search = lambda prompt, **kw: {"text": "{}", "sources": []}
+        with mock.patch.object(company, "crawl", lambda d: {"emails": [], "phones": [], "pages": []}), mock.patch.object(company, "network", lambda c: []):
+            out = company.research("Alza Inc", website="https://www.alza.org.in/#site")
+        self.assertEqual((out["domain"], out["domain_from"]), ("alza.org.in", "you gave it"))
 
     def test_size_bands(self):
         self.assertEqual([company.band_for(n) for n in (None, 12, 200, 2000, 90000)], ["unknown", "startup", "small", "mid", "large"])
