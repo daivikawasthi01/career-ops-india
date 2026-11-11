@@ -261,7 +261,7 @@ class SuggestTest(unittest.TestCase):
         self.assertEqual((out["results"], sorted(out["single"])), ([], ["a", "b"]))
         self.assertEqual(self.fake.chat_calls, 0)
 
-    def test_claude_fallback_picks_the_model_by_size_and_rests_after_a_plan_limit(self):
+    def test_claude_fallback_uses_haiku_and_rests_after_a_plan_limit(self):
         from lib import llm
         seen = []
         def run(args, stdin, timeout, cwd):
@@ -270,15 +270,54 @@ class SuggestTest(unittest.TestCase):
                 return 1, json.dumps({"result": "You have hit your usage limit, resets later", "is_error": True})
             return 0, json.dumps({"result": "ok"})
         llm.run_claude = run
-        self.assertEqual(llm.call("short", num_predict=40), "ok")       # a short fact: the small model
-        self.assertEqual(llm.call("long", num_predict=400), "ok")       # a long answer: the large one
-        self.assertEqual(seen, ["haiku", "sonnet"])
+        self.assertEqual(llm.call("short", num_predict=40), "ok")
+        self.assertEqual(llm.call("long", num_predict=400), "ok")
+        self.assertEqual(seen, ["haiku", "haiku"])                       # haiku only, whatever the size
         with self.assertRaises(llm.LLMUnavailable):
             llm.call("limit", num_predict=400)
         before = len(seen)
         with self.assertRaises(llm.LLMUnavailable):
             llm.call("again", num_predict=400)
         self.assertEqual(len(seen), before)                              # resting: claude is not called again for an hour
+
+    def test_web_search_uses_groq_sources_then_gemini_when_groq_is_limited(self):
+        from lib import llm
+        import itertools
+        llm._pool = lambda: (("groq", "gkeyaaaa"), ("gemini", "mkeybbbb"))
+        llm._TURN = itertools.count()
+        urls = []
+        def post(url, body, headers=None, timeout=0):
+            urls.append((url, body.get("model")))
+            if "groq.com" in url:
+                if body["model"] == "openai/gpt-oss-20b":
+                    raise llm.RateLimited("daily limit", 600)
+                return {"choices": [{"message": {"content": "CTO is Ada Lovelace【3†L1-L2】", "executed_tools": [
+                    {"type": "browser_search", "search_results": {"results": [{"title": "News", "url": "https://news.example/a"}]}},
+                    {"type": "browser.open", "search_results": {"results": [{"title": "example - viewing lines", "url": "https://page.example/open"}]}}]}}]}
+            return {"candidates": [{"content": {"parts": [{"text": "from gemini"}]}, "groundingMetadata": {"groundingChunks": [{"web": {"title": "G", "uri": "https://g.example"}}]}}]}
+        llm.post = post
+        out = llm.web_search("who is the CTO?")
+        self.assertEqual(out["text"], "CTO is Ada Lovelace")                      # citation marks removed
+        self.assertEqual(out["sources"], [{"title": "News", "uri": "https://news.example/a"}])  # search hits only, not opened page bodies
+        self.assertEqual([m for _, m in urls], ["openai/gpt-oss-20b", "openai/gpt-oss-120b"])  # the limited light model rests; the next one answers
+        llm._REST.clear()
+        def all_limited(url, body, headers=None, timeout=0):
+            if "groq.com" in url:
+                raise llm.RateLimited("limit", 600)
+            return post(url, body, headers, timeout)
+        llm.post = all_limited
+        self.assertEqual(llm.web_search("who is the CTO?")["text"], "from gemini")
+        llm._REST.clear()
+        llm._pool = lambda: ()                                                      # no hosted key at all: claude -p is the last resort
+        seen = []
+        def run(args, stdin, timeout, cwd):
+            seen.append((args[args.index("--model") + 1], args[args.index("--tools") + 1]))
+            ev = [{"type": "user", "tool_use_result": {"results": [{"content": [{"title": "T", "url": "https://t.example/x"}]}]}},
+                  {"type": "result", "result": "Ada Lovelace", "is_error": False}]
+            return 0, "\n".join(json.dumps(e) for e in ev)
+        llm.run_claude = run
+        out = llm.web_search("who is the CTO?")
+        self.assertEqual((seen, out["text"], out["sources"]), ([("haiku", "WebSearch")], "Ada Lovelace", [{"title": "T", "uri": "https://t.example/x"}]))
 
     def test_a_short_fact_makes_one_small_call_with_no_style_lookup(self):
         self.fake.chat_replies = ["Mumbai"]

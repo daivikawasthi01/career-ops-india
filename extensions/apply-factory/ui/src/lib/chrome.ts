@@ -15,3 +15,15 @@ export const toBase64 = (file: File): Promise<string> =>
     r.onerror = () => reject(r.error)
     r.readAsDataURL(file)
   })
+
+// Long server jobs (company research, mail checks) return an id; this polls /cv/job until it finishes or the wait runs out.
+export async function pollJob(id: string, maxSeconds = 240): Promise<any> {
+  const until = Date.now() + maxSeconds * 1000
+  while (Date.now() < until) {
+    const j = await api("/cv/job", { id })
+    if (j.error && !j.status) return { status: "error", error: j.error }
+    if (j.status !== "running") return j
+    await new Promise((r) => setTimeout(r, 1500))
+  }
+  return { status: "error", error: "Still running after a few minutes. Try again later." }
+}

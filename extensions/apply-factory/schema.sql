@@ -84,3 +84,17 @@ CREATE TABLE IF NOT EXISTS score_cache (
     result_json   TEXT NOT NULL,
     created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Your own marks on jobs from the scanner's jobs.db (applied, dismissed, saved). The scanner's file is never written to.
+CREATE TABLE IF NOT EXISTS job_marks (
+    canonical_url TEXT PRIMARY KEY,
+    mark          TEXT NOT NULL,
+    marked_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Company research (a few model searches each) is kept for company.cache_days; mail checks for mail.cache_days.
+CREATE TABLE IF NOT EXISTS company_cache (
+    cache_key   TEXT PRIMARY KEY,
+    result_json TEXT NOT NULL,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

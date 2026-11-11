@@ -175,7 +175,7 @@ def _claude(prompt: str, system: str | None, temperature: float, json_mode: bool
     if time.time() < _CLAUDE_REST[0]:
         raise LLMUnavailable("claude -p is resting after a plan limit")
     cfg = _cfg().get("claude") or {}
-    model = cfg.get("short_model", "haiku") if 0 < num_predict <= 120 else cfg.get("model", "sonnet")  # a short fact does not need the large model
+    model = cfg.get("model", "haiku")  # haiku only
     sys_text = (system or "You are a careful writing assistant.") + ("\nReply with one JSON object and nothing else." if json_mode else "")
     args = ["-p", "--output-format", "json", "--model", model, "--tools", "", "--no-session-persistence", "--disable-slash-commands",
             "--setting-sources", "", "--system-prompt", sys_text]
@@ -201,6 +201,156 @@ def _claude(prompt: str, system: str | None, temperature: float, json_mode: bool
     USAGE["claude"] += 1
     _log(f"claude/{model} answered in {time.time() - started:.1f}s")
     return text.strip()
+
+
+def _search_groq(prompt: str, system: str | None, timeout: float) -> dict:
+    """gpt-oss with Groq's browser_search tool: it searches and opens pages itself. One query costs about 17k tokens, so the light model
+    goes first (each model has its own daily allowance). The sources are the pages the tool really returned."""
+    cfg = _cfg().get("cloud") or {}
+    keys = [k for p, k in _pool() if p == "groq"]
+    if not keys:
+        raise LLMUnavailable("no Groq key")
+    with _LOCK:
+        turn = next(_TURN)
+    messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
+    deadline = time.time() + float(cfg.get("search_budget_seconds", 75))
+    for model in cfg.get("search_models", ["openai/gpt-oss-20b", "openai/gpt-oss-120b"]):
+        for i in range(len(keys)):
+            key = keys[(turn + i) % len(keys)]
+            kid = f"search:{model}:{key[-6:]}"
+            left = deadline - time.time()
+            if _REST.get(kid, 0) > time.time():
+                continue
+            if left < 5:
+                raise LLMUnavailable("web search ran out of time")
+            started = time.time()
+            try:
+                out = post(_PROVIDERS["groq"][0], {"model": model, "temperature": 0.1, "messages": messages,
+                                                    "tools": [{"type": "browser_search"}], "reasoning_effort": "low"},
+                           {"Authorization": f"Bearer {key}"}, timeout=min(timeout, left))
+            except RateLimited as e:
+                _REST[kid] = time.time() + e.retry_after
+                _log(f"search {model} key ...{key[-4:]} rate limited ({time.time() - started:.1f}s)")
+                continue
+            except LLMUnavailable as e:
+                _REST[kid] = time.time() + (120 if "timed out" in str(e) else 30)
+                _log(f"search {model} key ...{key[-4:]} failed: {str(e)[-50:]} ({time.time() - started:.1f}s)")
+                continue
+            msg = (out.get("choices") or [{}])[0].get("message") or {}
+            seen: dict[str, str] = {}
+            for tool in msg.get("executed_tools") or []:
+                if tool.get("type") != "browser_search":
+                    continue  # browser.open results are page bodies; the search hits are the pages a claim can be checked against
+                for r in (tool.get("search_results") or {}).get("results") or []:
+                    if r.get("url") and r["url"] not in seen:
+                        seen[r["url"]] = r.get("title", "")
+            text = re.sub(r"【[^】]*】", "", msg.get("content") or "").strip()  # drop the tool's citation marks
+            if text:
+                _log(f"search {model} answered in {time.time() - started:.1f}s, {len(seen)} sources")
+                return {"text": text, "sources": [{"title": t, "uri": u} for u, t in seen.items()]}
+    raise LLMUnavailable("no Groq key could run the web search")
+
+
+def web_search(prompt: str, *, system: str | None = None, timeout: float = 60) -> dict:
+    """Answer from a live web search: {"text", "sources": [{"title", "uri"}]}. Groq's browser search first, then Gemini's Google
+    grounding. The sources are what the search really returned, so a claim can be checked against them."""
+    errors = []
+    for name, run in (("groq", _search_groq), ("gemini", _search_gemini), ("claude", _search_claude)):
+        if name not in ((_cfg().get("cloud") or {}).get("search_providers") or ["groq", "gemini", "claude"]):
+            continue
+        try:
+            return run(prompt, system, timeout)
+        except LLMUnavailable as e:
+            errors.append(f"{name}: {e}")
+    raise LLMUnavailable("web search unavailable (" + "; ".join(errors) + ")")
+
+
+def _search_claude(prompt: str, system: str | None, timeout: float) -> dict:
+    """Last resort: claude -p (haiku only) with just the WebSearch tool. The stream carries the links each search returned, so the
+    sources are real results here too. Uses the plan, so it only runs when Groq and Gemini could not answer."""
+    if shutil.which("claude") is None:
+        raise LLMUnavailable("claude is not installed")
+    if time.time() < _CLAUDE_REST[0]:
+        raise LLMUnavailable("claude -p is resting after a plan limit")
+    model = (_cfg().get("claude") or {}).get("model", "haiku")  # haiku only
+    args = ["-p", "--output-format", "stream-json", "--verbose", "--model", model, "--tools", "WebSearch", "--allowedTools", "WebSearch",
+            "--no-session-persistence", "--disable-slash-commands", "--setting-sources", "",
+            "--system-prompt", (system or "You are a careful research assistant.") + "\nUse web search. Answer briefly and only from what you found."]
+    cwd = Path(tempfile.gettempdir()) / "apply-factory-claude"
+    cwd.mkdir(exist_ok=True)
+    started = time.time()
+    with _CLAUDE_SLOTS:
+        try:
+            code, out = run_claude(args, prompt, max(timeout, 90), cwd)
+        except subprocess.TimeoutExpired as e:
+            raise LLMUnavailable("claude -p search timed out") from e
+        except OSError as e:
+            raise LLMUnavailable(f"claude -p: {e}") from e
+    seen: dict[str, str] = {}
+    text, failed = "", False
+    for line in out.splitlines():
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if ev.get("type") == "user":
+            for res in (ev.get("tool_use_result") or {}).get("results") or []:
+                for hit in res.get("content") or [] if isinstance(res, dict) else []:
+                    if isinstance(hit, dict) and hit.get("url") and hit["url"] not in seen:
+                        seen[hit["url"]] = hit.get("title", "")
+        elif ev.get("type") == "result":
+            text, failed = str(ev.get("result") or ""), bool(ev.get("is_error"))
+    if failed or code or not text.strip():
+        if re.search(r"limit|usage|quota|reset", text, re.I):
+            _CLAUDE_REST[0] = time.time() + 3600
+        raise LLMUnavailable(f"claude -p search error: {text[:80] or 'no answer'}")
+    USAGE["claude"] += 1
+    _log(f"claude/{model} search answered in {time.time() - started:.1f}s, {len(seen)} sources")
+    return {"text": text.strip(), "sources": [{"title": t, "uri": u} for u, t in seen.items()]}
+
+
+def _search_gemini(prompt: str, system: str | None, timeout: float) -> dict:
+    """A Gemini answer grounded in a live Google search. Uses the same Gemini keys as _cloud, rotated, a limited key resting."""
+    cfg = _cfg().get("cloud") or {}
+    keys = [k for p, k in _pool() if p == "gemini"]
+    if not cfg.get("enabled") or not keys:
+        raise LLMUnavailable("web search needs a Gemini key")
+    with _LOCK:
+        turn = next(_TURN)
+    body: dict[str, Any] = {"contents": [{"role": "user", "parts": [{"text": prompt}]}], "tools": [{"google_search": {}}],
+                            "generationConfig": {"temperature": 0.1}}
+    if system:
+        body["systemInstruction"] = {"parts": [{"text": system}]}
+    deadline = time.time() + float(cfg.get("search_budget_seconds", 75))
+    for model in _models(cfg, "gemini"):
+        for i in range(len(keys)):
+            key = keys[(turn + i) % len(keys)]
+            kid = f"search:{model}:{key[-6:]}"
+            left = deadline - time.time()
+            if _REST.get(kid, 0) > time.time():
+                continue
+            if left < 5:
+                raise LLMUnavailable("web search ran out of time")
+            started = time.time()
+            try:
+                out = post(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent", body,
+                           {"x-goog-api-key": key}, timeout=min(timeout, left))
+            except RateLimited as e:
+                _REST[kid] = time.time() + e.retry_after
+                _log(f"search {model} key ...{key[-4:]} rate limited ({time.time() - started:.1f}s)")
+                continue
+            except LLMUnavailable as e:
+                _REST[kid] = time.time() + (120 if "timed out" in str(e) else 30)
+                _log(f"search {model} key ...{key[-4:]} failed: {str(e)[-50:]} ({time.time() - started:.1f}s)")
+                continue
+            cand = (out.get("candidates") or [{}])[0]
+            text = "".join(p.get("text", "") for p in (cand.get("content") or {}).get("parts", []))
+            chunks = (cand.get("groundingMetadata") or {}).get("groundingChunks") or []
+            sources = [{"title": (c.get("web") or {}).get("title", ""), "uri": (c.get("web") or {}).get("uri", "")} for c in chunks if c.get("web")]
+            if text.strip():
+                _log(f"search {model} answered in {time.time() - started:.1f}s, {len(sources)} sources")
+                return {"text": text.strip(), "sources": sources}
+    raise LLMUnavailable("no Gemini key could run the web search")
 
 
 def cloud_ready() -> bool:

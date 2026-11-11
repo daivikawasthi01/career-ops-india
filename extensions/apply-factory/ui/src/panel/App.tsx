@@ -1,10 +1,13 @@
-import { useReducer, useRef } from "react"
+import { useReducer, useRef, useState } from "react"
 import { Moon, Sun } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { currentTheme, toggleTheme } from "@/lib/theme"
 import { AttentionCards, CvCard, FilledCard, Footer, Group, JobCard, NeedsCard, OldManifestCard, SetupCard, SiteCard, StaleCard, SummaryCard, VerdictBanner, framesItems } from "./cards"
+import { CompanyTab } from "./CompanyTab"
+import { JobsTab } from "./JobsTab"
 import { usePanel } from "./usePanel"
 
 const oldManifest = () => !!window.AF_BUILD && chrome.runtime.getManifest().version !== window.AF_BUILD
@@ -14,6 +17,8 @@ export function App() {
   const [, rerender] = useReducer((n: number) => n + 1, 0)
   const drafts = useRef<Record<string, string>>({}) // edits to a suggestion that is not applied yet survive a redraw
   const { st } = p
+  const [tab, setTab] = useState("page")
+  const [seed, setSeed] = useState({ company: "", location: "" }) // a company (and its job city) chosen in the Jobs tab
 
   const llm = st?.server?.llm
   const header = (
@@ -64,7 +69,16 @@ export function App() {
     <main className="mx-auto w-full max-w-xl space-y-3 p-3" aria-live="polite" id="app">
       {header}
       {oldManifest() && <OldManifestCard />}
-      {body}
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList className="w-full" aria-label="Sections">
+          <TabsTrigger value="page">Page</TabsTrigger>
+          <TabsTrigger value="jobs">Jobs</TabsTrigger>
+          <TabsTrigger value="company">Company</TabsTrigger>
+        </TabsList>
+      </Tabs>
+      {tab === "page" && body}
+      {tab === "jobs" && <JobsTab onOpened={() => setTab("page")} onResearch={(c, l) => { setSeed({ company: c, location: l }); setTab("company") }} />}
+      {tab === "company" && <CompanyTab key={seed.company + "|" + seed.location} seed={seed} />}
     </main>
   )
 }

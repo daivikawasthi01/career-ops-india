@@ -67,6 +67,45 @@ class ServerTest(unittest.TestCase):
         code, out = self.call("/suggest", {"url": "https://www.linkedin.com/jobs/view/1", "fields": fields}, token)
         self.assertEqual((out["mode"], out["results"]), ("watch", []))
 
+    def test_company_and_mail_routes_run_as_polled_jobs_and_cache(self):
+        from lib import company, mailcheck
+        token = self.pair()
+        saved = (company.research, mailcheck.find_multi)
+        calls = []
+        company.research = lambda name, url="", title="", location="": (calls.append(name), {"company": name, "people": [], "size": {}})[1]
+        mailcheck.find_multi = lambda name, domains, known=None, prefer=None: {"domain": domains[0], "catch_all": False, "rows": [{"address": "a@" + domains[0], "verdict": "accepted", "shape": "flast"}]}
+        try:
+            code, out = self.call("/company/start", {"company": "Acme", "url": "", "title": "SWE"}, token)
+            job = out["job"]
+            for _ in range(50):
+                res = self.call("/cv/job", {"id": job}, token)[1]
+                if res["status"] != "running":
+                    break
+                time.sleep(0.05)
+            self.assertEqual((res["status"], res["result"]["company"]), ("done", "Acme"))
+            code, out = self.call("/company/start", {"company": "Acme"}, token)
+            self.assertEqual((out["cached"], calls), (True, ["Acme"]))                                  # the second ask costs no search
+            self.assertEqual(self.call("/company/start", {"company": " "}, token)[0], 400)
+            self.assertEqual(self.call("/mail/find", {"name": "Priya", "domain": "acme.com"}, token)[0], 400)   # needs a first and last name
+            self.assertEqual(self.call("/mail/find", {"name": "Priya Sharma", "domain": "not a domain"}, token)[0], 400)
+            job = self.call("/mail/find", {"name": "Priya Sharma", "domain": "acme.com"}, token)[1]["job"]
+            for _ in range(50):
+                res = self.call("/cv/job", {"id": job}, token)[1]
+                if res["status"] != "running":
+                    break
+                time.sleep(0.05)
+            self.assertEqual(res["result"]["rows"][0]["address"], "a@acme.com")
+            seen = []
+            mailcheck.find_multi = lambda name, domains, known=None, prefer=None: (seen.append(prefer), {"domain": domains[0], "catch_all": False, "rows": []})[1]
+            job = self.call("/mail/find", {"name": "Grace Hopper", "domain": "acme.com"}, token)[1]["job"]
+            for _ in range(50):
+                if self.call("/cv/job", {"id": job}, token)[1]["status"] != "running":
+                    break
+                time.sleep(0.05)
+            self.assertEqual(seen, [["flast"]])                                                          # the next person starts from the shape that worked
+        finally:
+            company.research, mailcheck.find_multi = saved
+
     def test_capture_is_learned_in_background(self):
         token = self.pair()
         code, out = self.call("/capture", {"url": "https://jobs.lever.co/acme/1", "company": "Acme", "fields": [

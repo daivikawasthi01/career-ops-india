@@ -7,6 +7,10 @@ paths:
   reports_dir: "../../reports"
   output_dir: "../../output"
   pipeline_tsv: "../../data/pipeline.tsv"
+  jobs_db: "../../data/jobs.db"            # written by tools/mine.py; the extension only reads it
+  careers_discovery: "../../data/careers-discovery.tsv"   # company -> website domain, found by discover-careers.mjs
+  careers_directory: "../../data/careers-directory.tsv"
+  connections: "../../data/Connections.csv"                # your LinkedIn export; optional, read by linkedin-join.mjs
 
 llm:
   # Nothing runs on this Mac. Every call goes to the hosted models first; when none can answer in time, `claude -p` (your Claude plan) does.
@@ -19,10 +23,11 @@ llm:
     attempt_seconds: 35   # one hosted attempt
     keys: {groq: [8, 9], gemini: [8, 9, 10]}   # only these numbers (GROQ_API_KEY_8, GEMINI_API_KEY_8 ...); the scanners keep the others
     groq_model: "openai/gpt-oss-120b"
+    search_models: ["openai/gpt-oss-20b", "openai/gpt-oss-120b"]   # Groq browser search, about 17k tokens a query; each model has its own daily allowance
+    search_providers: [groq, gemini, claude]   # web search order (Company tab); claude -p (haiku) is the last resort
     gemini_model: ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"]   # each has its own limit; the next runs when one is limited
   claude:
-    model: "sonnet"        # long answers
-    short_model: "haiku"   # short facts and choices
+    model: "haiku"         # haiku only: claude -p is the fallback, so it stays small and fast
 
 server:
   host: "127.0.0.1"
@@ -38,3 +43,31 @@ resumes:
   default: "../../output/resumes/Daivik-Awasthi-Resume.pdf"
   devops: "../../output/resumes/Daivik-Awasthi-DevopsResume.pdf"
   ai: "../../output/resumes/Daivik-Awasthi-AIResume.pdf"   # until this exists, AI roles use the default CV
+
+# Company tab. Search goes Groq, Gemini, then claude -p (llm.cloud.search_providers).
+company:
+  cache_days: 14
+  people_queries: 6     # at most this many searches for people: the hiring team for the job, HR per city, then each role for the size
+  people_target: 8      # stop searching once this many people have a source page
+  default_locations: [Bangalore, Hyderabad, Gurugram]   # HR and recruiters are searched in each when the job names no city
+  email_domains: 3      # work-email domains to try (the web's answer, the website, then initials and name guesses that have a mail server)
+  pages: ["/", "/contact", "/contact-us", "/about", "/about-us", "/team", "/leadership", "/careers"]   # public pages read for emails and phones, robots.txt permitting
+  # Job boards and ATS hosts: a job link on one of these says nothing about the company's own domain.
+  not_company_hosts: [greenhouse.io, lever.co, ashbyhq.com, myworkdayjobs.com, workday.com, smartrecruiters.com, icims.com, linkedin.com, naukri.com,
+                      indeed.com, glassdoor.com, wellfound.com, instahyre.com, cutshort.in, internshala.com, bamboohr.com, jobvite.com, recruitee.com,
+                      keka.com, zohorecruit.com, freshteam.com, google.com, unstop.com, foundit.in, monster.com, apna.co]
+  bands: [{name: startup, max: 50}, {name: small, max: 250}, {name: mid, max: 2500}, {name: large, max: 100000000}]
+  # Who to look for by company size. The job's own title is added so the team that would hire for it comes first.
+  roles:
+    startup: ["founder or co-founder", "CTO or head of engineering", "head of people or talent, if any"]
+    small: ["CTO or VP engineering", "engineering manager for the team hiring", "head of talent or HR"]
+    mid: ["head of the department hiring", "engineering manager for the team hiring", "talent acquisition lead", "technical recruiter"]
+    large: ["technical recruiter or campus recruiter for engineering", "HR business partner for the engineering org", "director of the team hiring"]
+
+mail:
+  max_probes: 14        # RCPT checks per call, control address included
+  delay_seconds: 1.2    # between checks in one SMTP session
+  timeout: 12
+  helo: ""              # blank = this Mac's host name
+  cache_days: 7
+  generic: [careers, jobs, hr, talent, recruiting, recruitment, hiring, people, hello, contact, info]

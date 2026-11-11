@@ -6,6 +6,11 @@ Local API for the browser extension. Binds to 127.0.0.1 only.
   POST /pair       first call from the extension returns the shared token and pins the extension id
   POST /suggest    {url, title, fields[]}            -> known answers, no model call
   POST /draft      {field, ctx}                      -> one model call for one field
+  POST /jobs        {q, sources[], days, confirmed_only, ...} -> one page of the scanner's jobs.db, read only
+  POST /jobs/mark   {id, mark}                       -> applied / dismissed / saved, kept in kb.sqlite
+  POST /company/start {company, url, title, refresh} -> {cached, result} or {job}: size, people, public emails and phones (poll /cv/job)
+  POST /mail/find    {name, domain, known[]}         -> {job}: likely addresses for a person, checked against the mail server, with risk bands
+  POST /mail/generic {domain}                        -> {job}: careers@, jobs@, hr@ ... checked the same way
   POST /draft_batch {fields[], ctx}                  -> several long answers in one hosted call; "single" lists ids to ask one by one
   POST /resume/upload {kind, base64} -> replace a CV slot (the previous file is kept)
   POST /resume/upload {kind, base64}                -> replace a CV slot (the old file is kept)
@@ -26,6 +31,7 @@ from __future__ import annotations
 import base64
 import json
 import queue
+import re
 import secrets
 import sys
 import threading
@@ -35,7 +41,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from learner import learn as learner
-from lib import (checks, config, cover, cv_import, cv_store, db, knockout, llm, options, resume, rules, score as scorer,
+from lib import (checks, company as companies, config, cover, cv_import, cv_store, db, jobs, knockout, llm, mailcheck, options, resume, rules, score as scorer,
                  suggest, tailor, tex, tracker)
 
 MAX_BODY = 16 * 1024 * 1024  # a CV pdf arrives as base64
@@ -209,6 +215,62 @@ def make_handler(state: State):
                     if path == "/draft_batch":
                         return self._send(200, suggest.draft_batch(conn, body["fields"], ctx))
                     return self._send(200, suggest.draft(conn, body["field"], ctx))
+            if path == "/jobs":
+                with db.tx(state.db_path) as conn:
+                    return self._send(200, jobs.search(conn, q=str(body.get("q", "")), sources=list(body.get("sources") or []), days=int(body.get("days") or 0),
+                                                       confirmed_only=bool(body.get("confirmed_only")), hide_flagged=body.get("hide_flagged", True) is not False,
+                                                       hide_marked=body.get("hide_marked", True) is not False, sort=str(body.get("sort", "new")),
+                                                       limit=int(body.get("limit") or 40), offset=int(body.get("offset") or 0)))
+            if path == "/jobs/mark":
+                with db.tx(state.db_path) as conn:
+                    jobs.set_mark(conn, str(body["id"]), str(body.get("mark", "")))
+                return self._send(200, {"ok": True})
+            if path == "/company/start":
+                name = str(body["company"]).strip()
+                loc = str(body.get("location", "")).strip()
+                if not name:
+                    return self._send(400, {"error": "company is required"})
+                if not body.get("refresh"):
+                    with db.tx(state.db_path) as conn:
+                        hit = companies.cached(conn, name, loc)
+                    if hit:
+                        return self._send(200, {"cached": True, "result": hit})
+                    if body.get("cache_only"):  # the tab opening on a company asks only whether an answer is already saved
+                        return self._send(200, {"cached": False})
+
+                def research():
+                    res = companies.research(name, str(body.get("url", "")), str(body.get("title", "")), loc)
+                    with db.tx(state.db_path) as conn:
+                        companies.store(conn, name, res, loc)
+                    return res
+                return self._send(200, {"job": state.spawn(research)})
+            if path in ("/mail/find", "/mail/generic"):
+                domains = [str(d).strip().lower() for d in (body.get("domains") or [body.get("domain", "")]) if str(d).strip()][:3]
+                if not domains or not all(re.fullmatch(r"[a-z0-9-]+(\.[a-z0-9-]+)+", d) for d in domains):
+                    return self._send(400, {"error": "a domain like acme.com is required"})
+                if path == "/mail/find" and len(str(body.get("name", "")).split()) < 2:
+                    return self._send(400, {"error": "a first and last name are required"})
+                key = "mail:" + ",".join(domains) + ":" + (companies.norm(str(body.get("name", ""))) if path == "/mail/find" else "generic")
+
+                def check():
+                    with db.tx(state.db_path) as conn:
+                        hit = companies.cache_get(conn, key, int(mailcheck.cfg()["cache_days"]))
+                    if hit and not body.get("refresh"):
+                        return hit
+                    if path == "/mail/find":
+                        with db.tx(state.db_path) as conn:
+                            seen = companies.cache_get(conn, f"shape:{domains[0]}", 3650)
+                        prefer = list(dict.fromkeys([*(body.get("prefer") or []), *([seen["shape"]] if seen else [])]))
+                        res = mailcheck.find_multi(str(body["name"]), domains, list(body.get("known") or []), prefer)
+                    else:
+                        res = mailcheck.generic(domains[0])
+                    with db.tx(state.db_path) as conn:
+                        companies.cache_put(conn, key, res)
+                        good = [r for r in res["rows"] if r["verdict"] == "accepted" and r.get("shape") != "generic"]
+                        if good and not res.get("catch_all"):  # the next person at this company starts from the shape that worked
+                            companies.cache_put(conn, f"shape:{good[0]['address'].split('@')[1]}", {"shape": good[0]["shape"]})
+                    return res
+                return self._send(200, {"job": state.spawn(check)})
             if path == "/resume":
                 try:
                     kind, f = resume.pick(str(body.get("title", "")), str(body.get("jd_text", "")))

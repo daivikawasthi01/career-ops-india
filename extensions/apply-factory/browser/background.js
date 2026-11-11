@@ -153,7 +153,7 @@ const panel = {
   retry: () => api('/retry', {}),
   // The panel and the studio call the server through here. Only the paths below are reachable.
   api: ({ path, body }) => {
-    if (!/^\/(cv\/[a-z/]+|score|preflight|applied|queue|cover|cover\/pdf)$/.test(path)) throw new Error(`not allowed: ${path}`);
+    if (!/^\/(cv\/[a-z/]+|score|preflight|applied|queue|cover|cover\/pdf|jobs|jobs\/mark|company\/[a-z]+|mail\/[a-z]+)$/.test(path)) throw new Error(`not allowed: ${path}`);
     return api(path, body ?? {});
   },
   async 'job-context'({ tabId }) {
