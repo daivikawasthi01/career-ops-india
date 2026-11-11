@@ -40,6 +40,16 @@
 
   // The closest text before the control: walk up a few levels and take the last earlier sibling that holds text.
   function nearbyLabel(el) {
+    // A table of questions over their answer boxes: the words are in the header cell of the same column, not the whole header row.
+    const cell = el.closest('td,th');
+    if (cell && !textOf(cell)) {
+      const row = cell.parentElement;
+      const col = [...row.children].indexOf(cell);
+      for (let r = row.previousElementSibling; r; r = r.previousElementSibling) {
+        const above = r.children[col];
+        if (above && !hasControl(above)) { const t = textOf(above); if (t.length >= 2 && t.length <= 220) return t; }
+      }
+    }
     let node = el;
     for (let depth = 0; depth < 5 && node && node !== document.body; depth++, node = node.parentElement) {
       for (let sib = node.previousElementSibling; sib; sib = sib.previousElementSibling) {

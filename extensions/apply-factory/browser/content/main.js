@@ -51,7 +51,28 @@
       await AF.sleep(60);
     }
     report();
+    watchForWipe();
   }
+
+  // Some pages clear the form after it loads (a form plugin's own reset or refill, a framework redraw), which would leave the panel saying
+  // "filled" over empty boxes. For the first seconds after a fill, and whenever the page fires a reset, anything we filled that is empty
+  // again is filled once more. It is bounded, so a page that keeps clearing is not fought forever, and a box you emptied yourself later is left alone.
+  let wipeChecks = 0;
+  let wipeTimer = null;
+  const refillWiped = async () => {
+    let wiped = 0;
+    for (const item of state.items.values()) if (item.filled && AF.isEmpty(item.id)) { item.filled = false; wiped++; }
+    if (wiped && state.mode === 'assist' && state.auto && wipeChecks < 4) { wipeChecks++; await fillKnown(); }
+  };
+  function watchForWipe() {
+    if (wipeTimer || state.mode !== 'assist' || !state.auto) return;
+    let ticks = 0;
+    wipeTimer = setInterval(async () => {
+      if (++ticks > 12) { clearInterval(wipeTimer); wipeTimer = null; return; }   // about 12 seconds after a fill
+      await refillWiped();
+    }, 1000);
+  }
+  document.addEventListener('reset', () => setTimeout(refillWiped, 300), true);
 
   async function scan({ force = false } = {}) {
     if (state.mode === 'off') return;
