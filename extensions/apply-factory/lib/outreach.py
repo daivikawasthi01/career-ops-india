@@ -53,8 +53,10 @@ def _slug(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "-", s).strip("-")[:40] or "Company"
 
 
-def attachments(title: str, jd_text: str, company: str, *, cv: bool, cover_letter: bool, cover_text: str = "", report_path: str = "") -> tuple[list[tuple[str, bytes, str]], list[str]]:
-    """(files, notes). A cover letter that cannot be made is left off and said so; the CV never is silently dropped."""
+def attachments(title: str, jd_text: str, company: str, *, cv: bool, cover_letter: bool, cover_tex: str = "", person_name: str = "",
+                report_path: str = "") -> tuple[list[tuple[str, bytes, str]], list[str]]:
+    """(files, notes). The cover letter is the tex you reviewed (cover_tex) or, if there is none, one written for this job now. A cover
+    letter that cannot be made is left off and said so; the CV never is silently dropped."""
     files, notes = [], []
     if cv:
         kind, path = resume.pick(title, jd_text)
@@ -62,9 +64,9 @@ def attachments(title: str, jd_text: str, company: str, *, cv: bool, cover_lette
         notes.append(f"CV: {path.name} ({resume.label_for(kind)})")
     if cover_letter:
         try:
-            text = cover_text.strip() or cover.draft(title, company, jd_text, report_path)["text"]
-            files.append((f"Cover-Letter-{_slug(company)}.pdf", cover.to_pdf(text, company), "application/pdf"))
-            notes.append("Cover letter attached")
+            source = cover_tex.strip() or cover.draft(title, company, jd_text, report_path, person_name)["tex"]
+            files.append((f"Cover-Letter-{_slug(company)}.pdf", cover.compile_pdf(source), "application/pdf"))
+            notes.append("Cover letter attached" + (" (the tex you reviewed)" if cover_tex.strip() else " (written for this job)"))
         except (tex.ToolMissing, ValueError, llm.LLMUnavailable) as e:
             notes.append(f"Cover letter NOT attached: {str(e)[:120]}")
     return files, notes

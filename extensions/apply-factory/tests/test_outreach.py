@@ -145,17 +145,57 @@ class OutreachTest(unittest.TestCase):
         d = Path(tempfile.mkdtemp())
         pdf = d / "Daivik-Awasthi-Resume.pdf"
         pdf.write_bytes(b"%PDF-cv")
-        with mock.patch.object(resume, "pick", lambda t, j="": ("default", pdf)), mock.patch.object(outreach.cover, "to_pdf", lambda text, company="": b"%PDF-cover"):
-            files, notes = outreach.attachments("SRE", "jd", "Acme Pvt Ltd", cv=True, cover_letter=True, cover_text="Dear team")
+        with mock.patch.object(resume, "pick", lambda t, j="": ("default", pdf)), mock.patch.object(outreach.cover, "compile_pdf", lambda src: b"%PDF-cover"):
+            files, notes = outreach.attachments("SRE", "jd", "Acme Pvt Ltd", cv=True, cover_letter=True, cover_tex="\\documentclass{article}")
             self.assertEqual([f[0] for f in files], ["Daivik-Awasthi-Resume.pdf", "Cover-Letter-Acme-Pvt-Ltd.pdf"])
+            self.assertIn("the tex you reviewed", notes[-1])
             files, notes = outreach.attachments("SRE", "jd", "Acme", cv=True, cover_letter=False)
             self.assertEqual(len(files), 1)
-        def broken(text, company=""):
+        def broken(src):
             raise tex.ToolMissing("tectonic is not installed")
-        with mock.patch.object(resume, "pick", lambda t, j="": ("default", pdf)), mock.patch.object(outreach.cover, "to_pdf", broken):
-            files, notes = outreach.attachments("SRE", "jd", "Acme", cv=True, cover_letter=True, cover_text="Dear team")
+        with mock.patch.object(resume, "pick", lambda t, j="": ("default", pdf)), mock.patch.object(outreach.cover, "compile_pdf", broken):
+            files, notes = outreach.attachments("SRE", "jd", "Acme", cv=True, cover_letter=True, cover_tex="x")
         self.assertEqual(len(files), 1)                                                                # the CV still goes
         self.assertTrue(any("Cover letter NOT attached" in n and "tectonic" in n for n in notes))
+
+
+class CoverTexTest(unittest.TestCase):
+    def setUp(self):
+        self.fake = FakeOllama()
+        self.fake.install()
+        self._p = [mock.patch.object(profile, "cv_text", lambda: "Built Kubernetes tooling at Acme."), mock.patch.object(context, "cover_letter", lambda p: ""),
+                   mock.patch.object(context, "voice", lambda: ""),
+                   mock.patch.object(profile, "facts", lambda: {"full_name": "Daivik Awasthi", "email": "d@example.com", "phone": "+91 99"})]
+        for p in self._p:
+            p.start()
+
+    def tearDown(self):
+        for p in self._p:
+            p.stop()
+        self.fake.uninstall()
+
+    def test_the_draft_is_tex_around_a_jd_specific_body_and_greets_the_person(self):
+        from lib import cover
+        self.fake.chat_replies = ["You ask for Kubernetes operations; at Acme I built the tooling for it.\n\nI would like to bring that to Beta & Co \u2014 100% sure."]
+        seen = []
+        orig = llm.call
+        with mock.patch.object(llm, "call", lambda prompt, **kw: (seen.append((prompt, kw.get("system", ""))), orig(prompt, **kw))[1]):
+            out = cover.draft("SRE", "Beta & Co", "We run Kubernetes at scale and need on-call ownership.", person_name="Ada Lovelace")
+        self.assertIn("We run Kubernetes at scale", seen[0][0])                                          # the job text is in the prompt
+        self.assertIn("2 or 3 things", seen[0][1])                                                       # and the system prompt asks to answer its main asks
+        self.assertTrue(out["tex"].startswith("\\documentclass"))
+        self.assertIn("Dear Ada,", out["tex"])
+        self.assertIn("Beta \\& Co", out["tex"])                                                        # escaped for LaTeX
+        self.assertNotIn("\u2014", out["text"])
+        self.assertIn("Dear Hiring Team,", cover.to_tex("Body.", "Acme"))
+
+    @unittest.skipUnless(tex.shutil.which("tectonic"), "tectonic is not installed")
+    def test_the_tex_really_compiles_to_a_pdf(self):
+        from lib import cover
+        pdf = cover.compile_pdf(cover.to_tex("One paragraph with 100% and $5 and R&D.\n\nTwo.", "A&B Co"))
+        self.assertTrue(pdf.startswith(b"%PDF"))
+        with self.assertRaisesRegex(ValueError, "did not compile"):
+            cover.compile_pdf("\\documentclass{article}\\begin{document}\\badmacro\\end{document}")
 
 
 if __name__ == "__main__":

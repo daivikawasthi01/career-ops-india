@@ -50,14 +50,18 @@ _cv.write_bytes(b"%PDF-1.4 cv")
 outreach.draft = lambda person, company, title, jd, report="": {"subject": f"{title} at {company}: a quick question", "words": 42,
     "body": f"Hi {person['name'].split()[0]},\n\nI built a deploy pipeline that maps to your platform team. Could we talk for ten minutes?\n\nBest,\nDaivik"}
 resume.pick = lambda title, jd="": ("default", _cv)
-outreach.cover.draft = lambda title, company, jd, report="": {"text": "Dear team, a short letter.", "from_report": False}
-outreach.cover.to_pdf = lambda text, company="": b"%PDF-1.4 cover"
+outreach.cover.draft = lambda title, company, jd, report="", person_name="": {"text": "x", "from_report": False, "tex": (
+    "\\documentclass[11pt]{article}\n\\begin{document}\nDear " + (person_name.split()[0] if person_name else "team") + ",\n\n"
+    "You ask for Kubernetes operations; at Acme I built that tooling.\n\n\\end{document}\n")}   # tectonic compiles it for real
 outreach.log_contact = lambda person, company, email, *a, **k: "cold email draft today; follow up in four business days"
 _state = {"connected": False}
 gmail.status = lambda: {"configured": True, "connected": _state["connected"]}
 gmail.start = lambda: "about:blank#signin"
 def _create(to, subject, body, attachments=None):
-    (kb_dir / "drafts.json").write_text(json.dumps({"to": to, "subject": subject, "files": [a[0] for a in attachments or []]}))
+    cover = next((a[1] for a in attachments or [] if a[0].startswith("Cover-Letter")), b"")
+    from lib import tex as _tex
+    (kb_dir / "drafts.json").write_text(json.dumps({"to": to, "subject": subject, "files": [a[0] for a in attachments or []],
+                                                    "cover_has_edit": b"on-call" in _tex.pdf_text(cover).encode() if cover.startswith(b"%PDF") else False}))
     return {"draft_id": "d1", "message_id": "m1", "url": "about:blank#drafts"}
 gmail.create_draft = _create
 import json, threading, time

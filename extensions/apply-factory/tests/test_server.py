@@ -119,6 +119,13 @@ class ServerTest(unittest.TestCase):
         gmail.status = lambda: {"configured": True, "connected": True}
         try:
             self.assertEqual(self.call("/gmail/status", {}, token)[1], {"configured": True, "connected": True})
+            from lib import cover
+            real = cover.draft
+            cover.draft = lambda title, company, jd, report="", person_name="": {"text": "T", "tex": "\\documentclass{article}", "from_report": False, "who": person_name}
+            try:
+                self.assertEqual(self.call("/outreach/cover", {"company": "Acme", "title": "SRE", "jd_text": "jd", "person_name": "Ada Lovelace"}, token)[1]["who"], "Ada Lovelace")
+            finally:
+                cover.draft = real
             self.assertEqual(self.call("/outreach/draft", {"person": {"name": "Ada Lovelace"}, "company": "Acme"}, token)[1]["subject"], "S")
             job = self.call("/outreach/gmail", {"to": "ada@acme.com", "subject": "S", "body": "B", "company": "Acme", "person": {"name": "Ada Lovelace"}}, token)[1]["job"]
             for _ in range(50):

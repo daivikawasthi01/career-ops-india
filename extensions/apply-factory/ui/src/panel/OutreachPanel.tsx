@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { ExternalLink, FileText, Loader2, Mail, Paperclip, PenLine } from "lucide-react"
+import { Check, ExternalLink, FileText, Loader2, Mail, Paperclip, PenLine, Wand2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -21,6 +21,11 @@ export function OutreachPanel({ person, company, title, jdText, jobUrl, options 
   const [error, setError] = useState("")
   const [made, setMade] = useState<Made | null>(null)
   const [gmail, setGmail] = useState<{ configured: boolean; connected: boolean } | null>(null)
+  const [tex, setTex] = useState("")                      // the cover letter as LaTeX, edited here and attached exactly as compiled
+  const [texBusy, setTexBusy] = useState<"" | "writing" | "compiling" | "fixing">("")
+  const [texOk, setTexOk] = useState<boolean | null>(null)  // null: not compiled since the last edit
+  const [texErrors, setTexErrors] = useState<{ line: number | null; msg: string }[]>([])
+  const [pages, setPages] = useState<string[]>([])
   const alive = useRef(true)
 
   useEffect(() => { alive.current = true; api("/gmail/status").then((g) => alive.current && !g.error && setGmail(g)); return () => { alive.current = false } }, [])
@@ -47,10 +52,34 @@ export function OutreachPanel({ person, company, title, jdText, jobUrl, options 
     }
     setBusy("")
   }
+  const writeCover = async () => {
+    setTexBusy("writing"); setError(""); setPages([]); setTexErrors([])
+    const r = await api("/outreach/cover", { company, title, jd_text: jdText, url: jobUrl, person_name: person.name })
+    setTexBusy("")
+    if (r.error) { setError(r.detail ? `${r.error}: ${r.detail}` : String(r.error)); return }
+    setTex(r.tex); setTexOk(null)
+    compileTex(r.tex)
+  }
+  const compileTex = async (source = tex) => {
+    setTexBusy("compiling"); setError("")
+    const r = await api("/cv/compile", { tex: source })
+    setTexBusy("")
+    if (r.error) { setError(String(r.error)); return }
+    setTexOk(!!r.ok); setTexErrors(r.errors || []); setPages(r.pages || [])
+  }
+  const fixTex = async () => {
+    setTexBusy("fixing"); setError("")
+    const first = await api("/cv/fix", { tex })
+    if (first.error) { setTexBusy(""); setError(String(first.error)); return }
+    const done = await pollJob(first.job)
+    setTexBusy("")
+    if (done.status !== "done") { setError(done.error || "Could not fix the tex."); return }
+    setTex(done.result.tex); setTexOk(!!done.result.ok); setTexErrors(done.result.errors || []); setPages(done.result.pages || [])
+  }
   const create = async () => {
     if (!draft) return
     setBusy("creating"); setError("")
-    const first = await api("/outreach/gmail", { ...body, to, subject: draft.subject, body: draft.body, attach_cv: cv, attach_cover: cover })
+    const first = await api("/outreach/gmail", { ...body, to, subject: draft.subject, body: draft.body, attach_cv: cv, attach_cover: cover, cover_tex: cover ? tex : "" })
     if (first.error) { setBusy(""); setError(String(first.error)); return }
     const done = await pollJob(first.job)
     setBusy("")
@@ -81,6 +110,30 @@ export function OutreachPanel({ person, company, title, jdText, jobUrl, options 
             <label className="flex items-center justify-between gap-3 text-xs"><span className="flex items-center gap-1.5"><Paperclip className="size-3.5" />Attach my CV (chosen for the role)</span><Switch checked={cv} onCheckedChange={setCv} /></label>
             <label className="flex items-center justify-between gap-3 text-xs"><span className="flex items-center gap-1.5"><FileText className="size-3.5" />Attach a cover letter for this job</span><Switch checked={cover} onCheckedChange={setCover} /></label>
           </div>
+          {cover && (
+            <div className="space-y-1.5 rounded-lg border p-2" data-cover>
+              {!tex && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button size="xs" variant="outline" onClick={writeCover} disabled={texBusy === "writing"}>{texBusy === "writing" ? <Loader2 className="animate-spin" /> : <FileText />}Draft cover letter</Button>
+                  <span className="text-xs text-muted-foreground">Written from this job's text as LaTeX. Skip it and one is written when the draft is made.</span>
+                </div>
+              )}
+              {tex && (
+                <>
+                  <Textarea aria-label="Cover letter LaTeX" rows={10} className="font-mono text-xs" spellCheck={false} value={tex} onChange={(e) => { setTex(e.target.value); setTexOk(null) }} />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button size="xs" variant="outline" onClick={() => compileTex()} disabled={texBusy !== ""}>{texBusy === "compiling" ? <Loader2 className="animate-spin" /> : <Check />}Compile preview</Button>
+                    {texOk === false && <Button size="xs" variant="outline" onClick={fixTex} disabled={texBusy !== ""}>{texBusy === "fixing" ? <Loader2 className="animate-spin" /> : <Wand2 />}Fix with AI</Button>}
+                    <Button size="xs" variant="ghost" onClick={writeCover} disabled={texBusy !== ""}>Write again</Button>
+                  </div>
+                  {texOk === true && <p className="text-xs text-success">Compiles. This exact letter is what gets attached.</p>}
+                  {texOk === null && <p className="text-xs text-muted-foreground">Edited since the last preview. It is compiled again when the draft is made.</p>}
+                  {texOk === false && texErrors.map((e, i) => <p key={i} className="text-xs text-warning">{e.line ? `Line ${e.line}: ` : ""}{e.msg}</p>)}
+                  {pages.map((b, i) => <img key={i} alt={`Cover letter page ${i + 1}`} className="w-full rounded border" src={`data:image/png;base64,${b}`} />)}
+                </>
+              )}
+            </div>
+          )}
           <div className="flex flex-wrap gap-2">
             {gmail?.connected && <Button size="xs" onClick={create} disabled={!to || busy === "creating"}>{busy === "creating" ? <Loader2 className="animate-spin" /> : <Mail />}{busy === "creating" ? "Making the draft" : "Create Gmail draft"}</Button>}
             {gmail?.configured && !gmail.connected && <Button size="xs" onClick={connect} disabled={busy === "connecting"}>{busy === "connecting" ? <Loader2 className="animate-spin" /> : <Mail />}{busy === "connecting" ? "Finish signing in, in the other tab" : "Connect Gmail"}</Button>}

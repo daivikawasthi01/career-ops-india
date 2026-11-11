@@ -45,12 +45,24 @@ check('email written, to pre-filled with the checked address', /^Hi Ada,/.test(a
 check('Gmail not connected yet: Connect offered, no draft button', (await box.getByRole('button', { name: 'Connect Gmail' }).count()) === 1 && (await box.getByRole('button', { name: 'Create Gmail draft' }).count()) === 0);
 await p.screenshot({ path: path.join(out, 'company-outreach.png'), fullPage: true });
 const kb = readFileSync('/tmp/af-company-server.log', 'utf8').match(/DB (\S+)/)[1].replace(/kb\.sqlite$/, '');
+await box.getByRole('button', { name: 'Draft cover letter' }).click();
+const texBox = box.getByLabel('Cover letter LaTeX');
+await texBox.waitFor({ timeout: 20000 });
+await box.locator('img[alt="Cover letter page 1"]').waitFor({ timeout: 60000 });
+const tex0 = await texBox.inputValue();
+check('cover letter drafted as tex for this job, addressed to the person, and compiled with a preview', /\\documentclass/.test(tex0) && /Dear Ada,/.test(tex0) && /Compiles/.test(await box.innerText()));
+await texBox.fill(tex0.replace('Kubernetes operations', 'Kubernetes operations and on-call'));
+check('editing the tex marks the preview stale', /Edited since the last preview/.test(await box.innerText()));
+await box.getByRole('button', { name: 'Compile preview' }).click();
+await box.locator('text=Compiles. This exact letter').waitFor({ timeout: 60000 });
+await p.screenshot({ path: path.join(out, 'company-cover.png'), fullPage: true });
 await box.getByRole('button', { name: 'Connect Gmail' }).click();      // opens the sign-in tab; the test then "signs in"
 writeFileSync(kb + 'signed-in', '');
 await box.getByRole('button', { name: 'Create Gmail draft' }).waitFor({ timeout: 20000 });
 await box.getByRole('button', { name: 'Create Gmail draft' }).click();
 await box.locator('[data-made]').waitFor({ timeout: 20000 });
 const made = JSON.parse(readFileSync(kb + 'drafts.json', 'utf8'));
+check('the reviewed tex was compiled into the attached letter', made.cover_has_edit === true);
 check('draft made with CV and cover letter attached, nothing sent', made.to === 'ada.lovelace@acme-mail.com' && made.files.join() === 'Daivik-Awasthi-Resume.pdf,Cover-Letter-Acme.pdf', JSON.stringify(made));
 check('result says nothing was sent and the contact was noted', /Nothing was sent/.test(await box.innerText()) && /Noted in your contacts/.test(await box.innerText()));
 await p.screenshot({ path: path.join(out, 'company-drafted.png'), fullPage: true });

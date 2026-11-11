@@ -12,7 +12,8 @@ Local API for the browser extension. Binds to 127.0.0.1 only.
   POST /mail/find    {name, domain, known[]}         -> {job}: likely addresses for a person, checked against the mail server, with risk bands
   POST /mail/generic {domain}                        -> {job}: careers@, jobs@, hr@ ... checked the same way
   POST /outreach/draft {person, company, title, jd_text} -> a short cold email (subject, body) from your CV and the job
-  POST /outreach/gmail {to, subject, body, attach_cv, attach_cover, ...} -> {job}: a Gmail draft with the CV and a cover letter attached; never sends
+  POST /outreach/cover {company, title, jd_text, person_name} -> {tex, text}: a cover letter for this job as LaTeX (compile it with /cv/compile)
+  POST /outreach/gmail {to, subject, body, attach_cv, attach_cover, cover_tex, ...} -> {job}: a Gmail draft with the CV and a cover letter attached; never sends
   POST /outreach/compose {to, subject, body, person, company} -> Gmail's compose window address (no attachments); notes the contact
   POST /gmail/status | /gmail/connect | /gmail/disconnect; GET /gmail/callback is where Google's sign-in returns
   POST /draft_batch {fields[], ctx}                  -> several long answers in one hosted call; "single" lists ids to ask one by one
@@ -304,6 +305,9 @@ def make_handler(state: State):
             if path == "/outreach/draft":
                 report = state.reports.get(learner._url_key(str(body.get("url", ""))), "")
                 return self._send(200, outreach.draft(dict(body["person"]), str(body["company"]), str(body.get("title", "")), str(body.get("jd_text", "")), report))
+            if path == "/outreach/cover":
+                report = state.reports.get(learner._url_key(str(body.get("url", ""))), "")
+                return self._send(200, cover.draft(str(body.get("title", "")), str(body["company"]), str(body.get("jd_text", "")), report, str(body.get("person_name", ""))))
             if path == "/outreach/compose":
                 note = outreach.log_contact(dict(body.get("person") or {}), str(body.get("company", "")), str(body.get("to", ""))) if body.get("person") else ""
                 return self._send(200, {"url": gmail.compose_url(str(body.get("to", "")), str(body["subject"]), str(body["body"])), "note": note})
@@ -312,7 +316,7 @@ def make_handler(state: State):
                     report = state.reports.get(learner._url_key(str(body.get("url", ""))), "")
                     files, notes = outreach.attachments(str(body.get("title", "")), str(body.get("jd_text", "")), str(body.get("company", "")),
                                                         cv=bool(body.get("attach_cv", True)), cover_letter=bool(body.get("attach_cover", True)),
-                                                        cover_text=str(body.get("cover_text", "")), report_path=report)
+                                                        cover_tex=str(body.get("cover_tex", "")), person_name=str((body.get("person") or {}).get("name", "")), report_path=report)
                     made = gmail.create_draft(str(body.get("to", "")), str(body["subject"]), str(body["body"]), files)
                     note = outreach.log_contact(dict(body.get("person") or {}), str(body.get("company", "")), str(body.get("to", ""))) if body.get("person") else ""
                     return {**made, "attached": [n for n in notes], "files": [f[0] for f in files], "note": note}
