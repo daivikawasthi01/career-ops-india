@@ -11,6 +11,10 @@ Local API for the browser extension. Binds to 127.0.0.1 only.
   POST /company/start {company, url, title, refresh} -> {cached, result} or {job}: size, people, public emails and phones (poll /cv/job)
   POST /mail/find    {name, domain, known[]}         -> {job}: likely addresses for a person, checked against the mail server, with risk bands
   POST /mail/generic {domain}                        -> {job}: careers@, jobs@, hr@ ... checked the same way
+  POST /outreach/draft {person, company, title, jd_text} -> a short cold email (subject, body) from your CV and the job
+  POST /outreach/gmail {to, subject, body, attach_cv, attach_cover, ...} -> {job}: a Gmail draft with the CV and a cover letter attached; never sends
+  POST /outreach/compose {to, subject, body, person, company} -> Gmail's compose window address (no attachments); notes the contact
+  POST /gmail/status | /gmail/connect | /gmail/disconnect; GET /gmail/callback is where Google's sign-in returns
   POST /draft_batch {fields[], ctx}                  -> several long answers in one hosted call; "single" lists ids to ask one by one
   POST /resume/upload {kind, base64} -> replace a CV slot (the previous file is kept)
   POST /resume/upload {kind, base64}                -> replace a CV slot (the old file is kept)
@@ -29,20 +33,22 @@ Every call except /pair needs the X-Token header. Host must be a loopback name (
 from __future__ import annotations
 
 import base64
+import html
 import json
 import queue
 import re
 import secrets
 import sys
 import threading
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from learner import learn as learner
-from lib import (checks, company as companies, config, cover, cv_import, cv_store, db, jobs, knockout, llm, mailcheck, options, resume, rules, score as scorer,
-                 suggest, tailor, tex, tracker)
+from lib import (checks, company as companies, config, cover, cv_import, cv_store, db, gmail, jobs, knockout, llm, mailcheck, options, outreach, resume, rules,
+                 score as scorer, suggest, tailor, tex, tracker)
 
 MAX_BODY = 16 * 1024 * 1024  # a CV pdf arrives as base64
 STATE_FILE = config.ROOT / "data" / "server.json"
@@ -169,6 +175,8 @@ def make_handler(state: State):
             if not self._host_ok():
                 return self._send(403, {"error": "bad host"})
             path = self.path.split("?")[0]
+            if path == "/gmail/callback" and method == "GET":
+                return self._gmail_callback()
             if path == "/pair" and method == "POST":
                 origin = self._origin()
                 if not origin.startswith("chrome-extension://"):
@@ -183,8 +191,23 @@ def make_handler(state: State):
                 return self._send(501, {"error": str(e)})
             except llm.LLMUnavailable as e:
                 return self._send(503, {"error": "model unavailable", "detail": str(e)[:200]})
+            except gmail.GmailError as e:
+                return self._send(409, {"error": str(e)})
             except (ValueError, KeyError, json.JSONDecodeError) as e:
                 return self._send(400, {"error": f"bad request: {e}"[:200]})
+
+        def _gmail_callback(self):
+            """Google sends the browser back here after sign-in. The one-use state value proves this app started it."""
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            try:
+                if q.get("error"):
+                    raise gmail.GmailError(f"Google said: {q['error'][0]}")
+                gmail.finish(q.get("state", [""])[0], q.get("code", [""])[0])
+                msg = "Gmail is connected. You can close this tab and go back to the extension."
+            except gmail.GmailError as e:
+                msg = str(e)
+            page = f"<!doctype html><meta charset=utf-8><title>Gmail</title><body style='font:16px system-ui;margin:3rem'><p>{html.escape(msg)}</p>"
+            return self._send(200, page.encode(), "text/html; charset=utf-8")
 
         def _dispatch(self, method: str, path: str):
             if method == "GET" and path == "/rules":
@@ -271,6 +294,29 @@ def make_handler(state: State):
                             companies.cache_put(conn, f"shape:{good[0]['address'].split('@')[1]}", {"shape": good[0]["shape"]})
                     return res
                 return self._send(200, {"job": state.spawn(check)})
+            if path == "/gmail/status":
+                return self._send(200, gmail.status())
+            if path == "/gmail/connect":
+                return self._send(200, {"url": gmail.start()})
+            if path == "/gmail/disconnect":
+                gmail.disconnect()
+                return self._send(200, gmail.status())
+            if path == "/outreach/draft":
+                report = state.reports.get(learner._url_key(str(body.get("url", ""))), "")
+                return self._send(200, outreach.draft(dict(body["person"]), str(body["company"]), str(body.get("title", "")), str(body.get("jd_text", "")), report))
+            if path == "/outreach/compose":
+                note = outreach.log_contact(dict(body.get("person") or {}), str(body.get("company", "")), str(body.get("to", ""))) if body.get("person") else ""
+                return self._send(200, {"url": gmail.compose_url(str(body.get("to", "")), str(body["subject"]), str(body["body"])), "note": note})
+            if path == "/outreach/gmail":
+                def make_draft():
+                    report = state.reports.get(learner._url_key(str(body.get("url", ""))), "")
+                    files, notes = outreach.attachments(str(body.get("title", "")), str(body.get("jd_text", "")), str(body.get("company", "")),
+                                                        cv=bool(body.get("attach_cv", True)), cover_letter=bool(body.get("attach_cover", True)),
+                                                        cover_text=str(body.get("cover_text", "")), report_path=report)
+                    made = gmail.create_draft(str(body.get("to", "")), str(body["subject"]), str(body["body"]), files)
+                    note = outreach.log_contact(dict(body.get("person") or {}), str(body.get("company", "")), str(body.get("to", ""))) if body.get("person") else ""
+                    return {**made, "attached": [n for n in notes], "files": [f[0] for f in files], "note": note}
+                return self._send(200, {"job": state.spawn(make_draft)})
             if path == "/resume":
                 try:
                     kind, f = resume.pick(str(body.get("title", "")), str(body.get("jd_text", "")))

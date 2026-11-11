@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { Building2, Check, Copy, ExternalLink, Link2, Loader2, Mail, Phone, RefreshCw, Search, UserRound } from "lucide-react"
+import { Building2, Check, Copy, ExternalLink, Link2, Loader2, Mail, PenLine, Phone, RefreshCw, Search, UserRound } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, pollJob, send } from "@/lib/chrome"
+import { OutreachPanel } from "./OutreachPanel"
 
 type Person = { name: string; title: string; kind: string; source: string; linkedin: string | null; partial?: boolean }
 type Result = {
@@ -54,6 +55,8 @@ function SourceLink({ url }: { url: string }) {
 }
 
 const RULED_OUT = new Set(["rejected", "skipped", "no-mail-server"])
+// Addresses worth offering as the recipient: the ones the check did not rule out, best first.
+const addressOptions = (m: Mail | "busy" | string | undefined): string[] => (m && typeof m === "object" ? m.rows.filter((r) => !RULED_OUT.has(r.verdict)).map((r) => r.address) : [])
 
 function MailRow({ r }: { r: Row }) {
   const [label, tone] = VERDICT[r.verdict] || [r.verdict, ""]
@@ -104,6 +107,8 @@ export function CompanyTab({ seed }: { seed: { company: string; location: string
   const [location, setLocation] = useState(seed.location)
   const [title, setTitle] = useState("")
   const [jobUrl, setJobUrl] = useState("")
+  const [jdText, setJdText] = useState("")
+  const [writing, setWriting] = useState<Record<string, boolean>>({}) // people whose email panel is open
   const [domain, setDomain] = useState("")
   const [picked, setPicked] = useState<string[]>([])   // work-email domains to try, in order
   const [res, setRes] = useState<Result | null>(null)
@@ -116,7 +121,7 @@ export function CompanyTab({ seed }: { seed: { company: string; location: string
   useEffect(() => {
     send("job-context").then((c: any) => {
       if (!c) return
-      setJobUrl(c.url || ""); setTitle(c.title || "")
+      setJobUrl(c.url || ""); setTitle(c.title || ""); setJdText(String(c.jd_text || "").slice(0, 4000))
       if (!seed.company && c.company) setName((n) => n || c.company)
     }).catch(() => {})
   }, [seed.company])
@@ -167,7 +172,7 @@ export function CompanyTab({ seed }: { seed: { company: string; location: string
         </div>
         <Button type="submit" disabled={busy || !name.trim()}>{busy ? <Loader2 className="animate-spin" /> : <Search />}Research</Button>
       </form>
-      <Input placeholder="Job city (optional, else Bangalore, Hyderabad and Gurugram)" aria-label="Job city" value={location} onChange={(e) => { setLocation(e.target.value); setRes(null) }} />
+      <Input placeholder="Job city (optional)" title="Left empty, HR is searched in Bangalore, Hyderabad and Gurugram" aria-label="Job city" value={location} onChange={(e) => { setLocation(e.target.value); setRes(null) }} />
 
       {busy && (
         <div className="space-y-2 rounded-xl border p-3" aria-busy="true">
@@ -226,9 +231,11 @@ export function CompanyTab({ seed }: { seed: { company: string; location: string
                         {p.linkedin && <a href={p.linkedin} target="_blank" rel="noreferrer" aria-label={`${p.name} on LinkedIn`} className="text-muted-foreground hover:text-foreground"><Link2 className="size-3.5" /></a>}
                       </div>
                     </div>
+                    <Button size="xs" variant="outline" onClick={() => setWriting((w) => ({ ...w, [p.name]: !w[p.name] }))}><PenLine />Draft email</Button>
                     <Button size="xs" variant="outline" disabled={!tryDomains.length || mail[p.name] === "busy"} onClick={() => checkMail(p.name, "/mail/find", { name: p.name, domains: tryDomains, known, prefer: res?.email_shapes || [] })}><Mail />Find email</Button>
                   </div>
                   {slot(p.name)}
+                  {writing[p.name] && <OutreachPanel person={p} company={res.company} title={title} jdText={jdText} jobUrl={jobUrl} options={addressOptions(mail[p.name])} />}
                 </li>
               ))}
               {!res.people.length && <li className="rounded-xl border p-4 text-center text-sm text-muted-foreground">No named people with a source page were found.</li>}

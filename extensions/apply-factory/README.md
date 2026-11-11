@@ -72,6 +72,14 @@ The panel's "This job" card runs on demand:
 
 Forms also get: a list of empty required fields (outlined on the page when you press Next or Submit), warnings for questions that can reject you (years of experience, degree, sponsorship), a plain-text CV for "paste your resume" boxes, and a cover letter drafted from the CV (starting from the report's draft when there is one) and attached as a PDF.
 
+## Jobs and Company tabs
+
+- **Jobs** reads the scanner's `data/jobs.db` (read only): search, filter by source and age, open a job, mark it applied, saved or not interested.
+- **Company** researches the company of the open page (or one you type). Size, then the people who matter at that size (the hiring team for the job, HR and recruiters in the job's city or in Bangalore, Hyderabad and Gurugram, then the roles for the size), each with the page that names them. Search order: Groq browser search, Gemini, then `claude -p` (haiku). Public emails and phones come from a few pages of the company's own site (robots.txt honoured).
+- **Email guessing.** It first finds the real work-email domain (it can differ from the website, `gs.com` against `goldmansachs.com`) and, where a page shows real employee addresses, the company's pattern, including user names cut to 8, 7 or 6 characters. It then tries every common shape (first, last, first.last, last.first, flast, lastf, f.last, first.l, underscore and hyphen forms) and asks the mail server over SMTP (`RCPT TO`, never `DATA`) with a random-address control to spot catch-all servers. Bounce and spam bands are rule-of-thumb estimates, shown with their reasons. Port 25 must be reachable from your network; probes are capped and spaced (`mail:` in `config.yaml`).
+- **Cold email.** "Draft email" on a person writes under 90 words from your CV and the job (same banned-phrase and invented-number checks as form answers) and, with Gmail connected, creates a Gmail draft with your CV and a cover letter attached. Nothing is ever sent; you press Send in Gmail. Each draft is noted in `data/contacts.tsv` with a follow-up date four business days out. Without Gmail connected, "Open in Gmail" opens a pre-filled compose window without attachments.
+- **Connect Gmail once.** In Google Cloud: enable the Gmail API, create an OAuth client of type Desktop app, save its JSON as `data/gmail-credentials.json`, add yourself as a test user (or publish the app unverified so sign-in does not expire after 7 days) and press Connect Gmail in the Company tab. The only scope is `gmail.compose` and the only Gmail call is `drafts.create`. Credentials and tokens stay in `data/` (gitignored).
+
 ## Tests
 
 ```bash

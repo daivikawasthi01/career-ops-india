@@ -1,7 +1,7 @@
 // The Company tab against a stubbed server (browser/e2e/company_server.py): research, people with sources, public contacts, mail checks and
 // the saved answer on a second visit. Screenshots go to AF_SHOTS.
 import { chromium } from 'playwright';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,6 +37,23 @@ const mailText = await p.locator('[data-person="Ada Lovelace"]').innerText();
 check('likely address first, ruled-out ones folded away', /Mailbox exists/.test(mailText) && /ruled out/.test(mailText) && !/Does not exist/.test(mailText), mailText.replace(/\s+/g, ' ').slice(0, 120));
 await p.locator('[data-person="Ada Lovelace"]').getByRole('button', { name: /Bounce risk/ }).first().click();
 check('risk detail says it is an estimate', /not a measured probability/.test(await p.locator('[data-person="Ada Lovelace"]').innerText()));
+const box = p.locator('[data-person="Ada Lovelace"]');
+await box.getByRole('button', { name: 'Draft email' }).click();
+await box.getByRole('button', { name: 'Write the email' }).click();
+await box.getByLabel('Email body').waitFor({ timeout: 20000 });
+check('email written, to pre-filled with the checked address', /^Hi Ada,/.test(await box.getByLabel('Email body').inputValue()) && (await box.getByLabel('To').inputValue()) === 'ada.lovelace@acme-mail.com');
+check('Gmail not connected yet: Connect offered, no draft button', (await box.getByRole('button', { name: 'Connect Gmail' }).count()) === 1 && (await box.getByRole('button', { name: 'Create Gmail draft' }).count()) === 0);
+await p.screenshot({ path: path.join(out, 'company-outreach.png'), fullPage: true });
+const kb = readFileSync('/tmp/af-company-server.log', 'utf8').match(/DB (\S+)/)[1].replace(/kb\.sqlite$/, '');
+await box.getByRole('button', { name: 'Connect Gmail' }).click();      // opens the sign-in tab; the test then "signs in"
+writeFileSync(kb + 'signed-in', '');
+await box.getByRole('button', { name: 'Create Gmail draft' }).waitFor({ timeout: 20000 });
+await box.getByRole('button', { name: 'Create Gmail draft' }).click();
+await box.locator('[data-made]').waitFor({ timeout: 20000 });
+const made = JSON.parse(readFileSync(kb + 'drafts.json', 'utf8'));
+check('draft made with CV and cover letter attached, nothing sent', made.to === 'ada.lovelace@acme-mail.com' && made.files.join() === 'Daivik-Awasthi-Resume.pdf,Cover-Letter-Acme.pdf', JSON.stringify(made));
+check('result says nothing was sent and the contact was noted', /Nothing was sent/.test(await box.innerText()) && /Noted in your contacts/.test(await box.innerText()));
+await p.screenshot({ path: path.join(out, 'company-drafted.png'), fullPage: true });
 await p.getByRole('button', { name: /Check careers@/ }).click();
 await p.waitForFunction(() => /Server accepts anything/.test(document.body.innerText), null, { timeout: 20000 });
 check('generic address check shows catch-all', true);

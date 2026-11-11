@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 import server
-from lib import company, db, mailcheck
+from lib import company, db, gmail, mailcheck, outreach, resume
 
 kb_dir = Path(tempfile.mkdtemp(prefix="af-e2e-company-"))
 kb = str(kb_dir / "kb.sqlite")
@@ -43,5 +43,31 @@ def fake_find(name, domains, known=None, prefer=None):
 mailcheck.find_multi = fake_find
 mailcheck.generic = lambda domain: {**fake_find("x", [domain]), "rows": [{"address": f"careers@{domain}", "shape": "generic", "verdict": "catch-all",
                                     "risk": mailcheck.risk("catch-all", "proofpoint", {"dmarc": "none"}, f"careers@{domain}")}]}
+# Outreach: the model, Google and the contact list are replaced; what the server does with them is real.
+import tempfile as _t
+_cv = Path(_t.mkdtemp()) / "Daivik-Awasthi-Resume.pdf"
+_cv.write_bytes(b"%PDF-1.4 cv")
+outreach.draft = lambda person, company, title, jd, report="": {"subject": f"{title} at {company}: a quick question", "words": 42,
+    "body": f"Hi {person['name'].split()[0]},\n\nI built a deploy pipeline that maps to your platform team. Could we talk for ten minutes?\n\nBest,\nDaivik"}
+resume.pick = lambda title, jd="": ("default", _cv)
+outreach.cover.draft = lambda title, company, jd, report="": {"text": "Dear team, a short letter.", "from_report": False}
+outreach.cover.to_pdf = lambda text, company="": b"%PDF-1.4 cover"
+outreach.log_contact = lambda person, company, email, *a, **k: "cold email draft today; follow up in four business days"
+_state = {"connected": False}
+gmail.status = lambda: {"configured": True, "connected": _state["connected"]}
+gmail.start = lambda: "about:blank#signin"
+def _create(to, subject, body, attachments=None):
+    (kb_dir / "drafts.json").write_text(json.dumps({"to": to, "subject": subject, "files": [a[0] for a in attachments or []]}))
+    return {"draft_id": "d1", "message_id": "m1", "url": "about:blank#drafts"}
+gmail.create_draft = _create
+import json, threading, time
+threading.Thread(target=lambda: (time.sleep(0.2), None), daemon=True).start()
+(kb_dir / "connect.flag").write_text("")
+def _watch():
+    while True:   # the e2e "signs in" by creating this file
+        if (kb_dir / "signed-in").exists():
+            _state["connected"] = True
+        time.sleep(0.3)
+threading.Thread(target=_watch, daemon=True).start()
 print("DB", kb, flush=True)
 server.run(db_path=kb, state_file=kb_dir / "server.json")

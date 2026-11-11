@@ -11,6 +11,7 @@ paths:
   careers_discovery: "../../data/careers-discovery.tsv"   # company -> website domain, found by discover-careers.mjs
   careers_directory: "../../data/careers-directory.tsv"
   connections: "../../data/Connections.csv"                # your LinkedIn export; optional, read by linkedin-join.mjs
+  contacts_tsv: "../../data/contacts.tsv"                  # career-ops contact list; cold emails are noted here with a follow-up date
 
 llm:
   # Nothing runs on this Mac. Every call goes to the hosted models first; when none can answer in time, `claude -p` (your Claude plan) does.

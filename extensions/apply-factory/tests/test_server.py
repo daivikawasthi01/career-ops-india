@@ -3,6 +3,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -105,6 +106,40 @@ class ServerTest(unittest.TestCase):
             self.assertEqual(seen, [["flast"]])                                                          # the next person starts from the shape that worked
         finally:
             company.research, mailcheck.find_multi = saved
+
+    def test_outreach_and_gmail_routes_never_send_and_say_what_is_missing(self):
+        from lib import gmail, outreach
+        token = self.pair()
+        saved = (outreach.draft, outreach.attachments, outreach.log_contact, gmail.create_draft, gmail.status, gmail.start)
+        sent = []
+        outreach.draft = lambda person, company, title, jd, report="": {"subject": "S", "body": "B", "words": 1}
+        outreach.attachments = lambda *a, **k: ([("CV.pdf", b"x", "application/pdf")], ["CV: CV.pdf", "Cover letter attached"])
+        outreach.log_contact = lambda person, company, email, *a, **k: "noted"
+        gmail.create_draft = lambda to, subject, body, files=None: (sent.append((to, subject, [f[0] for f in files or []])), {"draft_id": "d", "message_id": "m", "url": "https://mail.google.com/x"})[1]
+        gmail.status = lambda: {"configured": True, "connected": True}
+        try:
+            self.assertEqual(self.call("/gmail/status", {}, token)[1], {"configured": True, "connected": True})
+            self.assertEqual(self.call("/outreach/draft", {"person": {"name": "Ada Lovelace"}, "company": "Acme"}, token)[1]["subject"], "S")
+            job = self.call("/outreach/gmail", {"to": "ada@acme.com", "subject": "S", "body": "B", "company": "Acme", "person": {"name": "Ada Lovelace"}}, token)[1]["job"]
+            for _ in range(50):
+                res = self.call("/cv/job", {"id": job}, token)[1]
+                if res["status"] != "running":
+                    break
+                time.sleep(0.05)
+            self.assertEqual((res["status"], res["result"]["url"], res["result"]["files"], res["result"]["note"]), ("done", "https://mail.google.com/x", ["CV.pdf"], "noted"))
+            self.assertEqual(sent, [("ada@acme.com", "S", ["CV.pdf"])])
+            code, out = self.call("/outreach/compose", {"to": "a@b.com", "subject": "Hi", "body": "Yo"}, token)
+            self.assertTrue(out["url"].startswith("https://mail.google.com/mail/?view=cm"))
+            gmail.start = saved[5]
+            with mock.patch.object(gmail, "CRED", Path(tempfile.mkdtemp()) / "none.json"):
+                code, out = self.call("/gmail/connect", {}, token)
+            self.assertEqual(code, 409)
+            self.assertIn("gmail-credentials.json", out["error"])
+            req = urllib.request.Request(self.base + "/gmail/callback?state=bogus&code=x", headers={"Host": "127.0.0.1"})   # the browser comes back without a token
+            with urllib.request.urlopen(req) as r:
+                self.assertIn("not one this app started", r.read().decode())
+        finally:
+            outreach.draft, outreach.attachments, outreach.log_contact, gmail.create_draft, gmail.status, gmail.start = saved
 
     def test_capture_is_learned_in_background(self):
         token = self.pair()
