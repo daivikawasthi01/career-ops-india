@@ -65,6 +65,11 @@ def is_open_question(label: str) -> bool:
     return bool(re.search(load().get("open_questions", "$^"), label or "", re.I))
 
 
+def is_story_question(label: str) -> bool:
+    """Questions that want a short story (your best achievement, a challenge you overcame), flagged "story" in answer_length."""
+    return any(r.get("story") and re.search(r["re"], label or "", re.I) for r in load().get("answer_length", []))
+
+
 def answer_flaws(text: str) -> list[str]:
     """Phrases in a drafted answer that career-ops' writing rules ban (listed in banned_in_answers), plus long dashes."""
     low = (text or "").lower()

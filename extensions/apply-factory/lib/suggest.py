@@ -262,7 +262,12 @@ def _free_text(conn, field: dict, label: str, job: str, ctx: dict) -> dict:
     prefix = (f"CANDIDATE CV:\n{profile.cv_text()[:7000]}\n\nWRITING RULES:\n{context.writing_rules() or '(none)'}\n\n"
               f"VOICE:\n{context.voice()[:1200] or '(none)'}\n\nPROOF POINTS:\n{context.digest()[:1200] or '(none)'}\n\n{job}")
     lo, hi, paragraphs = plan_length(field, label, ctx, prefix)
-    if hi >= 40:
+    if rules.is_story_question(label):
+        # a question that asks for your best work or a hard moment wants a story, never a one-line summary
+        length = (f"Tell it as a short first-person story in {lo} to {hi} words: the situation and why it mattered, what you personally did "
+                  f"(the tools and decisions), the result with the real numbers from the CV, and what you took from it. Two short paragraphs. "
+                  f"A one-line summary is wrong here.")
+    elif hi >= 40:
         sentences = max(3, round((lo + hi) / 2 / 17))  # a small model follows a sentence count better than a word count
         length = (f"Write {sentences} full sentences ({lo} to {hi} words) in {paragraphs} short paragraph{'s' if paragraphs > 1 else ''}. "
                   f"Use the CV's real details (what you built, with which tools, what changed). Fewer than {lo} words is too short.")
@@ -273,11 +278,13 @@ def _free_text(conn, field: dict, label: str, job: str, ctx: dict) -> dict:
     if limit:
         length += f" Stay under {limit} characters."
     # Stable parts first so the local model can reuse its cached prefix between questions; what changes goes last.
-    prompt = (f"CANDIDATE CV:\n{profile.cv_text()[:7000]}\n\nWRITING RULES:\n{context.writing_rules() or '(none)'}\n\n"
-              f"{job}\n\nSTYLE EXAMPLES:\n{style}\n\nQUESTION: {label}\n{length}\n\nANSWER:")
+    prompt = f"{prefix}\n\nSTYLE EXAMPLES:\n{style}\n\nQUESTION: {label}\n{length}\n\nANSWER:"
     kw = dict(system=_SYSTEM, temperature=0.5, num_predict=max(40, int(hi * 2.2)) if hi else 120)
-    text = _clean(llm.call(prompt, **kw))
-    if hi >= 40 and text and not text.upper().startswith(UNKNOWN) and len(text.split()) < lo * 0.85:
+    text = _story(prefix, style, label, lo, hi) if rules.is_story_question(label) else ""
+    structured = bool(text)  # a story built from its four parts is not stretched by a rewrite, which would blur the structure
+    if not text:
+        text = _clean(llm.call(prompt, **kw))
+    if hi >= 40 and not structured and text and not text.upper().startswith(UNKNOWN) and len(text.split()) < lo * 0.85:
         text = _clean(llm.call(prompt + f"\n\nDRAFT (too short, {len(text.split())} words):\n{text}\n\nRewrite it fully at {lo} to {hi} words, "
                                f"adding concrete detail from the CV. Reply with the answer only.", **kw)) or text
     if hi >= 40 and rules.is_open_question(label) and (not text or text.upper().startswith(UNKNOWN)):  # your own story: always a best-effort draft from the CV
@@ -292,21 +299,81 @@ def _free_text(conn, field: dict, label: str, job: str, ctx: dict) -> dict:
     return _result(field, "draft", value=text, source="draft", confidence=0.6)
 
 
+def _story(prefix: str, style: str, label: str, lo: int, hi: int) -> str:
+    """A story answer from four labelled parts. A small model writes a summary when told to tell a story, but fills four named
+    parts well, and the parts are then joined into two paragraphs. Returns "" when the model does not manage it."""
+    try:
+        res = llm.call_json(
+            f"{prefix}\n\nSTYLE EXAMPLES:\n{style}\n\nQUESTION: {label}\n\nAnswer as a short first-person story with real facts from the CV. "
+            "Reply as JSON with four fields, each two full sentences: "
+            '"situation" (where you were and why it mattered), "action" (what you personally built or decided, with the tools), '
+            '"result" (the measurable outcome, with the numbers in the CV), "lesson" (what you took from it).',
+            system=_SYSTEM, temperature=0.5, num_predict=max(200, int(hi * 3)), timeout=300)
+        parts = [str(res.get(k, "")).strip() for k in ("situation", "action", "result", "lesson")]
+    except (llm.LLMUnavailable, ValueError, AttributeError):
+        return ""
+    if sum(1 for x in parts if len(x.split()) >= 6) < 3:
+        return ""
+    text = _clean(f"{parts[0]} {parts[1]}\n\n{parts[2]} {parts[3]}".strip())
+    return text if len(text.split()) >= lo * 0.6 else ""
+
+
+_NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+
+def _numbers(text: str) -> set[str]:
+    return {m.group(0).replace(",", "").rstrip(".") for m in _NUMBER.finditer(text or "")}
+
+
+def _invented_numbers(text: str) -> list[str]:
+    """Numbers in the answer that appear nowhere in the CV or the proof points: figures the model worked out or made up
+    (a "98% reduction" from "a minute to 2 seconds"). Only numbers from your own record may appear in an answer."""
+    known = _numbers(profile.cv_text()) | _numbers(context.digest()) | _numbers(str(profile.facts()))
+    return sorted(n for n in _numbers(text) if n not in known)
+
+
+_ORPHAN = re.compile(r"^(this|these|that|those|it|they|which|its|such)\b", re.I)
+
+
+def _scrub(text: str) -> str:
+    """Last resort for banned wording: a single banned word is removed in place ("a robust platform" becomes "a platform"); a banned
+    phrase that cannot be removed cleanly takes its sentence with it, unless the next sentence leans on it ("This platform...")."""
+    for n in _invented_numbers(text):
+        text = re.sub(rf"\b{re.escape(n)}[\d,.]*\s*%?\+?\s*", "", text)
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    out = []
+    for i, sent in enumerate(sentences):
+        if not rules.answer_flaws(sent):
+            out.append(sent)
+            continue
+        for word in [f for f in rules.answer_flaws(sent) if " " not in f and f != "long dash"]:
+            sent = re.sub(rf"\b{re.escape(word)}\w*\s*", "", sent, flags=re.I)
+        sent = sent.replace("\u2014", ",").replace("\u2013", ",")
+        if rules.answer_flaws(sent):
+            leans = i + 1 < len(sentences) and _ORPHAN.match(sentences[i + 1])
+            if not leans:
+                continue  # the banned phrase goes with its sentence
+        out.append(sent.strip())
+    return " ".join(out).strip()
+
+
 def _enforce_writing_rules(text: str, prompt: str, lo: int, kw: dict) -> str:
     """The model does not reliably follow a banned list in its prompt, so the answer is checked after the write: two rewrite
     attempts naming the offenders, then the offending sentences are cut when enough answer is left. Banned wording never reaches you."""
+    def problems(t: str) -> list[str]:
+        return rules.answer_flaws(t) + [f"the number {n}" for n in _invented_numbers(t)]
+
     for _ in range(2):
-        flaws = rules.answer_flaws(text)
+        flaws = problems(text)
         if not flaws:
             return text
         fixed = _clean(llm.call(f"{prompt}\n\nDRAFT:\n{text}\n\nRewrite the draft with the same facts and length. Do not use any of these: "
                                 f"{', '.join(flaws)}. Reply with the answer only.", **kw))
-        if fixed and len(rules.answer_flaws(fixed)) <= len(flaws) and fixed != text:
+        if fixed and len(problems(fixed)) <= len(flaws) and fixed != text:
             text = fixed
-    if not rules.answer_flaws(text):
+    if not problems(text):
         return text
-    kept = [x for x in re.split(r"(?<=[.!?])\s+", text) if not rules.answer_flaws(x)]
-    cut = " ".join(kept).strip()
+    cut = _scrub(text)
     return cut if len(cut.split()) >= max(8, int(lo * 0.5)) else text
 
 

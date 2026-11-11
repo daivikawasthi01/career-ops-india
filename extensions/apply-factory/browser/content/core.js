@@ -118,6 +118,17 @@
   const comboValue = (el) => (el.tagName === 'BUTTON' ? norm(el.textContent) : el.value || '');
   const isPlaceholder = (t) => !t || /^(select|choose|please select|--|pick)/i.test(t);
 
+  // The "Other: ____" text box that sits inside a choose-one or tick-many group belongs to that question. It is not a question of its
+  // own, so it is never listed, filled or drafted for.
+  const OTHER_DETAIL = /\bother\b|specify|please (describe|explain)/i;
+  const isGroupDetail = (el) => {
+    if (!(el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && ['text', 'search', ''].includes(el.type)))) return false;
+    const name = `${el.getAttribute('aria-label') || ''} ${el.placeholder || ''} ${AF.labelOf(el) || ''}`;
+    if (!OTHER_DETAIL.test(name)) return false;
+    const group = el.closest('[role=radiogroup],[role=group],fieldset,[role=list]');
+    return !!group?.querySelector('[role=radio],[role=checkbox],input[type=radio],input[type=checkbox]');
+  };
+
   // Returns the wire fields (no DOM) and fills AF.handles with the elements behind each id.
   AF.handles = new Map();
   AF.collect = (neverRead = () => false) => {
@@ -128,6 +139,7 @@
     for (const el of nodes) {
       if (el.tagName === 'INPUT' && SKIP_INPUT.has(el.type)) continue;
       if (!usable(el)) continue;
+      if (isGroupDetail(el)) continue;
       const base = { name: el.name || '', placeholder: el.placeholder || '', autocomplete: el.getAttribute('autocomplete') || '',
         maxlength: el.maxLength > 0 ? el.maxLength : 0, required: !!el.required || el.getAttribute('aria-required') === 'true' };
       let field;

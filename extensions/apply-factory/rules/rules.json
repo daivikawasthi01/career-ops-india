@@ -134,6 +134,7 @@
   "drafting": { "_doc": "How many suggestions the page asks for at once. Ollama itself decides how many run together (OLLAMA_NUM_PARALLEL); the rest wait in its queue.", "parallel": 6 },
 
   "answer_length": [
+    { "re": "achievement|accomplish|proud of|biggest|greatest|best (project|work|thing)|challenge|tell us about a (time|project)|describe a (time|project)|failure|conflict|overcame", "min": 90, "max": 170, "story": true },
     { "re": "cover letter|message (to|for) (the )?(hiring|recruit)|note to (the )?(hiring|recruit)|introduce yourself|tell us about yourself|about yourself|anything else|additional information|why (do you want|are you interested|should we|this (role|company))|motivation", "min": 100, "max": 180 },
     { "re": "experience|project|describe|explain|achievement|challenge|accomplish|responsibilit|walk us through|tell us about|worked on|skills", "min": 70, "max": 150 },
     { "re": ".", "min": 40, "max": 110, "textarea_only": true }

@@ -1,3 +1,4 @@
+import json
 import unittest
 
 from learner import learn
@@ -89,7 +90,7 @@ class SuggestTest(unittest.TestCase):
         long_reply = ("I built a self-service platform at Goldman Sachs — it cut a task from a minute to two seconds. " * 6).strip()
         self.fake.chat_replies = ["{\"words\": 60, \"paragraphs\": 1}", long_reply, "{\"words\": 60}", "UNKNOWN"]
         with db.tx(self.db) as conn:
-            d = suggest.draft(conn, F("a", "Tell us about a project", "textarea"), {"jd_text": "Backend role"})
+            d = suggest.draft(conn, F("a", "Why do you want to work here?", "textarea"), {"jd_text": "Backend role"})
             self.assertEqual(d["status"], "draft")
             self.assertNotIn("—", d["value"])
             u = suggest.draft(conn, F("b", "Describe your experience with COBOL", "textarea"), {})
@@ -129,6 +130,15 @@ class SuggestTest(unittest.TestCase):
             lo, hi, _ = suggest.plan_length(F("a", "What is your best achievement till date?", "text", maxlength=100), "What is your best achievement till date?", {})
         self.assertLessEqual(hi * 6, 100)
 
+    def test_achievement_questions_are_story_questions_with_a_real_minimum(self):
+        from lib import rules
+        self.assertTrue(rules.is_story_question("What is your best achievement till date?"))
+        self.assertFalse(rules.is_story_question("Message for the hiring team"))
+        self.fake.chat_replies = ['{"words": 10}']
+        with db.tx(self.db) as conn:
+            lo, hi, _ = suggest.plan_length(F("a", "What is your best achievement till date?", "text"), "What is your best achievement till date?", {})
+        self.assertGreaterEqual(lo, 90)
+
     def test_a_useless_plan_falls_back_to_the_configured_rules(self):
         with db.tx(self.db) as conn:
             self.fake.chat_replies = ["not json"]
@@ -140,16 +150,16 @@ class SuggestTest(unittest.TestCase):
         self.assertEqual(rules.answer_flaws("Certainly, I built a robust platform \u2014 fast."), ["robust", "certainly", "long dash"])
         self.fake.chat_replies = ['{"words": 30}', "Certainly, I built a robust platform in Go.", "I built a platform in Go."]
         with db.tx(self.db) as conn:
-            d = suggest.draft(conn, F("a", "Tell us about a project", "textarea"), {})
+            d = suggest.draft(conn, F("a", "Message for the hiring team", "textarea"), {})
         self.assertEqual(d["value"], "I built a platform in Go.")
 
     def test_unknown_on_an_open_question_is_retried_as_best_effort(self):
         best = " ".join(["built"] * 70)
-        self.fake.chat_replies = ['{"words": 80}', "UNKNOWN", best]
+        self.fake.chat_replies = ['{"words": 80}', "UNKNOWN", "UNKNOWN", best]  # plan, the story try, the write, the best-effort retry
         with db.tx(self.db) as conn:
             d = suggest.draft(conn, F("a", "What is your best achievement till date?", "textarea"), {})
         self.assertEqual(d["status"], "draft")
-        self.assertEqual(self.fake.chat_calls, 3)
+        self.assertEqual(self.fake.chat_calls, 4)
 
     def test_short_limited_text_boxes_are_still_offered(self):
         r = self.run_suggest([F("a", "Your best achievement in one line", "text", maxlength=50)])
@@ -175,6 +185,30 @@ class SuggestTest(unittest.TestCase):
         with db.tx(self.db) as conn:
             d = suggest.draft(conn, F("a", "What are you currently doing?", "radio", options=["Working full-time", "Studying", "Freelancing"]), {})
         self.assertEqual((d["status"], d["value"], d["id"], d["label"]), ("draft", "Studying", "a", "What are you currently doing?"))
+
+    def test_a_story_question_is_assembled_from_four_parts(self):
+        story = {"situation": "At Goldman Sachs developers could only run one operation from a command line and it took a minute.",
+                 "action": "I built a self-service platform with React, TypeScript and Go on AWS ECS Fargate for them.",
+                 "result": "It cut that operation to about 2 seconds for 9,000 developers.",
+                 "lesson": "I learned that removing a small daily friction is worth more than a big feature nobody uses."}
+        self.fake.chat_replies = ['{"words": 120}', json.dumps(story)]
+        with db.tx(self.db) as conn:
+            d = suggest.draft(conn, F("a", "What is your best achievement till date?", "text"), {})
+        self.assertEqual(d["status"], "draft")
+        self.assertTrue(d["value"].startswith("At Goldman Sachs"), repr(d["value"][:160]))   # it opens with the situation, not mid-thought
+        self.assertIn("\n\n", d["value"])                           # two paragraphs
+        self.assertEqual(self.fake.chat_calls, 2)
+
+    def test_single_banned_words_are_removed_in_place_and_orphans_are_kept(self):
+        self.assertEqual(suggest._scrub("I built a robust platform in Go. It served 9,000 developers."), "I built a platform in Go. It served 9,000 developers.")
+        out = suggest._scrub("I am excited to join X. I built services in Go.")
+        self.assertEqual(out, "I built services in Go.")
+        keep = suggest._scrub("I am excited to say that I built it. This platform served 9,000 developers.")
+        self.assertIn("This platform served", keep)
+
+    def test_numbers_the_cv_does_not_contain_are_not_allowed(self):
+        self.assertEqual(suggest._invented_numbers("It cut the time by 98% for 9,000 developers with 87% test coverage."), ["98"])
+        self.assertEqual(suggest._scrub("It gave a 98% reduction in time for 9,000 developers."), "It gave a reduction in time for 9,000 developers.")
 
     def test_draft_refuses_sensitive(self):
         with db.tx(self.db) as conn:

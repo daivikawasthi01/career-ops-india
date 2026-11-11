@@ -15,7 +15,8 @@ const html = `<!doctype html><title>Form</title><main><form>
 <div role=listitem><div id=q3>What are you currently doing?</div><div role=radiogroup aria-labelledby=q3 id=g3>
   <div role=radio aria-checked=false aria-label="Working full-time" tabindex=0>Working full-time</div>
   <div role=radio aria-checked=false aria-label="Studying" tabindex=0>Studying</div>
-  <div role=radio aria-checked=false aria-label="Freelancing" tabindex=0>Freelancing</div></div></div>
+  <div role=radio aria-checked=false aria-label="Freelancing" tabindex=0>Freelancing</div>
+  <div role=radio aria-checked=false aria-label="Other:" tabindex=0>Other:</div><input id=oth type=text aria-label="Other response"></div></div>
 <div role=listitem><div id=q4>Why do you want to work here?</div><textarea id=m4 aria-labelledby=q4></textarea></div>
 <div role=listitem><div id=q5>Which cloud platform have you used most?</div><select id=s5 aria-labelledby=q5><option>Choose</option><option>AWS</option><option>Azure</option><option>Google Cloud</option></select></div>
 </form></main>`;
@@ -39,4 +40,10 @@ const rows = await p.evaluate(() => {
   });
 });
 for (const r of rows) console.log(`Q: ${r.question}\n   pill: ${r.pill}`);
+// the "Other:" box inside the choice group is part of that question: it must have no pill of its own
+const otherPill = await p.evaluate(() => {
+  const r = document.getElementById('oth').getBoundingClientRect();
+  return [...document.querySelectorAll('.af-chip')].filter((c) => { const cr = c.getBoundingClientRect(); return cr.top < r.bottom + 2 && cr.bottom > r.top - 2; }).map((c) => c.textContent);
+});
+console.log(otherPill.length === 0 ? 'PASS the Other box has no pill' : `FAIL the Other box has pills: ${JSON.stringify(otherPill)}`);
 await ctx.close();
